@@ -92,7 +92,7 @@ struct CharacterService
     void ProcessNewEntity(entt::entity aEntity) const noexcept;
 
 private:
-    void ApplyPhysicalPopulationSuppression(entt::entity aEntity, CharacterAssignmentRejectReason aReason) const noexcept;
+    void ApplyPhysicalPopulationSuppression(entt::entity aEntity, CharacterAssignmentRejectReason aReason, bool aAssignmentWasCancelled) const noexcept;
     void EnsureOwnedPopulationDisable(uint32_t aFormId) const noexcept;
     void RestoreOwnedPopulationDisable(uint32_t aFormId) const noexcept;
     void MoveActor(const Actor* apActor, const GameId& acWorldSpaceId, const GameId& acCellId, const Vector3_NetQuantize& acPosition) const noexcept;

@@ -1185,9 +1185,10 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
     spdlog::info("Successfully teleported actor, form id: {:X}, world space: {:X}, cell: {:X}, position: ({}, {}, {})", pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
 }
 
-void CharacterService::ApplyPhysicalPopulationSuppression(const entt::entity aEntity, const CharacterAssignmentRejectReason aReason) const noexcept
+void CharacterService::ApplyPhysicalPopulationSuppression(
+    const entt::entity aEntity, const CharacterAssignmentRejectReason aReason, const bool aAssignmentWasCancelled) const noexcept
 {
-    if (!PopulationSuppressionPolicy::ShouldPhysicallySuppress(aReason))
+    if (!PopulationSuppressionPolicy::ShouldPhysicallySuppress(aReason, aAssignmentWasCancelled))
         return;
 
     const auto* const pFormIdComponent = m_world.try_get<FormIdComponent>(aEntity);
@@ -1340,7 +1341,7 @@ void CharacterService::OnCharacterAssignmentRejected(const NotifyCharacterAssign
     m_world.remove<CacheComponent>(cEntity);
     m_world.remove<EarlyAnimationBufferComponent>(cEntity);
     m_world.emplace_or_replace<PopulationSuppressedComponent>(cEntity, acMessage.Reason);
-    ApplyPhysicalPopulationSuppression(cEntity, acMessage.Reason);
+    ApplyPhysicalPopulationSuppression(cEntity, acMessage.Reason, isCancelled);
 
     spdlog::debug("Suppressed local population actor after assignment rejection for cookie {:X}, reason {}", acMessage.Cookie, static_cast<unsigned>(acMessage.Reason));
 }

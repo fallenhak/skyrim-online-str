@@ -19,6 +19,8 @@ TEST_CASE("Population physical suppression is server-reason and ownership scoped
     constexpr auto cUnknownDenied = CharacterAssignmentRejectReason::kPopulationUnknownDenied;
 
     REQUIRE(PopulationSuppressionPolicy::ShouldPhysicallySuppress(cHumanoidDenied));
+    REQUIRE_FALSE(PopulationSuppressionPolicy::ShouldPhysicallySuppress(cHumanoidDenied, true));
+    REQUIRE(PopulationSuppressionPolicy::ShouldPhysicallySuppress(cHumanoidDenied, false));
     REQUIRE_FALSE(PopulationSuppressionPolicy::ShouldPhysicallySuppress(cUnknownDenied));
 
     REQUIRE(PopulationSuppressionPolicy::ShouldOwnDisable(cHumanoidDenied, 0x123456, false, false, false, false));
@@ -43,6 +45,7 @@ TEST_CASE("Population physical suppression is server-reason and ownership scoped
     REQUIRE(drained.count(0x123456) == 1);
     REQUIRE(tracker.Size() == 0);
     REQUIRE_FALSE(tracker.OwnsDisable(0x123456));
+    REQUIRE(tracker.DrainOwnedDisables().empty());
 
     // A reference returning after the registry is drained is eligible for a new session.
     REQUIRE(tracker.OwnDisable(0x123456));

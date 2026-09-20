@@ -24,6 +24,11 @@ struct PopulationSuppressionPolicy final
         return aReason == CharacterAssignmentRejectReason::kPopulationHumanoidDenied;
     }
 
+    [[nodiscard]] static constexpr bool ShouldPhysicallySuppress(const CharacterAssignmentRejectReason aReason, const bool aAssignmentWasCancelled) noexcept
+    {
+        return !aAssignmentWasCancelled && ShouldPhysicallySuppress(aReason);
+    }
+
     [[nodiscard]] static constexpr bool ShouldOwnDisable(
         const CharacterAssignmentRejectReason aReason, const std::uint32_t aFormId, const bool aIsPlayer, const bool aIsTemporary, const bool aIsDeleted,
         const bool aWasAlreadyDisabled) noexcept
