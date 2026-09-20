@@ -34,6 +34,7 @@ struct Player
     void SetMods(Vector<String> aMods) noexcept;
     void SetModIds(Vector<uint16_t> aModIds) noexcept;
     void SetCharacter(entt::entity aCharacter) noexcept;
+    void ClearCharacter() noexcept { m_character.reset(); }
     void SetStringCacheId(uint32_t aStringCacheId) noexcept;
     // TODO(cosideci): update on level up
     void SetLevel(uint16_t aLevel) noexcept;

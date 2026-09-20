@@ -9,12 +9,18 @@
 #include <catch2/catch.hpp>
 
 #include <Messages/ClientMessageFactory.h>
+#include <Messages/CharacterReadyRequest.h>
 #include <Messages/NotifyCharacterLoadSnapshot.h>
+#include <Messages/NotifyCharacterEnteredWorld.h>
 #include <Messages/NotifyCharacterList.h>
+#include <Messages/NotifyCharacterReadyResult.h>
 #include <Messages/NotifyCharacterSelectionResult.h>
 #include <Messages/RequestCharacterList.h>
 #include <Messages/SelectCharacterRequest.h>
 #include <Messages/ServerMessageFactory.h>
+
+#include <Structs/CharacterLoadSnapshotValidation.h>
+#include <Structs/CharacterSessionOutboundPolicy.h>
 
 #include <limits>
 
@@ -80,6 +86,18 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(selectionMessage);
         auto parsedSelectionRequest = TiltedPhoques::CastUnique<SelectCharacterRequest>(std::move(selectionMessage));
         REQUIRE(*parsedSelectionRequest == selectionRequest);
+
+        CharacterReadyRequest readyRequest{};
+        readyRequest.CharacterId = std::numeric_limits<std::uint64_t>::max();
+        TiltedPhoques::Buffer readyBuffer(256);
+        TiltedPhoques::Buffer::Writer readyWriter(&readyBuffer);
+        readyRequest.Serialize(readyWriter);
+
+        TiltedPhoques::Buffer::Reader readyReader(&readyBuffer);
+        auto readyMessage = clientFactory.Extract(readyReader);
+        REQUIRE(readyMessage);
+        auto parsedReadyRequest = TiltedPhoques::CastUnique<CharacterReadyRequest>(std::move(readyMessage));
+        REQUIRE(*parsedReadyRequest == readyRequest);
     }
 
     SECTION("server list and selection result")
@@ -134,5 +152,69 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(snapshotNetworkMessage);
         auto parsedSnapshot = TiltedPhoques::CastUnique<NotifyCharacterLoadSnapshot>(std::move(snapshotNetworkMessage));
         REQUIRE(*parsedSnapshot == snapshotMessage);
+
+        NotifyCharacterReadyResult readyResult{};
+        readyResult.Status = CharacterReadyStatus::kProceed;
+        TiltedPhoques::Buffer readyResultBuffer(256);
+        TiltedPhoques::Buffer::Writer readyResultWriter(&readyResultBuffer);
+        readyResult.Serialize(readyResultWriter);
+
+        TiltedPhoques::Buffer::Reader readyResultReader(&readyResultBuffer);
+        auto readyResultMessage = serverFactory.Extract(readyResultReader);
+        REQUIRE(readyResultMessage);
+        auto parsedReadyResult = TiltedPhoques::CastUnique<NotifyCharacterReadyResult>(std::move(readyResultMessage));
+        REQUIRE(*parsedReadyResult == readyResult);
+
+        NotifyCharacterEnteredWorld enteredWorld{};
+        enteredWorld.CharacterId = std::numeric_limits<std::uint64_t>::max();
+        TiltedPhoques::Buffer enteredWorldBuffer(256);
+        TiltedPhoques::Buffer::Writer enteredWorldWriter(&enteredWorldBuffer);
+        enteredWorld.Serialize(enteredWorldWriter);
+
+        TiltedPhoques::Buffer::Reader enteredWorldReader(&enteredWorldBuffer);
+        auto enteredWorldMessage = serverFactory.Extract(enteredWorldReader);
+        REQUIRE(enteredWorldMessage);
+        auto parsedEnteredWorld = TiltedPhoques::CastUnique<NotifyCharacterEnteredWorld>(std::move(enteredWorldMessage));
+        REQUIRE(*parsedEnteredWorld == enteredWorld);
     }
+}
+
+TEST_CASE("Character load snapshot validation rejects unsafe values", "[encoding.character_load]")
+{
+    CharacterLoadSnapshot snapshot{};
+    snapshot.CharacterId = 1;
+    snapshot.Race = GameId(0, 0x00013746);
+    snapshot.CellId = GameId(0, 0x0000003C);
+    snapshot.Level = 20;
+    snapshot.Sex = 0;
+    snapshot.Health = 100.f;
+    snapshot.Magicka = 100.f;
+    snapshot.Stamina = 100.f;
+
+    REQUIRE(IsCharacterLoadSnapshotValid(snapshot));
+
+    snapshot.PositionX = std::numeric_limits<float>::quiet_NaN();
+    REQUIRE(ValidateCharacterLoadSnapshot(snapshot) == CharacterLoadSnapshotValidationError::kInvalidPosition);
+    snapshot.PositionX = 0.f;
+    snapshot.Health = std::numeric_limits<float>::infinity();
+    REQUIRE(ValidateCharacterLoadSnapshot(snapshot) == CharacterLoadSnapshotValidationError::kInvalidVitals);
+    snapshot.Health = 100.f;
+    snapshot.Sex = 2;
+    REQUIRE(ValidateCharacterLoadSnapshot(snapshot) == CharacterLoadSnapshotValidationError::kUnsupportedSex);
+    snapshot.Sex = 0;
+    snapshot.Race = GameId{};
+    REQUIRE(ValidateCharacterLoadSnapshot(snapshot) == CharacterLoadSnapshotValidationError::kInvalidRace);
+    snapshot.Race = GameId(0, 0x00013746);
+    snapshot.CellId = GameId{};
+    REQUIRE(ValidateCharacterLoadSnapshot(snapshot) == CharacterLoadSnapshotValidationError::kInvalidCell);
+}
+
+TEST_CASE("Character outbound protocol policy keeps pre-world traffic narrow", "[encoding.character_session]")
+{
+    REQUIRE(!CanSendCharacterProtocolMessage(kRequestActorValueChanges, CharacterClientSessionPhase::kAwaitingClientReady, false));
+    REQUIRE(CanSendCharacterProtocolMessage(kRequestCharacterList, CharacterClientSessionPhase::kAwaitingCharacterSelection, false));
+    REQUIRE(CanSendCharacterProtocolMessage(kCharacterReadyRequest, CharacterClientSessionPhase::kAwaitingClientReady, false));
+    REQUIRE(!CanSendCharacterProtocolMessage(kAssignCharacterRequest, CharacterClientSessionPhase::kAwaitingPlayerAssignment, false));
+    REQUIRE(CanSendCharacterProtocolMessage(kAssignCharacterRequest, CharacterClientSessionPhase::kAwaitingPlayerAssignment, true));
+    REQUIRE(CanSendCharacterProtocolMessage(kRequestActorValueChanges, CharacterClientSessionPhase::kInWorld, false));
 }

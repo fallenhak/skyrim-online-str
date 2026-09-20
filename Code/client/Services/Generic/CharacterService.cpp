@@ -26,6 +26,8 @@
 #include <Events/UpdateEvent.h>
 #include <Events/ConnectedEvent.h>
 #include <Events/DisconnectedEvent.h>
+#include <Events/CharacterPlayerAssignmentStartedEvent.h>
+#include <Events/CharacterWorldSyncStartedEvent.h>
 #include <Events/MountEvent.h>
 #include <Events/InitPackageEvent.h>
 #include <Events/BeastFormChangeEvent.h>
@@ -77,6 +79,8 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
 
     m_connectedConnection = m_dispatcher.sink<ConnectedEvent>().connect<&CharacterService::OnConnected>(this);
     m_disconnectedConnection = m_dispatcher.sink<DisconnectedEvent>().connect<&CharacterService::OnDisconnected>(this);
+    m_playerAssignmentStartedConnection = m_dispatcher.sink<CharacterPlayerAssignmentStartedEvent>().connect<&CharacterService::BeginLocalPlayerAssignment>(this);
+    m_worldSyncStartedConnection = m_dispatcher.sink<CharacterWorldSyncStartedEvent>().connect<&CharacterService::BeginWorldSync>(this);
 
     m_assignCharacterConnection = m_dispatcher.sink<AssignCharacterResponse>().connect<&CharacterService::OnAssignCharacter>(this);
     m_characterSpawnConnection = m_dispatcher.sink<CharacterSpawnRequest>().connect<&CharacterService::OnCharacterSpawn>(this);
@@ -291,32 +295,12 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
 
 void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const noexcept
 {
-    if (!m_world.GetCharacterSessionService().IsGameplayActive())
-        return;
-
-    // Go through all the forms that were previously detected
-    auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
-    Vector<entt::entity> entities(view.begin(), view.end());
-
-    for (auto entity : entities)
-    {
-        auto& formIdComponent = m_world.get<FormIdComponent>(entity);
-        // Delete all temporary actors on connect
-        if (formIdComponent.Id > 0xFF000000)
-        {
-            Actor* pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
-            if (pActor)
-                pActor->Delete();
-
-            continue;
-        }
-
-        ProcessNewEntity(entity);
-    }
+    m_worldSyncStarted = false;
 }
 
 void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEvent) const noexcept
 {
+    m_worldSyncStarted = false;
     auto remoteView = m_world.view<FormIdComponent, RemoteComponent>();
     for (auto entity : remoteView)
     {
@@ -348,6 +332,61 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
     }
 
     m_pendingLeveledConforms.clear();
+}
+
+void CharacterService::BeginLocalPlayerAssignment(const CharacterPlayerAssignmentStartedEvent&) const noexcept
+{
+    if (!m_transport.IsOnline() || m_world.GetCharacterSessionService().GetState() != ClientCharacterSessionState::kAwaitingPlayerAssignment)
+        return;
+
+    auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
+    auto it = std::find_if(view.begin(), view.end(), [view](const entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == 0x14; });
+    entt::entity entity = entt::null;
+    if (it != view.end())
+        entity = *it;
+    else
+    {
+        entity = m_world.create();
+        m_world.emplace<FormIdComponent>(entity, static_cast<uint32_t>(0x14));
+        m_world.emplace<EarlyAnimationBufferComponent>(entity);
+    }
+
+    auto* pPlayer = Cast<Actor>(TESForm::GetById(0x14));
+    if (!pPlayer)
+    {
+        spdlog::error("Cannot begin persistent character assignment: local player form 0x14 is unavailable.");
+        return;
+    }
+
+    m_world.remove<WaitingForAssignmentComponent, LocalComponent, RemoteComponent>(entity);
+    CacheSystem::Setup(World::Get(), entity, pPlayer);
+    RequestServerAssignment(entity);
+}
+
+void CharacterService::BeginWorldSync(const CharacterWorldSyncStartedEvent&) const noexcept
+{
+    if (m_worldSyncStarted || !m_world.GetCharacterSessionService().IsGameplayActive())
+        return;
+
+    m_worldSyncStarted = true;
+
+    // The server has now confirmed the persistent player entity. Only at this point
+    // do we process the normal loaded-actor set and begin ordinary STR synchronization.
+    auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
+    Vector<entt::entity> entities(view.begin(), view.end());
+
+    for (const auto entity : entities)
+    {
+        auto& formIdComponent = m_world.get<FormIdComponent>(entity);
+        if (formIdComponent.Id > 0xFF000000)
+        {
+            if (Actor* pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id)))
+                pActor->Delete();
+            continue;
+        }
+
+        ProcessNewEntity(entity);
+    }
 }
 
 void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessage) noexcept

@@ -1,6 +1,7 @@
 #include <Services/SessionService.h>
 
 #include <limits>
+#include <spdlog/spdlog.h>
 #include <utility>
 
 namespace
@@ -14,6 +15,25 @@ CharacterSummary MakeCharacterSummary(const Persistence::CharacterRecord& acChar
     summary.Sex = acCharacter.Sex;
     summary.Level = acCharacter.Level;
     return summary;
+}
+
+CharacterLoadSnapshot MakeCharacterLoadSnapshot(const Persistence::CharacterRecord& acCharacter) noexcept
+{
+    CharacterLoadSnapshot snapshot{};
+    snapshot.CharacterId = static_cast<std::uint64_t>(acCharacter.Id);
+    snapshot.Name = acCharacter.Name;
+    snapshot.Race = acCharacter.Race;
+    snapshot.Sex = acCharacter.Sex;
+    snapshot.Level = acCharacter.Level;
+    snapshot.WorldSpaceId = acCharacter.WorldSpace;
+    snapshot.CellId = acCharacter.Cell;
+    snapshot.PositionX = acCharacter.PositionX;
+    snapshot.PositionY = acCharacter.PositionY;
+    snapshot.PositionZ = acCharacter.PositionZ;
+    snapshot.Health = acCharacter.Health;
+    snapshot.Magicka = acCharacter.Magicka;
+    snapshot.Stamina = acCharacter.Stamina;
+    return snapshot;
 }
 } // namespace
 
@@ -119,26 +139,91 @@ std::optional<CharacterLoadSnapshot> SessionService::PrepareCharacterLoadSnapsho
     const auto character = m_characterRepository.GetCharacterForOwner(*pSession->SelectedCharacterId, *pSession->OwnerProfileId);
     if (!character.has_value() || character->Id <= 0)
     {
-        pSession->SelectedCharacterId.reset();
-        pSession->State = SessionState::kAwaitingCharacterSelection;
+        ResetCharacterSelection(*pSession);
         return std::nullopt;
     }
 
-    CharacterLoadSnapshot snapshot{};
-    snapshot.CharacterId = static_cast<std::uint64_t>(character->Id);
-    snapshot.Name = character->Name;
-    snapshot.Race = character->Race;
-    snapshot.Sex = character->Sex;
-    snapshot.Level = character->Level;
-    snapshot.WorldSpaceId = character->WorldSpace;
-    snapshot.CellId = character->Cell;
-    snapshot.PositionX = character->PositionX;
-    snapshot.PositionY = character->PositionY;
-    snapshot.PositionZ = character->PositionZ;
-    snapshot.Health = character->Health;
-    snapshot.Magicka = character->Magicka;
-    snapshot.Stamina = character->Stamina;
+    const auto snapshot = MakeSnapshot(*character);
+    if (!IsCharacterLoadSnapshotValid(snapshot))
+    {
+        spdlog::error("Persistent character {} failed snapshot validation; refusing world entry.", character->Id);
+        ResetCharacterSelection(*pSession);
+        return std::nullopt;
+    }
 
     pSession->State = SessionState::kAwaitingClientReady;
     return snapshot;
+}
+
+CharacterReadyStatus SessionService::AcceptCharacterReady(const ConnectionId_t aConnectionId, const std::uint64_t aCharacterId)
+{
+    auto* pSession = Get(aConnectionId);
+    if (!pSession || pSession->State != SessionState::kAwaitingClientReady)
+        return CharacterReadyStatus::kInvalidState;
+
+    if (!pSession->OwnerProfileId.has_value() || !pSession->SelectedCharacterId.has_value() || aCharacterId == 0 ||
+        aCharacterId != static_cast<std::uint64_t>(*pSession->SelectedCharacterId))
+        return CharacterReadyStatus::kCharacterMismatchOrUnavailable;
+
+    const auto character = m_characterRepository.GetCharacterForOwner(*pSession->SelectedCharacterId, *pSession->OwnerProfileId);
+    if (!character.has_value() || character->Id <= 0 || !IsCharacterLoadSnapshotValid(MakeSnapshot(*character)))
+    {
+        ResetCharacterSelection(*pSession);
+        return CharacterReadyStatus::kCharacterMismatchOrUnavailable;
+    }
+
+    pSession->State = SessionState::kAwaitingPlayerAssignment;
+    return CharacterReadyStatus::kProceed;
+}
+
+bool SessionService::CanAssignPlayer(const ConnectionId_t aConnectionId) const noexcept
+{
+    const auto* pSession = Get(aConnectionId);
+    return pSession && pSession->State == SessionState::kAwaitingPlayerAssignment;
+}
+
+std::optional<Persistence::CharacterRecord> SessionService::GetSelectedCharacterForAssignment(const ConnectionId_t aConnectionId)
+{
+    auto* pSession = Get(aConnectionId);
+    if (!pSession || pSession->State != SessionState::kAwaitingPlayerAssignment || !pSession->OwnerProfileId.has_value() || !pSession->SelectedCharacterId.has_value())
+        return std::nullopt;
+
+    const auto character = m_characterRepository.GetCharacterForOwner(*pSession->SelectedCharacterId, *pSession->OwnerProfileId);
+    if (!character.has_value() || character->Id <= 0 || !IsCharacterLoadSnapshotValid(MakeSnapshot(*character)))
+    {
+        ResetCharacterSelection(*pSession);
+        return std::nullopt;
+    }
+
+    return character;
+}
+
+bool SessionService::CompletePlayerAssignment(const ConnectionId_t aConnectionId, const Persistence::CharacterId aCharacterId) noexcept
+{
+    auto* pSession = Get(aConnectionId);
+    if (!pSession || pSession->State != SessionState::kAwaitingPlayerAssignment || !pSession->OwnerProfileId.has_value() || !pSession->SelectedCharacterId.has_value() || aCharacterId <= 0)
+        return false;
+
+    if (*pSession->SelectedCharacterId != aCharacterId)
+        return false;
+
+    pSession->State = SessionState::kInWorld;
+    return true;
+}
+
+void SessionService::ResetCharacterSelection(const ConnectionId_t aConnectionId) noexcept
+{
+    if (auto* pSession = Get(aConnectionId))
+        ResetCharacterSelection(*pSession);
+}
+
+void SessionService::ResetCharacterSelection(CharacterSession& aSession) noexcept
+{
+    aSession.SelectedCharacterId.reset();
+    aSession.State = aSession.OwnerProfileId.has_value() ? SessionState::kAwaitingCharacterSelection : SessionState::kAwaitingIdentity;
+}
+
+CharacterLoadSnapshot SessionService::MakeSnapshot(const Persistence::CharacterRecord& acCharacter) noexcept
+{
+    return MakeCharacterLoadSnapshot(acCharacter);
 }

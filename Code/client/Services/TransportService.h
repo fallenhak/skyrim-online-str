@@ -48,6 +48,8 @@ protected:
     void HandleNotifySettingsChange(const NotifySettingsChange& acMessage) noexcept;
 
 private:
+    [[nodiscard]] bool CanSendMessage(const ClientMessage& acMessage) const noexcept;
+
     World& m_world;
     entt::dispatcher& m_dispatcher;
     bool m_connected;

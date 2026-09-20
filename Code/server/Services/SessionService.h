@@ -3,6 +3,8 @@
 #include <Persistence/CharacterRepository.h>
 
 #include <Structs/CharacterLoadSnapshot.h>
+#include <Structs/CharacterLoadSnapshotValidation.h>
+#include <Structs/CharacterReadyStatus.h>
 #include <Structs/CharacterSelectionStatus.h>
 #include <Structs/CharacterSummary.h>
 
@@ -24,6 +26,7 @@ enum class SessionState : std::uint8_t
     kAwaitingCharacterSelection,
     kCharacterSelected,
     kAwaitingClientReady,
+    kAwaitingPlayerAssignment,
     kInWorld
 };
 
@@ -63,8 +66,16 @@ struct SessionService final
     [[nodiscard]] std::optional<std::vector<CharacterSummary>> ListCharacters(ConnectionId_t aConnectionId) const;
     [[nodiscard]] CharacterSelectionStatus SelectCharacter(ConnectionId_t aConnectionId, std::uint64_t aCharacterId);
     [[nodiscard]] std::optional<CharacterLoadSnapshot> PrepareCharacterLoadSnapshot(ConnectionId_t aConnectionId);
+    [[nodiscard]] CharacterReadyStatus AcceptCharacterReady(ConnectionId_t aConnectionId, std::uint64_t aCharacterId);
+    [[nodiscard]] bool CanAssignPlayer(ConnectionId_t aConnectionId) const noexcept;
+    [[nodiscard]] std::optional<Persistence::CharacterRecord> GetSelectedCharacterForAssignment(ConnectionId_t aConnectionId);
+    [[nodiscard]] bool CompletePlayerAssignment(ConnectionId_t aConnectionId, Persistence::CharacterId aCharacterId) noexcept;
+    void ResetCharacterSelection(ConnectionId_t aConnectionId) noexcept;
 
 private:
+    [[nodiscard]] static CharacterLoadSnapshot MakeSnapshot(const Persistence::CharacterRecord& acCharacter) noexcept;
+    void ResetCharacterSelection(CharacterSession& aSession) noexcept;
+
     Persistence::CharacterRepository& m_characterRepository;
     std::unordered_map<ConnectionId_t, CharacterSession> m_sessions;
 };
