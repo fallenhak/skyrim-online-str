@@ -48,7 +48,6 @@ protected:
     void OnPartyKick(const PacketEvent<PartyKickRequest>& acPacket) noexcept;
     void RemovePlayerFromParty(Player* apPlayer) noexcept;
 
-    void BroadcastPlayerList(Player* apPlayer = nullptr) const noexcept;
     void BroadcastPartyInfo(uint32_t aPartyId) const noexcept;
 
 private:
