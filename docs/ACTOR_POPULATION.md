@@ -73,10 +73,24 @@ Both settings are locked, startup-only server settings. The humanoid gate is
 disabled by default and the unknown-identity allowance is enabled by default.
 
 Humanoid rejection is sent to the client with the assignment cookie and an
-explicit rejection reason. The client keeps the live actor in Skyrim but marks
-the local entity as population-suppressed, preventing retry loops during the
-current connection. Cancelled assignments are cleaned up instead. This
-milestone does not disable, delete, kill, or otherwise alter the vanilla NPC.
+explicit rejection reason. The client marks the local entity as
+population-suppressed, preventing retry loops during the current connection.
+Cancelled assignments are cleaned up instead.
+
+For `kPopulationHumanoidDenied` only, the connected client also applies a
+reversible local `DisableImpl()` to the exact placed reference. A separate
+session-owned form-ID registry records only references that this client actually
+disabled; it is independent of ECS lifetime because the disable can itself
+cause `ActorRemovedEvent`. If the reference reappears during the same
+connection, it is marked suppressed again and re-disabled without another
+assignment request. Unknown-denial responses never trigger physical disable.
+
+On disconnect, the registry is drained and cleared before each owned reference
+receives `EnableImpl()`. Already-disabled, temporary, deleted, unresolved, and
+player references are never claimed or restored. Restoration is best effort
+within the current Skyrim process. `Delete()` is never used for placed
+humanoids; a process crash can prevent runtime restoration, and suppression is
+not persisted to the character database.
 
 ## Startup activation
 
@@ -100,8 +114,11 @@ This parser opt-in is not hardened for arbitrary modlists, is not production
 ready filtering/enforcement, and does not change runtime actor population.
 Do not enable it as a substitute for a later loader-hardening milestone.
 
-This milestone adds the first assignment gate on top of the classification and
-identity data. It does not physically filter or despawn actors, alter creature
-authority, or change interest management. Draugr, Falmer, vampires, and modded
-races remain `Unknown` unless explicitly configured. Character selection,
-authentication, and the later world-entry/spawn flow remain separate work.
+This milestone completes the client presentation side of the assignment gate:
+trusted `HumanoidNpc` identity is rejected by the server, then the client
+applies session-scoped, reversible local suppression. It does not alter
+creature authority, change interest management, or make client race
+classification authoritative. Draugr, Falmer, vampires, and modded races
+remain `Unknown` unless explicitly configured, and `kPopulationUnknownDenied`
+still never physically removes an actor. Static or modlist-level population
+cleanup may be added later.
