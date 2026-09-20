@@ -2,6 +2,7 @@
 #include <Components.h>
 
 #include <Services/CharacterService.h>
+#include <Services/PresenceService.h>
 #include <Services/AuthorityService.h>
 #include <Services/ObjectService.h>
 #include <Services/QuestService.h>
@@ -27,6 +28,7 @@ World::World()
 
     ctx().emplace<CharacterService>(*this, m_dispatcher);
     ctx().emplace<PlayerService>(*this, m_dispatcher);
+    ctx().emplace<PresenceService>(*this, m_dispatcher);
     ctx().emplace<CalendarService>(*this, m_dispatcher);
     ctx().emplace<ObjectService>(*this, m_dispatcher);
     ctx().emplace<ModsComponent>();
