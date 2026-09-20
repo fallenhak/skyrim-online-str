@@ -512,3 +512,37 @@ server entity or ownership.
 
 The malformed-input pass, final verification, and draft pull request will be
 appended as those phases complete.
+
+## Final verification
+
+### Repository state
+
+- Branch: `hardening/overnight-actor-authority`.
+- `HEAD`: `a38afab8` before this report-only verification update.
+- Worktree clean and branch up to date with
+  `origin/hardening/overnight-actor-authority`.
+- `34c651b88f8f35293bcb3dce225bf9bf56a666fe` remains an ancestor of `HEAD`.
+- `git diff 34c651b88f8f35293bcb3dce225bf9bf56a666fe --check` passed.
+- Submodule revisions are unchanged; no submodule files were modified.
+
+### Final commands
+
+- `xmake config --plat=windows --arch=x64 --mode=releasedbg --yes -vD` — passed.
+- `xmake -y SkyrimTogetherServer` — passed.
+- `xmake -y SkyrimTogetherClient` — passed.
+- `xmake -y TPTests` / `xmake run TPTests` — passed, 253 assertions in 29
+  test cases.
+- `xmake -y ActorPopulationTests` / `xmake run ActorPopulationTests` — passed,
+  9 tests.
+- `xmake -y SessionTests` / `xmake run SessionTests` — passed, 16 tests.
+- `xmake -y PersistenceTests` / `xmake run PersistenceTests` — passed, 4 tests.
+- `git diff --check` — passed.
+- Aggregate `xmake -y` — blocked only by the pre-existing unrelated
+  `Code/immersive_launcher/loader/MemoryLayout.cpp(35)` MSVC C2127
+  `constinit`/`reinterpret_cast` error. That file was not modified.
+
+### Draft PR
+
+Pending creation against base `feature/humanoid-local-suppression` with head
+`hardening/overnight-actor-authority` and title
+`hardening: actor authority and combat foundations`.
