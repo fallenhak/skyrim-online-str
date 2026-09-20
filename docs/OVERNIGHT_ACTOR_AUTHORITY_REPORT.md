@@ -518,7 +518,8 @@ appended as those phases complete.
 ### Repository state
 
 - Branch: `hardening/overnight-actor-authority`.
-- `HEAD`: `a38afab8` before this report-only verification update.
+- Verification snapshot: `10367b92`; the subsequent report-only commits do not
+  change source or build inputs.
 - Worktree clean and branch up to date with
   `origin/hardening/overnight-actor-authority`.
 - `34c651b88f8f35293bcb3dce225bf9bf56a666fe` remains an ancestor of `HEAD`.
@@ -543,6 +544,7 @@ appended as those phases complete.
 
 ### Draft PR
 
-Pending creation against base `feature/humanoid-local-suppression` with head
+Created as [draft PR #29](https://github.com/fallenhak/skyrim-online-str/pull/29)
+against base `feature/humanoid-local-suppression` with head
 `hardening/overnight-actor-authority` and title
 `hardening: actor authority and combat foundations`.
