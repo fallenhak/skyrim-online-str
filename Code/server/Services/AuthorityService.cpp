@@ -1,6 +1,6 @@
 #include <Services/AuthorityService.h>
 
-#include <Services/PartyService.h>
+#include <Game/Player.h>
 #include <World.h>
 
 AuthorityService::AuthorityService(World& aWorld) noexcept
@@ -17,28 +17,35 @@ bool AuthorityService::CanClaimActor(Player*, Player*) const noexcept
     return false;
 }
 
-bool AuthorityService::TrySetWeatherState(Player* apPlayer, const GameId& acWeather) const noexcept
+bool AuthorityService::IsWorldAuthority(const Player* apPlayer) const noexcept
 {
     if (!apPlayer)
         return false;
 
-    PartyService::Party* const pParty = m_world.GetPartyService().GetPlayerParty(apPlayer);
-    if (!pParty)
+    const Player* pAuthority = nullptr;
+    for (const Player* pPlayer : m_world.GetPlayerManager())
+    {
+        if (!pAuthority || pPlayer->GetId() < pAuthority->GetId())
+            pAuthority = pPlayer;
+    }
+
+    return pAuthority == apPlayer;
+}
+
+bool AuthorityService::TrySetWeatherState(Player* apPlayer, const GameId& acWeather) noexcept
+{
+    if (!IsWorldAuthority(apPlayer))
         return false;
 
-    pParty->CachedWeather = acWeather;
+    m_weatherState = acWeather;
     return true;
 }
 
 bool AuthorityService::TryGetWeatherState(Player* apPlayer, GameId& aWeather) const noexcept
 {
-    if (!apPlayer)
+    if (!apPlayer || m_weatherState == GameId{})
         return false;
 
-    PartyService::Party* const pParty = m_world.GetPartyService().GetPlayerParty(apPlayer);
-    if (!pParty)
-        return false;
-
-    aWeather = pParty->CachedWeather;
+    aWeather = m_weatherState;
     return true;
 }
