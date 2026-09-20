@@ -26,6 +26,8 @@
 #include <console/ConsoleRegistry.h>
 #include <resources/ResourceCollection.h>
 
+#include <limits>
+
 constexpr size_t kMaxServerNameLength = 128u;
 
 // -- Cvars --
@@ -38,6 +40,8 @@ Console::StringSetting sAdminPassword{"GameServer:sAdminPassword", "Admin authen
 Console::StringSetting sPassword{"GameServer:sPassword", "Server password", ""};
 Console::StringSetting sPersistenceDatabasePath{"Persistence:sDatabasePath", "SQLite database path relative to the server working directory", "Data/SkyrimTogetherServer.db"};
 Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
+Console::Setting bEnableDevelopmentIdentityBinding{
+    "Identity:bEnableDevelopmentIdentityBinding", "(Development only) Allow server operators to bind a live player to an explicit owner profile", false, Console::SettingsFlags::kLocked};
 
 // Gameplay
 // TODO: to make this easier for users, use game names for difficulty instead of int
@@ -192,6 +196,11 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole)
     UpdateTitle();
 
     m_pWorld = MakeUnique<World>(std::filesystem::path(sPersistenceDatabasePath.value()));
+
+    if (bEnableDevelopmentIdentityBinding)
+    {
+        spdlog::warn("Development identity binding is enabled. This is for local development only and is not authentication.");
+    }
 
     BindMessageHandlers();
     UpdateTimeScale();
@@ -372,6 +381,64 @@ void GameServer::BindServerCommands()
             {
                 out->info("{}: {}", pPlayer->GetId(), pPlayer->GetUsername().c_str());
             }
+        });
+
+    m_commands.RegisterCommand<int64_t, String>(
+        "DevBindIdentity", "(Development only) Bind a live PlayerId to an explicit OwnerProfileId",
+        [&](Console::ArgStack& aStack)
+        {
+            auto out = spdlog::get("ConOut");
+            const auto playerId = aStack.Pop<int64_t>();
+            const auto ownerProfileId = aStack.Pop<String>();
+
+            if (!bEnableDevelopmentIdentityBinding)
+            {
+                out->error("DevBindIdentity is disabled. Enable Identity:bEnableDevelopmentIdentityBinding explicitly for local development.");
+                return;
+            }
+
+            if (playerId < 0 || playerId > std::numeric_limits<uint32_t>::max())
+            {
+                out->error("PlayerId {} is outside the valid range.", playerId);
+                return;
+            }
+
+            if (ownerProfileId.empty())
+            {
+                out->error("OwnerProfileId must not be empty.");
+                return;
+            }
+
+            auto* pPlayer = m_pWorld->GetPlayerManager().GetById(static_cast<uint32_t>(playerId));
+            if (!pPlayer)
+            {
+                out->error("No active player was found for PlayerId {}.", playerId);
+                return;
+            }
+
+            const auto connectionId = pPlayer->GetConnectionId();
+            const auto* pSession = m_pWorld->GetSessionService().Get(connectionId);
+            if (!pSession)
+            {
+                out->error("No session was found for PlayerId {} (connection {:x}).", playerId, connectionId);
+                return;
+            }
+
+            if (pSession->State != SessionState::kAwaitingIdentity)
+            {
+                out->error("PlayerId {} is not awaiting identity binding; refusing to overwrite the existing session identity.", playerId);
+                return;
+            }
+
+            if (!m_pWorld->GetSessionService().BindIdentity(connectionId, ownerProfileId))
+            {
+                out->error("Identity binding failed for PlayerId {} (connection {:x}).", playerId, connectionId);
+                return;
+            }
+
+            out->info(
+                "Development identity bound: PlayerId {} ('{}', connection {:x}) -> OwnerProfileId '{}'; session is awaiting character selection.",
+                pPlayer->GetId(), pPlayer->GetUsername().c_str(), connectionId, ownerProfileId.c_str());
         });
 
     m_commands.RegisterCommand<>(

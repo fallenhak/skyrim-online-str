@@ -56,6 +56,43 @@ TEST_F(SessionServiceTest, StartsWithoutIdentityAndBindsVerifiedOwner)
     EXPECT_EQ(*sessions.Get(connectionId)->OwnerProfileId, "owner-profile");
 }
 
+TEST_F(SessionServiceTest, RejectsEmptyAndRepeatedIdentityBindings)
+{
+    constexpr TiltedPhoques::ConnectionId_t connectionId = 106;
+    ASSERT_TRUE(sessions.Create(connectionId));
+    ASSERT_TRUE(sessions.MarkAuthenticated(connectionId));
+
+    EXPECT_FALSE(sessions.BindIdentity(connectionId, ""));
+    EXPECT_EQ(sessions.Get(connectionId)->State, SessionState::kAwaitingIdentity);
+    EXPECT_FALSE(sessions.Get(connectionId)->OwnerProfileId.has_value());
+
+    ASSERT_TRUE(sessions.BindIdentity(connectionId, "owner-profile"));
+    EXPECT_FALSE(sessions.BindIdentity(connectionId, "replacement-profile"));
+    EXPECT_EQ(sessions.Get(connectionId)->State, SessionState::kAwaitingCharacterSelection);
+    ASSERT_TRUE(sessions.Get(connectionId)->OwnerProfileId.has_value());
+    EXPECT_EQ(*sessions.Get(connectionId)->OwnerProfileId, "owner-profile");
+}
+
+TEST_F(SessionServiceTest, BindsDifferentOwnersForIndependentSessions)
+{
+    constexpr TiltedPhoques::ConnectionId_t firstConnectionId = 107;
+    constexpr TiltedPhoques::ConnectionId_t secondConnectionId = 108;
+    ASSERT_TRUE(sessions.Create(firstConnectionId));
+    ASSERT_TRUE(sessions.Create(secondConnectionId));
+    ASSERT_TRUE(sessions.MarkAuthenticated(firstConnectionId));
+    ASSERT_TRUE(sessions.MarkAuthenticated(secondConnectionId));
+
+    ASSERT_TRUE(sessions.BindIdentity(firstConnectionId, "first-owner"));
+    ASSERT_TRUE(sessions.BindIdentity(secondConnectionId, "second-owner"));
+
+    ASSERT_TRUE(sessions.Get(firstConnectionId)->OwnerProfileId.has_value());
+    ASSERT_TRUE(sessions.Get(secondConnectionId)->OwnerProfileId.has_value());
+    EXPECT_EQ(*sessions.Get(firstConnectionId)->OwnerProfileId, "first-owner");
+    EXPECT_EQ(*sessions.Get(secondConnectionId)->OwnerProfileId, "second-owner");
+    EXPECT_EQ(sessions.Get(firstConnectionId)->State, SessionState::kAwaitingCharacterSelection);
+    EXPECT_EQ(sessions.Get(secondConnectionId)->State, SessionState::kAwaitingCharacterSelection);
+}
+
 TEST_F(SessionServiceTest, ListsOnlyBoundOwnersRecordsAndKeepsSqlLookingIdsSafe)
 {
     constexpr TiltedPhoques::ConnectionId_t connectionId = 102;
