@@ -1,0 +1,26 @@
+#pragma once
+
+#include <Persistence/CharacterRepository.h>
+
+#include <filesystem>
+
+struct PersistenceService final
+{
+    explicit PersistenceService(std::filesystem::path aDatabasePath = DefaultDatabasePath());
+    ~PersistenceService() noexcept = default;
+
+    PersistenceService(const PersistenceService&) = delete;
+    PersistenceService& operator=(const PersistenceService&) = delete;
+    PersistenceService(PersistenceService&&) = delete;
+    PersistenceService& operator=(PersistenceService&&) = delete;
+
+    [[nodiscard]] Persistence::CharacterRepository& GetCharacterRepository() noexcept { return m_characterRepository; }
+    [[nodiscard]] const Persistence::CharacterRepository& GetCharacterRepository() const noexcept { return m_characterRepository; }
+    [[nodiscard]] const std::filesystem::path& GetDatabasePath() const noexcept { return m_database.GetPath(); }
+
+    [[nodiscard]] static std::filesystem::path DefaultDatabasePath();
+
+private:
+    Persistence::Database m_database;
+    Persistence::CharacterRepository m_characterRepository;
+};

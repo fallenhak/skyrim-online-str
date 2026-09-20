@@ -6,12 +6,15 @@
 #include <Services/PresenceService.h>
 #include <Services/PartyService.h>
 #include <Services/AuthorityService.h>
+#include <Persistence/PersistenceService.h>
 #include <Services/CharacterService.h>
 #include <Services/CalendarService.h>
 #include <Services/QuestService.h>
 #include <Services/ScriptService.h>
 
 #include "Game/PlayerManager.h"
+
+#include <filesystem>
 
 namespace ESLoader
 {
@@ -20,7 +23,7 @@ struct RecordCollection;
 
 struct World : entt::registry
 {
-    World();
+    explicit World(std::filesystem::path aDatabasePath = PersistenceService::DefaultDatabasePath());
     ~World() noexcept;
 
     TP_NOCOPYMOVE(World);
@@ -37,6 +40,8 @@ struct World : entt::registry
     const PartyService& GetPartyService() const noexcept { return ctx().at<const PartyService>(); }
     AuthorityService& GetAuthorityService() noexcept { return ctx().at<AuthorityService>(); }
     const AuthorityService& GetAuthorityService() const noexcept { return ctx().at<const AuthorityService>(); }
+    PersistenceService& GetPersistenceService() noexcept { return ctx().at<PersistenceService>(); }
+    const PersistenceService& GetPersistenceService() const noexcept { return ctx().at<const PersistenceService>(); }
     CalendarService& GetCalendarService() noexcept { return ctx().at<CalendarService>(); }
     const CalendarService& GetCalendarService() const noexcept { return ctx().at<const CalendarService>(); }
     QuestService& GetQuestService() noexcept { return ctx().at<QuestService>(); }

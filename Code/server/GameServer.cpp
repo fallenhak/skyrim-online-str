@@ -32,6 +32,7 @@ Console::Setting bPremiumTickrate{"GameServer:bPremiumMode", "Use premium tick r
 Console::StringSetting sServerName{"GameServer:sServerName", "Name that shows up in the server list", "Dedicated Together Server"};
 Console::StringSetting sAdminPassword{"GameServer:sAdminPassword", "Admin authentication password", ""};
 Console::StringSetting sPassword{"GameServer:sPassword", "Server password", ""};
+Console::StringSetting sPersistenceDatabasePath{"Persistence:sDatabasePath", "SQLite database path relative to the server working directory", "Data/SkyrimTogetherServer.db"};
 Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
 
 // Gameplay
@@ -147,7 +148,7 @@ ServerSettings GetSettings()
     return settings;
 }
 
-GameServer::GameServer(Console::ConsoleRegistry& aConsole) noexcept
+GameServer::GameServer(Console::ConsoleRegistry& aConsole)
     : m_lastFrameTime(std::chrono::high_resolution_clock::now())
     , m_startTime(std::chrono::high_resolution_clock::now())
     , m_commands(aConsole)
@@ -186,7 +187,7 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole) noexcept
     spdlog::info("Server {} started on port {}", BUILD_COMMIT, GetPort());
     UpdateTitle();
 
-    m_pWorld = MakeUnique<World>();
+    m_pWorld = MakeUnique<World>(std::filesystem::path(sPersistenceDatabasePath.value()));
 
     BindMessageHandlers();
     UpdateTimeScale();

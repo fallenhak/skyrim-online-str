@@ -42,7 +42,8 @@ add_requires(
     "gtest v1.14.0", 
     "mem 1.0.0", 
     "glm 0.9.9+8", 
-    "zlib v1.3.1"
+    "zlib v1.3.1",
+    "sqlite3 3.53.0+0"
 )
 if is_plat("windows") then
     add_requires(
