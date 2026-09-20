@@ -2,6 +2,7 @@
 
 struct World;
 struct Player;
+struct GameId;
 
 /**
  * @brief Centralizes decisions about which client may drive replicated world state.
@@ -18,6 +19,8 @@ struct AuthorityService
     TP_NOCOPYMOVE(AuthorityService);
 
     [[nodiscard]] bool CanClaimActor(Player* apClaimant, Player* apCurrentOwner) const noexcept;
+    bool TrySetWeatherState(Player* apPlayer, const GameId& acWeather) const noexcept;
+    [[nodiscard]] bool TryGetWeatherState(Player* apPlayer, GameId& aWeather) const noexcept;
 
 private:
     World& m_world;
