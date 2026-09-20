@@ -46,6 +46,12 @@ private:
         kMaxValue
     };
 
+    struct PendingHealthChange
+    {
+        uint32_t OwnershipEpoch{};
+        float DeltaHealth{};
+    };
+
     /**
      * @brief Creates actor values components for new local components.
      */
@@ -119,5 +125,5 @@ private:
     TransportService& m_transport;
 
     //! @brief Server ids and collected health changes.
-    Map<uint32_t, float> m_smallHealthChanges;
+    Map<uint32_t, PendingHealthChange> m_smallHealthChanges;
 };

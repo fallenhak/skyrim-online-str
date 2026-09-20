@@ -146,12 +146,60 @@ server entity or ownership.
 
 ### Commit
 
-Pending.
+- `81937855` — added the actor mutation authority audit and message matrix.
+- `a4deafcc` — cleaned the audit document formatting.
 
 ### Remaining risks
 
 - Health, projectile, and other concrete mutation/relay gaps remain until their
   focused implementation phases.
+
+## Phase C — Health authority hardening
+
+### Findings
+
+- The client health event carries signed deltas: damage is negative, healing and
+  regeneration are positive.
+- The baseline server handler accepted any sender for any entity ID, used
+  `operator[]` for the health entry, and applied the delta with the wrong sign.
+- The baseline health messages had no ownership epoch, so delayed health updates
+  could cross an ownership incarnation.
+
+### Changes implemented
+
+- Appended `OwnershipEpoch` to request and notification health messages without
+  changing their opcodes or the existing `Id`/`DeltaHealth` field order.
+- Required the server sender to be the current owner of the target entity and
+  the current ownership epoch before applying or relaying a health delta.
+- Applied signed finite deltas to the existing health entry without inserting a
+  missing value, and rejected non-finite input and arithmetic overflow.
+- Required the client producer to use a local actor with a non-zero ownership
+  epoch, retained that epoch while coalescing small health changes, and cleared
+  pending changes on disconnect.
+- Applied remote health notifications only to a matching remote entity and
+  ownership epoch, rejecting stale, non-finite, or unknown notifications.
+
+### Deliberately not implemented
+
+- No max-stat persistence or health clamping was introduced.
+- No combat damage authority, projectile validation, XP, inventory, or session
+  behavior was changed in this phase.
+
+### Tests
+
+- `xmake config --plat=windows --arch=x64 --mode=releasedbg --yes -vD` — passed.
+- `xmake -y TPTests` — passed.
+- `xmake run TPTests` — passed, 171 assertions in 20 test cases.
+- `git diff --check` — passed before commit.
+
+### Commit
+
+Pending until the focused health changes and tests are committed.
+
+### Remaining risks
+
+- Projectile launch and other relay/mutation surfaces still need focused
+  authority treatment.
 
 ## Later phases
 

@@ -4,6 +4,7 @@
 #include <Messages/RequestHealthChangeBroadcast.h>
 #include <Messages/RequestDeathStateChange.h>
 #include <Services/ActorValueService.h>
+#include <Services/ActorHealthChangePolicy.h>
 #include <World.h>
 #include <GameServer.h>
 #include <Messages/NotifyActorValueChanges.h>
@@ -78,21 +79,23 @@ void ActorValueService::OnHealthChangeBroadcast(const PacketEvent<RequestHealthC
 {
     auto& message = acMessage.Packet;
 
-    // TODO(cosideci): should server side health not be updated?
     auto actorValuesView = m_world.view<ActorValuesComponent, OwnerComponent>();
-
     auto it = actorValuesView.find(static_cast<entt::entity>(message.Id));
 
-    if (it != actorValuesView.end())
-    {
-        auto& actorValuesComponent = actorValuesView.get<ActorValuesComponent>(*it);
-        auto currentHealth = actorValuesComponent.CurrentActorValues.ActorValuesList[24];
-        actorValuesComponent.CurrentActorValues.ActorValuesList[24] = currentHealth - message.DeltaHealth;
-    }
+    const bool entityExists = it != actorValuesView.end();
+    const bool isCurrentOwner = entityExists && actorValuesView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch);
+    if (!ActorHealthChangePolicy::IsAuthorized(entityExists, entityExists, isCurrentOwner, message.OwnershipEpoch))
+        return;
+
+    auto& actorValuesComponent = actorValuesView.get<ActorValuesComponent>(*it);
+    // DeltaHealth is signed: damage is negative and healing is positive.
+    if (!ActorHealthChangePolicy::TryApplySignedDelta(actorValuesComponent.CurrentActorValues.ActorValuesList, message.DeltaHealth))
+        return;
 
     NotifyHealthChangeBroadcast notify;
     notify.Id = message.Id;
     notify.DeltaHealth = message.DeltaHealth;
+    notify.OwnershipEpoch = message.OwnershipEpoch;
 
     const entt::entity cEntity = static_cast<entt::entity>(message.Id);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cEntity, acMessage.pPlayer))

@@ -23,6 +23,8 @@
 
 #include <misc/ActorValueOwner.h>
 
+#include <cmath>
+
 ActorValueService::ActorValueService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept
     : m_world(aWorld)
     , m_dispatcher(aDispatcher)
@@ -70,6 +72,7 @@ void ActorValueService::OnDisconnected(const DisconnectedEvent& acEvent) noexcep
 {
     // TODO: this crashes sometimes, no clue why
     m_world.clear<ActorValuesComponent>();
+    m_smallHealthChanges.clear();
 }
 
 void ActorValueService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
@@ -167,9 +170,13 @@ void ActorValueService::OnHealthChange(const HealthChangeEvent& acEvent) noexcep
     if (!m_transport.IsConnected())
         return;
 
-    auto view = m_world.view<FormIdComponent>();
+    if (!std::isfinite(acEvent.DeltaHealth))
+        return;
 
-    const auto hitteeIt = std::find_if(std::begin(view), std::end(view), [id = acEvent.HitteeId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == id; });
+    auto view = m_world.view<FormIdComponent, LocalComponent>();
+
+    const auto hitteeIt = std::find_if(
+        std::begin(view), std::end(view), [id = acEvent.HitteeId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == id; });
 
     if (hitteeIt == std::end(view))
     {
@@ -177,27 +184,30 @@ void ActorValueService::OnHealthChange(const HealthChangeEvent& acEvent) noexcep
         return;
     }
 
-    std::optional<uint32_t> serverIdRes = Utils::GetServerId(*hitteeIt);
-    if (!serverIdRes.has_value())
+    const auto& localComponent = view.get<LocalComponent>(*hitteeIt);
+    if (localComponent.OwnershipEpoch == 0)
     {
-        spdlog::error("{}: failed to find server id", __FUNCTION__);
+        spdlog::debug("{}: local actor has no ownership epoch, form id: {:X}", __FUNCTION__, acEvent.HitteeId);
         return;
     }
 
-    uint32_t serverId = serverIdRes.value();
+    const uint32_t serverId = localComponent.Id;
+    const uint32_t ownershipEpoch = localComponent.OwnershipEpoch;
 
     if (acEvent.DeltaHealth > -1.0f && acEvent.DeltaHealth < 1.0f)
     {
-        if (m_smallHealthChanges.find(serverId) == m_smallHealthChanges.end())
-            m_smallHealthChanges[serverId] = acEvent.DeltaHealth;
-        else
-            m_smallHealthChanges[serverId] += acEvent.DeltaHealth;
+        auto [it, inserted] = m_smallHealthChanges.try_emplace(serverId, PendingHealthChange{ownershipEpoch, 0.f});
+        if (!inserted && it->second.OwnershipEpoch != ownershipEpoch)
+            it->second = PendingHealthChange{ownershipEpoch, 0.f};
+
+        it->second.DeltaHealth += acEvent.DeltaHealth;
         return;
     }
 
     RequestHealthChangeBroadcast requestHealthChange;
     requestHealthChange.Id = serverId;
     requestHealthChange.DeltaHealth = acEvent.DeltaHealth;
+    requestHealthChange.OwnershipEpoch = ownershipEpoch;
 
     m_transport.Send(requestHealthChange);
 
@@ -221,11 +231,12 @@ void ActorValueService::RunSmallHealthUpdates() noexcept
         {
             RequestHealthChangeBroadcast requestHealthChange;
             requestHealthChange.Id = value.first;
-            requestHealthChange.DeltaHealth = value.second;
+            requestHealthChange.DeltaHealth = value.second.DeltaHealth;
+            requestHealthChange.OwnershipEpoch = value.second.OwnershipEpoch;
 
             m_transport.Send(requestHealthChange);
 
-            spdlog::debug("Sent out delta health through timer, {:X}:{:f}", value.first, value.second);
+            spdlog::debug("Sent out delta health through timer, {:X}:{:f}", value.first, value.second.DeltaHealth);
         }
 
         m_smallHealthChanges.clear();
@@ -285,7 +296,21 @@ void ActorValueService::RunActorValuesUpdates() noexcept
 
 void ActorValueService::OnHealthChangeBroadcast(const NotifyHealthChangeBroadcast& acMessage) const noexcept
 {
-    Actor* pActor = Utils::GetByServerId<Actor>(acMessage.Id);
+    if (acMessage.OwnershipEpoch == 0 || !std::isfinite(acMessage.DeltaHealth))
+        return;
+
+    auto view = m_world.view<FormIdComponent, RemoteComponent>();
+    const auto it = std::find_if(std::begin(view), std::end(view), [&acMessage, view](entt::entity entity)
+    {
+        const auto& remoteComponent = view.get<RemoteComponent>(entity);
+        return remoteComponent.Id == acMessage.Id && remoteComponent.OwnershipEpoch == acMessage.OwnershipEpoch;
+    });
+
+    if (it == std::end(view))
+        return;
+
+    const auto& formIdComponent = view.get<FormIdComponent>(*it);
+    Actor* pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
     if (!pActor)
     {
         spdlog::error("{}: could not find actor server id {:X}", __FUNCTION__, acMessage.Id);
@@ -293,6 +318,9 @@ void ActorValueService::OnHealthChangeBroadcast(const NotifyHealthChangeBroadcas
     }
 
     const float newHealth = pActor->GetActorValue(ActorValueInfo::kHealth) + acMessage.DeltaHealth;
+    if (!std::isfinite(newHealth))
+        return;
+
     pActor->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, newHealth);
 
     const float health = pActor->GetActorValue(ActorValueInfo::kHealth);

@@ -14,9 +14,11 @@
 #include <Messages/NotifyCharacterEnteredWorld.h>
 #include <Messages/NotifyCharacterAssignmentRejected.h>
 #include <Messages/NotifyCharacterList.h>
+#include <Messages/NotifyHealthChangeBroadcast.h>
 #include <Messages/NotifyCharacterReadyResult.h>
 #include <Messages/NotifyCharacterSelectionResult.h>
 #include <Messages/RequestCharacterList.h>
+#include <Messages/RequestHealthChangeBroadcast.h>
 #include <Messages/SelectCharacterRequest.h>
 #include <Messages/ServerMessageFactory.h>
 
@@ -99,6 +101,20 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(readyMessage);
         auto parsedReadyRequest = TiltedPhoques::CastUnique<CharacterReadyRequest>(std::move(readyMessage));
         REQUIRE(*parsedReadyRequest == readyRequest);
+
+        RequestHealthChangeBroadcast healthRequest{};
+        healthRequest.Id = 0x1234;
+        healthRequest.DeltaHealth = -12.5f;
+        healthRequest.OwnershipEpoch = 17;
+        TiltedPhoques::Buffer healthBuffer(256);
+        TiltedPhoques::Buffer::Writer healthWriter(&healthBuffer);
+        healthRequest.Serialize(healthWriter);
+
+        TiltedPhoques::Buffer::Reader healthReader(&healthBuffer);
+        auto healthMessage = clientFactory.Extract(healthReader);
+        REQUIRE(healthMessage);
+        auto parsedHealthRequest = TiltedPhoques::CastUnique<RequestHealthChangeBroadcast>(std::move(healthMessage));
+        REQUIRE(*parsedHealthRequest == healthRequest);
     }
 
     SECTION("server list and selection result")
@@ -177,6 +193,20 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(enteredWorldMessage);
         auto parsedEnteredWorld = TiltedPhoques::CastUnique<NotifyCharacterEnteredWorld>(std::move(enteredWorldMessage));
         REQUIRE(*parsedEnteredWorld == enteredWorld);
+
+        NotifyHealthChangeBroadcast healthNotification{};
+        healthNotification.Id = 0x5678;
+        healthNotification.DeltaHealth = 8.25f;
+        healthNotification.OwnershipEpoch = 23;
+        TiltedPhoques::Buffer healthNotificationBuffer(256);
+        TiltedPhoques::Buffer::Writer healthNotificationWriter(&healthNotificationBuffer);
+        healthNotification.Serialize(healthNotificationWriter);
+
+        TiltedPhoques::Buffer::Reader healthNotificationReader(&healthNotificationBuffer);
+        auto healthNotificationMessage = serverFactory.Extract(healthNotificationReader);
+        REQUIRE(healthNotificationMessage);
+        auto parsedHealthNotification = TiltedPhoques::CastUnique<NotifyHealthChangeBroadcast>(std::move(healthNotificationMessage));
+        REQUIRE(*parsedHealthNotification == healthNotification);
 
         NotifyCharacterAssignmentRejected rejection{};
         rejection.Cookie = std::numeric_limits<std::uint32_t>::max();

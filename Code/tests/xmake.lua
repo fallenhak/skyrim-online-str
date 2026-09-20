@@ -3,7 +3,7 @@ target("TPTests")
     set_kind("binary")
     set_group("Tests")
     add_includedirs(
-        ".", "../encoding", "../client")
+        ".", "../encoding", "../client", "../server")
     add_headerfiles("**.h")
     add_files("*.cpp|PersistenceTests.cpp|SessionServiceTests.cpp|ActorPopulationTests.cpp")
     add_deps("SkyrimEncoding")
