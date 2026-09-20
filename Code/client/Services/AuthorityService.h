@@ -17,6 +17,9 @@ struct AuthorityService
     TP_NOCOPYMOVE(AuthorityService);
 
     [[nodiscard]] bool HasLocalActorAuthority() const noexcept;
+    [[nodiscard]] bool HasLocalWorldAuthority() const noexcept;
+    [[nodiscard]] bool HasWorldAuthorityGroup() const noexcept;
+    [[nodiscard]] uint32_t GetWorldAuthorityPlayerId() const noexcept;
 
 private:
     World& m_world;
