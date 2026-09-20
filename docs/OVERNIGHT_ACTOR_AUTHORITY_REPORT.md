@@ -1,8 +1,8 @@
 # Overnight Actor Authority Hardening Report
 
-Repository: `fallenhak/skyrim-online-str`  
-Tracking issue: #28  
-Base milestone: `feature/humanoid-local-suppression`  
+Repository: `fallenhak/skyrim-online-str`
+Tracking issue: #28
+Base milestone: `feature/humanoid-local-suppression`
 Base commit: `34c651b88f8f35293bcb3dce225bf9bf56a666fe`
 
 This report records the evidence, security decisions, implementation changes,
