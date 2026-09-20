@@ -350,7 +350,8 @@ server entity or ownership.
 
 ### Commit
 
-Pending until the Phase F documentation commit.
+- `b323c107` — documented the creature lifecycle, ownership transfer, and
+  deliberate PartyService boundary.
 
 ## Phase G — Combat authority readiness audit
 
@@ -380,7 +381,8 @@ Pending until the Phase F documentation commit.
 
 ### Commit
 
-Pending until the Phase G documentation commit.
+- `b323c107` — documented combat observation limits and the future validated
+  attribution shape without enabling hit claims.
 
 ### Remaining risks
 
