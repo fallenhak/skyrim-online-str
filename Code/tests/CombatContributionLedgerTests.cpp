@@ -72,6 +72,24 @@ TEST_CASE("Combat contribution ledger removes an attacker without connection sta
     REQUIRE(remaining.front().AttackerCharacterId == 13);
 }
 
+TEST_CASE("Combat contribution ledger isolates and clears individual targets", "[combat_authority]")
+{
+    CombatContributionLedger ledger;
+    const CombatContributionLedger::Target firstTarget{1, 1};
+    const CombatContributionLedger::Target secondTarget{2, 1};
+
+    REQUIRE(ledger.RecordValidatedContribution(firstTarget, 10, 1));
+    REQUIRE(ledger.RecordValidatedContribution(secondTarget, 20, 1));
+
+    ledger.ClearTarget(firstTarget);
+
+    REQUIRE(ledger.TargetCount() == 1);
+    REQUIRE(ledger.ConsumeContributionsForDeath(firstTarget, 1).empty());
+    const auto remaining = ledger.ConsumeContributionsForDeath(secondTarget, 1);
+    REQUIRE(remaining.size() == 1);
+    REQUIRE(remaining.front().AttackerCharacterId == 20);
+}
+
 TEST_CASE("Combat contribution ledger saturates observation counters", "[combat_authority]")
 {
     CombatContributionLedger ledger;

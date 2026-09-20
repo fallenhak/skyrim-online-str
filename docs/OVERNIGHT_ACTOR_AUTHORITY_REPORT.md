@@ -420,12 +420,14 @@ server entity or ownership.
 
 - `git diff --check` — passed.
 - `xmake -y TPTests` — passed.
-- `xmake run TPTests` — passed, 241 assertions in 27 test cases.
+- `xmake run TPTests` — passed, 253 assertions in 29 test cases.
 
 ### Commit
 
 - `5c705369` — added the bounded deterministic contribution ledger and pure
   regression tests.
+- A final-review follow-up commit will add explicit target-isolation and
+  single-target cleanup coverage.
 
 ### Remaining risks
 
