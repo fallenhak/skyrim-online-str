@@ -63,6 +63,7 @@
 #include <Messages/NotifyCharacterLoadSnapshot.h>
 #include <Messages/NotifyCharacterReadyResult.h>
 #include <Messages/NotifyCharacterEnteredWorld.h>
+#include <Messages/NotifyProgressionAward.h>
 
 using TiltedPhoques::UniquePtr;
 
@@ -78,7 +79,7 @@ struct ServerMessageFactory
             NotifyProjectileLaunch, NotifyInterruptCast, NotifyAddTarget, NotifyScriptAnimation, NotifyDrawWeapon, NotifyMount, NotifyNewPackage, NotifyRespawn, NotifySyncExperience, NotifyEquipmentChanges, NotifyChatMessageBroadcast, TeleportCommandResponse, NotifyPlayerRespawn, NotifyDialogue,
             NotifySubtitle, NotifyPlayerDialogue, NotifyActorTeleport, NotifyPlayerLeft, NotifyPlayerJoined, NotifyDialogue, NotifySubtitle, NotifyPlayerDialogue, NotifyPlayerLevel, NotifyPlayerCellChanged, NotifyTeleport, NotifyPlayerHealthUpdate, NotifySettingsChange,
             NotifyWeatherChange, NotifySetWaypoint, NotifyRemoveWaypoint, NotifySetTimeResult, NotifyRemoveSpell, NotifyCharacterList, NotifyCharacterSelectionResult, NotifyCharacterLoadSnapshot,
-            NotifyCharacterReadyResult, NotifyCharacterEnteredWorld>;
+            NotifyCharacterReadyResult, NotifyCharacterEnteredWorld, NotifyProgressionAward>;
 
         return s_visitor(std::forward<T>(func));
     }

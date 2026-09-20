@@ -158,7 +158,7 @@ void PlayerService::OnPlayerDialogueEvent(const PlayerDialogueEvent& acEvent) co
 
 void PlayerService::OnPlayerLevelEvent(const PlayerLevelEvent& acEvent) const noexcept
 {
-    if (!m_transport.IsConnected())
+    if (!m_transport.IsConnected() || m_world.GetCharacterSessionService().IsProgressionServerControlled())
         return;
 
     PlayerLevelRequest request{};
@@ -277,6 +277,9 @@ void PlayerService::RunDifficultyUpdates() const noexcept
 void PlayerService::RunLevelUpdates() const noexcept
 {
     // The LevelUp hook is kinda weird, so ehh, just check periodically, doesn't really cost anything.
+
+    if (!m_transport.IsConnected() || m_world.GetCharacterSessionService().IsProgressionServerControlled())
+        return;
 
     static std::chrono::steady_clock::time_point lastSendTimePoint;
     constexpr auto cDelayBetweenUpdates = 1000ms;

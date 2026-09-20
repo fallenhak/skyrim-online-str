@@ -11,6 +11,7 @@
 #include <Events/CharacterWorldSyncStartedEvent.h>
 
 #include <Structs/CharacterLoadSnapshot.h>
+#include <Structs/ProgressionAwardPolicy.h>
 
 #include <entt/entt.hpp>
 
@@ -52,6 +53,10 @@ struct CharacterSessionService final
 
     [[nodiscard]] bool RequestCharacterList() const noexcept;
     [[nodiscard]] bool SelectCharacter(std::uint64_t aCharacterId) const noexcept;
+    [[nodiscard]] bool IsProgressionServerControlled() const noexcept
+    {
+        return ShouldUseServerControlledProgression(m_state != ClientCharacterSessionState::kDisconnected);
+    }
     [[nodiscard]] bool IsGameplayActive() const noexcept { return m_state == ClientCharacterSessionState::kInWorld; }
     [[nodiscard]] ClientCharacterSessionState GetState() const noexcept { return m_state; }
     [[nodiscard]] const std::optional<CharacterLoadSnapshot>& GetPendingCharacterLoadSnapshot() const noexcept { return m_pendingSnapshot; }
