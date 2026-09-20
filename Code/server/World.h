@@ -8,6 +8,7 @@
 #include <Services/AuthorityService.h>
 #include <Persistence/PersistenceService.h>
 #include <Services/CharacterService.h>
+#include <Services/SessionService.h>
 #include <Services/CalendarService.h>
 #include <Services/QuestService.h>
 #include <Services/ScriptService.h>
@@ -42,6 +43,8 @@ struct World : entt::registry
     const AuthorityService& GetAuthorityService() const noexcept { return ctx().at<const AuthorityService>(); }
     PersistenceService& GetPersistenceService() noexcept { return ctx().at<PersistenceService>(); }
     const PersistenceService& GetPersistenceService() const noexcept { return ctx().at<const PersistenceService>(); }
+    SessionService& GetSessionService() noexcept { return ctx().at<SessionService>(); }
+    const SessionService& GetSessionService() const noexcept { return ctx().at<const SessionService>(); }
     CalendarService& GetCalendarService() noexcept { return ctx().at<CalendarService>(); }
     const CalendarService& GetCalendarService() const noexcept { return ctx().at<const CalendarService>(); }
     QuestService& GetQuestService() noexcept { return ctx().at<QuestService>(); }

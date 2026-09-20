@@ -36,6 +36,7 @@ World::World()
     , m_lastFrameTime{std::chrono::high_resolution_clock::now()}
 {
     ctx().emplace<ImguiService>();
+    ctx().emplace<CharacterSessionService>(m_transport, m_dispatcher);
     ctx().emplace<DiscoveryService>(*this, m_dispatcher);
     ctx().emplace<OverlayService>(*this, m_transport, m_dispatcher);
     ctx().emplace<InputService>(ctx().at<OverlayService>());
