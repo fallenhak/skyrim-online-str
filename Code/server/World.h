@@ -9,6 +9,7 @@
 #include <Services/CharacterSaveService.h>
 #include <Persistence/PersistenceService.h>
 #include <Services/CharacterService.h>
+#include <Services/ProgressionService.h>
 #include <Services/SessionService.h>
 #include <Services/CalendarService.h>
 #include <Services/QuestService.h>
@@ -48,6 +49,8 @@ struct World : entt::registry
     const PersistenceService& GetPersistenceService() const noexcept { return ctx().at<const PersistenceService>(); }
     SessionService& GetSessionService() noexcept { return ctx().at<SessionService>(); }
     const SessionService& GetSessionService() const noexcept { return ctx().at<const SessionService>(); }
+    ProgressionService& GetProgressionService() noexcept { return ctx().at<ProgressionService>(); }
+    const ProgressionService& GetProgressionService() const noexcept { return ctx().at<const ProgressionService>(); }
     CalendarService& GetCalendarService() noexcept { return ctx().at<CalendarService>(); }
     const CalendarService& GetCalendarService() const noexcept { return ctx().at<const CalendarService>(); }
     QuestService& GetQuestService() noexcept { return ctx().at<QuestService>(); }

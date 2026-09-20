@@ -31,7 +31,7 @@ Runtime save-back writes only:
 
 The autosave interval defaults to 30 seconds and is controlled by `Persistence:uAutosaveIntervalSeconds`. A value of `0` disables periodic saves; positive values below five seconds use a five-second effective interval. A final save is attempted from `PlayerLeaveEvent` while the persistent ECS entity still exists, before normal character cleanup. The disconnect path uses ECS location/vitals rather than the session or the `Player` cell, which may already have been cleared during teardown.
 
-Runtime save-back never modifies `Name`, `Race`, `Sex`, or `Level`, and it does not persist inventory/equipment, skills, perks, XP, appearance, or actor max/permanent values. Level remains owned by the existing player-level path; future progression persistence is intentionally outside this milestone.
+Runtime save-back never modifies `Name`, `Race`, `Sex`, or `Level`, and it does not persist inventory/equipment, skills, perks, XP, appearance, or actor max/permanent values. Persistent-player level updates are no longer accepted from the client; level remains an existing bootstrap field until a future progression persistence milestone defines server-owned level updates.
 
 Invalid runtime state is rejected without a database write. Repository exceptions are caught at the save service boundary and logged; the live entity is left intact so a later autosave or disconnect attempt can retry. V1 reads the server ECS actor-value map; hardening actor-value authority against client-owned gameplay updates remains future work.
 

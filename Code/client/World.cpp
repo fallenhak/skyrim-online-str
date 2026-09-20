@@ -38,6 +38,7 @@ World::World()
 {
     ctx().emplace<ImguiService>();
     ctx().emplace<CharacterSessionService>(m_transport, m_dispatcher);
+    ctx().emplace<ProgressionService>(*this, m_dispatcher);
     ctx().emplace<CharacterApplyService>(*this, m_dispatcher);
     ctx().emplace<DiscoveryService>(*this, m_dispatcher);
     ctx().emplace<OverlayService>(*this, m_transport, m_dispatcher);

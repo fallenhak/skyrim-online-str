@@ -30,6 +30,7 @@ World::World(std::filesystem::path aDatabasePath)
 
     ctx().emplace<PersistenceService>(std::move(aDatabasePath));
     ctx().emplace<SessionService>(ctx().at<PersistenceService>().GetCharacterRepository());
+    ctx().emplace<ProgressionService>(*this, m_dispatcher);
     ctx().emplace<CharacterService>(*this, m_dispatcher);
     ctx().emplace<CharacterSaveService>(*this, ctx().at<PersistenceService>().GetCharacterRepository(), m_dispatcher);
     ctx().emplace<PlayerService>(*this, m_dispatcher);

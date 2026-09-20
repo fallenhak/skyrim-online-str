@@ -31,7 +31,6 @@
 #include <Events/MountEvent.h>
 #include <Events/InitPackageEvent.h>
 #include <Events/BeastFormChangeEvent.h>
-#include <Events/AddExperienceEvent.h>
 #include <Events/DialogueEvent.h>
 #include <Events/SubtitleEvent.h>
 #include <Events/MoveActorEvent.h>
@@ -55,8 +54,6 @@
 #include <Messages/NotifyNewPackage.h>
 #include <Messages/RequestRespawn.h>
 #include <Messages/NotifyRespawn.h>
-#include <Messages/SyncExperienceRequest.h>
-#include <Messages/NotifySyncExperience.h>
 #include <Messages/DialogueRequest.h>
 #include <Messages/NotifyDialogue.h>
 #include <Messages/SubtitleRequest.h>
@@ -97,9 +94,6 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
 
     m_notifyRespawnConnection = m_dispatcher.sink<NotifyRespawn>().connect<&CharacterService::OnNotifyRespawn>(this);
     m_beastFormChangeConnection = m_dispatcher.sink<BeastFormChangeEvent>().connect<&CharacterService::OnBeastFormChange>(this);
-
-    m_addExperienceEventConnection = m_dispatcher.sink<AddExperienceEvent>().connect<&CharacterService::OnAddExperienceEvent>(this);
-    m_syncExperienceConnection = m_dispatcher.sink<NotifySyncExperience>().connect<&CharacterService::OnNotifySyncExperience>(this);
 
     m_dialogueEventConnection = m_dispatcher.sink<DialogueEvent>().connect<&CharacterService::OnDialogueEvent>(this);
     m_dialogueSyncConnection = m_dispatcher.sink<NotifyDialogue>().connect<&CharacterService::OnNotifyDialogue>(this);
@@ -288,7 +282,6 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
     RunLocalUpdates();
     RunFactionsUpdates();
     RunRemoteUpdates();
-    RunExperienceUpdates();
     ApplyCachedWeaponDraws(acUpdateEvent);
     ProcessLeveledConforms();
 }
@@ -1084,21 +1077,6 @@ void CharacterService::OnNotifyNewPackage(const NotifyNewPackage& acMessage) con
     TESPackage* pPackage = Cast<TESPackage>(pPackageForm);
 
     pActor->SetPackage(pPackage);
-}
-
-void CharacterService::OnAddExperienceEvent(const AddExperienceEvent& acEvent) noexcept
-{
-    m_cachedExperience += acEvent.Experience;
-}
-
-void CharacterService::OnNotifySyncExperience(const NotifySyncExperience& acMessage) noexcept
-{
-    PlayerCharacter* pPlayer = PlayerCharacter::Get();
-
-    if (PlayerCharacter::LastUsedCombatSkill == -1)
-        return;
-
-    pPlayer->AddSkillExperience(PlayerCharacter::LastUsedCombatSkill, acMessage.Experience);
 }
 
 void CharacterService::OnDialogueEvent(const DialogueEvent& acEvent) noexcept
@@ -1945,13 +1923,6 @@ void CharacterService::RunSpawnUpdates() const noexcept
             }
         }
     }
-}
-
-void CharacterService::RunExperienceUpdates() noexcept
-{
-    // Persistent-world characters keep combat skill XP local.
-    // Clear the legacy co-op sharing accumulator without sending it.
-    m_cachedExperience = 0.f;
 }
 
 void CharacterService::ApplyCachedWeaponDraws(const UpdateEvent& acUpdateEvent) noexcept

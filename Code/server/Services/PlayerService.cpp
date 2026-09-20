@@ -4,6 +4,7 @@
 
 #include <Services/PlayerService.h>
 #include <Services/CharacterService.h>
+#include <Components.h>
 #include <GameServer.h>
 
 #include <Messages/ShiftGridCellRequest.h>
@@ -17,6 +18,8 @@
 #include <Messages/PlayerLevelRequest.h>
 #include <Messages/NotifyPlayerLevel.h>
 #include <Messages/NotifyPlayerCellChanged.h>
+
+#include <Structs/ProgressionAwardPolicy.h>
 
 #include <Setting.h>
 namespace
@@ -207,6 +210,14 @@ void PlayerService::OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnReques
 
 void PlayerService::OnPlayerLevelRequest(const PacketEvent<PlayerLevelRequest>& acMessage) const noexcept
 {
+    const auto character = acMessage.pPlayer->GetCharacter();
+    const bool hasPersistentCharacter = character.has_value() && m_world.valid(*character) && m_world.all_of<PersistentCharacterComponent>(*character);
+    if (!ShouldAcceptClientLevel(hasPersistentCharacter))
+    {
+        spdlog::debug("Ignored client level {} for persistent player {:X}; level is not client-authoritative.", acMessage.Packet.NewLevel, acMessage.pPlayer->GetId());
+        return;
+    }
+
     acMessage.pPlayer->SetLevel(acMessage.Packet.NewLevel);
 
     NotifyPlayerLevel notify{};

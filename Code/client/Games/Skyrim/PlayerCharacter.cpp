@@ -8,13 +8,14 @@
 
 #include <Events/InventoryChangeEvent.h>
 #include <Events/BeastFormChangeEvent.h>
-#include <Events/AddExperienceEvent.h>
+#include <Events/ProgressionSkillIntentEvent.h>
 #include <Events/SetWaypointEvent.h>
 #include <Events/RemoveWaypointEvent.h>
 
 #include <World.h>
 
 #include <Games/Skyrim/Forms/ActorValueInfo.h>
+#include <Games/Skyrim/ProgressionSkillMapping.h>
 #include <Games/ActorExtension.h>
 #include <Games/TES.h>
 #include <Games/References.h>
@@ -207,8 +208,34 @@ void TP_MAKE_THISCALL(HookSetBeastForm, void, void* apUnk1, void* apUnk2, bool a
 
 void TP_MAKE_THISCALL(HookAddSkillExperience, PlayerCharacter, int32_t aSkill, float aExperience)
 {
-    // TODO: armor skills? sneak?
     static const Set<int32_t> combatSkills{ActorValueInfo::kAlteration, ActorValueInfo::kConjuration, ActorValueInfo::kDestruction, ActorValueInfo::kIllusion, ActorValueInfo::kRestoration, ActorValueInfo::kOneHanded, ActorValueInfo::kTwoHanded, ActorValueInfo::kMarksman, ActorValueInfo::kBlock};
+
+    const auto progressionSkill = ProgressionSkillFromActorValue(aSkill);
+    const bool isProgressionServerControlled = entt::locator<World>::has_value() && World::Get().GetCharacterSessionService().IsProgressionServerControlled();
+    if (isProgressionServerControlled)
+    {
+        if (!progressionSkill.has_value())
+        {
+            spdlog::debug("Blocked local XP for unsupported ActorValueInfo {} while progression is server-controlled.", aSkill);
+            return;
+        }
+
+        if (combatSkills.contains(aSkill))
+            PlayerCharacter::LastUsedCombatSkill = aSkill;
+
+        // The client reports only which skill was used. It never reports an XP
+        // amount or a character/reward identity while the server is authoritative.
+        World::Get().GetRunner().Trigger(ProgressionSkillIntentEvent{*progressionSkill});
+        spdlog::debug("Blocked local XP for skill {} while progression is server-controlled.", aSkill);
+        return;
+    }
+
+    // Disconnected/offline play retains vanilla skill progression.
+    if (!progressionSkill.has_value())
+    {
+        TiltedPhoques::ThisCall(RealAddSkillExperience, apThis, aSkill, aExperience);
+        return;
+    }
 
     Skills::Skill skill = Skills::GetSkillFromActorValue(aSkill);
     float oldExperience = apThis->GetSkillExperience(skill);
@@ -224,8 +251,6 @@ void TP_MAKE_THISCALL(HookAddSkillExperience, PlayerCharacter, int32_t aSkill, f
     {
         spdlog::debug("Set new last used combat skill to {}.", aSkill);
         PlayerCharacter::LastUsedCombatSkill = aSkill;
-
-        World::Get().GetRunner().Trigger(AddExperienceEvent(deltaExperience));
     }
 }
 

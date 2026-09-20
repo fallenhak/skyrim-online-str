@@ -120,5 +120,6 @@ enum ServerOpcode : unsigned char
     kNotifyCharacterLoadSnapshot,
     kNotifyCharacterReadyResult,
     kNotifyCharacterEnteredWorld,
+    kNotifyProgressionAward,
     kServerOpcodeMax
 };

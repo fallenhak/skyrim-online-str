@@ -33,8 +33,6 @@ struct InitPackageEvent;
 struct NotifyNewPackage;
 struct NotifyRespawn;
 struct BeastFormChangeEvent;
-struct AddExperienceEvent;
-struct NotifySyncExperience;
 struct DialogueEvent;
 struct NotifyDialogue;
 struct SubtitleEvent;
@@ -80,8 +78,6 @@ struct CharacterService
     void OnNotifyNewPackage(const NotifyNewPackage& acMessage) const noexcept;
     void OnNotifyRespawn(const NotifyRespawn& acMessage) const noexcept;
     void OnBeastFormChange(const BeastFormChangeEvent& acEvent) const noexcept;
-    void OnAddExperienceEvent(const AddExperienceEvent& acEvent) noexcept;
-    void OnNotifySyncExperience(const NotifySyncExperience& acMessage) noexcept;
     void OnDialogueEvent(const DialogueEvent& acEvent) noexcept;
     void OnNotifyDialogue(const NotifyDialogue& acMessage) noexcept;
     void OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept;
@@ -109,14 +105,11 @@ private:
     void RunRemoteUpdates() noexcept;
     void RunFactionsUpdates() const noexcept;
     void RunSpawnUpdates() const noexcept;
-    void RunExperienceUpdates() noexcept;
     void ApplyCachedWeaponDraws(const UpdateEvent& acUpdateEvent) noexcept;
 
     World& m_world;
     entt::dispatcher& m_dispatcher;
     TransportService& m_transport;
-
-    float m_cachedExperience = 0.f;
 
     // TODO: revamp this, read the local anim var like vampire lord?
     struct WeaponDrawData
@@ -158,8 +151,6 @@ private:
     entt::scoped_connection m_newPackageConnection;
     entt::scoped_connection m_notifyRespawnConnection;
     entt::scoped_connection m_beastFormChangeConnection;
-    entt::scoped_connection m_addExperienceEventConnection;
-    entt::scoped_connection m_syncExperienceConnection;
     entt::scoped_connection m_dialogueEventConnection;
     entt::scoped_connection m_dialogueSyncConnection;
     entt::scoped_connection m_subtitleEventConnection;
