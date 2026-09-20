@@ -13,3 +13,18 @@ bool AuthorityService::HasLocalActorAuthority() const noexcept
 {
     return m_world.GetPartyService().IsLeader();
 }
+
+bool AuthorityService::HasLocalWorldAuthority() const noexcept
+{
+    return m_world.GetPartyService().IsLeader();
+}
+
+bool AuthorityService::HasWorldAuthorityGroup() const noexcept
+{
+    return m_world.GetPartyService().IsInParty();
+}
+
+uint32_t AuthorityService::GetWorldAuthorityPlayerId() const noexcept
+{
+    return m_world.GetPartyService().GetLeaderPlayerId();
+}
