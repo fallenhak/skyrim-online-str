@@ -47,7 +47,7 @@ void sendPlayerMessage(const ChatMessageType acType, const String acContent, Pla
     case kPlayerDialogue:
         if (character)
         {
-            if (!GameServer::Get()->SendToPlayersInRange(notifyMessage, *character, aSendingPlayer))
+            if (!GameServer::Get()->SendToPlayersInRange(notifyMessage, *character))
                 spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
         }
         break;
