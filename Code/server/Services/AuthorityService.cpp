@@ -8,20 +8,13 @@ AuthorityService::AuthorityService(World& aWorld) noexcept
 {
 }
 
-bool AuthorityService::CanClaimActor(Player* apClaimant, Player* apCurrentOwner) const noexcept
+bool AuthorityService::CanClaimActor(Player*, Player*) const noexcept
 {
-    if (!apClaimant || !apCurrentOwner)
-        return false;
-
-    auto& partyService = m_world.GetPartyService();
-    if (!partyService.IsPlayerInParty(apClaimant) || !partyService.IsPlayerLeader(apClaimant))
-        return false;
-
-    PartyService::Party* const pParty = partyService.GetPlayerParty(apClaimant);
-    if (!pParty)
-        return false;
-
-    return std::find(pParty->Members.begin(), pParty->Members.end(), apCurrentOwner) != pParty->Members.end();
+    // Persistent-world ownership is not transferred merely because another
+    // player has a social/party role. Initial discovery assigns an owner and
+    // CharacterService hands ownership to another in-range player when the
+    // current owner relinquishes control or becomes unavailable.
+    return false;
 }
 
 bool AuthorityService::TrySetWeatherState(Player* apPlayer, const GameId& acWeather) const noexcept
