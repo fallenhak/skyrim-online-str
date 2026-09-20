@@ -11,6 +11,7 @@
 #include <Services/DiscordService.h>
 #include <Services/ObjectService.h>
 #include <Services/QuestService.h>
+#include <Services/PresenceService.h>
 #include <Services/AuthorityService.h>
 #include <Services/ActorValueService.h>
 #include <Services/InventoryService.h>
@@ -46,6 +47,7 @@ World::World()
     ctx().emplace<CalendarService>(*this, m_dispatcher, m_transport);
     ctx().emplace<QuestService>(*this, m_dispatcher);
     ctx().emplace<PartyService>(*this, m_dispatcher, m_transport);
+    ctx().emplace<PresenceService>(m_dispatcher);
     ctx().emplace<AuthorityService>(*this, m_dispatcher);
     ctx().emplace<ActorValueService>(*this, m_dispatcher, m_transport);
     ctx().emplace<InventoryService>(*this, m_dispatcher, m_transport);
