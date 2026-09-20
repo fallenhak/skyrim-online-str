@@ -29,6 +29,7 @@ World::World(std::filesystem::path aDatabasePath)
     spdlog::default_logger()->sinks().push_back(std::static_pointer_cast<spdlog::sinks::sink>(m_spAdminService));
 
     ctx().emplace<PersistenceService>(std::move(aDatabasePath));
+    ctx().emplace<SessionService>(ctx().at<PersistenceService>().GetCharacterRepository());
     ctx().emplace<CharacterService>(*this, m_dispatcher);
     ctx().emplace<PlayerService>(*this, m_dispatcher);
     ctx().emplace<PresenceService>(*this, m_dispatcher);

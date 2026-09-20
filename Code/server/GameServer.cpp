@@ -19,6 +19,10 @@
 #include <Messages/NotifyPlayerJoined.h>
 #include <Messages/NotifyPlayerLeft.h>
 #include <Messages/NotifySettingsChange.h>
+#include <Messages/NotifyCharacterList.h>
+#include <Messages/NotifyCharacterSelectionResult.h>
+#include <Messages/RequestCharacterList.h>
+#include <Messages/SelectCharacterRequest.h>
 #include <console/ConsoleRegistry.h>
 #include <resources/ResourceCollection.h>
 
@@ -278,6 +282,45 @@ void GameServer::BindMessageHandlers()
     };
 
     ClientMessageFactory::Visit(handlerGenerator);
+
+    m_messageHandlers[RequestCharacterList::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
+    {
+        auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
+        if (!pPlayer)
+        {
+            spdlog::error("Connection {:x} is not associated with a player.", aConnectionId);
+            Kick(aConnectionId);
+            return;
+        }
+
+        auto pRealMessage = CastUnique<RequestCharacterList>(std::move(apMessage));
+        (void)pRealMessage;
+
+        const auto characters = m_pWorld->GetSessionService().ListCharacters(aConnectionId);
+        if (!characters.has_value())
+            return;
+
+        NotifyCharacterList response{};
+        response.Characters = *characters;
+        pPlayer->Send(response);
+    };
+
+    m_messageHandlers[SelectCharacterRequest::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
+    {
+        auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
+        if (!pPlayer)
+        {
+            spdlog::error("Connection {:x} is not associated with a player.", aConnectionId);
+            Kick(aConnectionId);
+            return;
+        }
+
+        const auto pRealMessage = CastUnique<SelectCharacterRequest>(std::move(apMessage));
+
+        NotifyCharacterSelectionResult response{};
+        response.Status = m_pWorld->GetSessionService().SelectCharacter(aConnectionId, pRealMessage->CharacterId);
+        pPlayer->Send(response);
+    };
 
     // Override authentication request
     m_messageHandlers[AuthenticationRequest::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
@@ -605,12 +648,15 @@ void GameServer::OnConsume(const void* apData, const uint32_t aSize, const Conne
 void GameServer::OnConnection(const ConnectionId_t aHandle)
 {
     spdlog::info("Connection received {:x}", aHandle);
+    if (!m_pWorld->GetSessionService().Create(aHandle))
+        spdlog::warn("Session already exists for connection {:x}", aHandle);
     UpdateTitle();
 }
 
 void GameServer::OnDisconnection(const ConnectionId_t aConnectionId, EDisconnectReason aReason)
 {
     m_adminSessions.erase(aConnectionId);
+    m_pWorld->GetSessionService().Remove(aConnectionId);
 
     auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
 
@@ -966,9 +1012,13 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
         {
             spdlog::info("New player {:x} has a been rejected because \"{}\".", aConnectionId, reason.c_str());
             Kick(aConnectionId);
+            m_pWorld->GetSessionService().Remove(aConnectionId);
             m_pWorld->GetPlayerManager().Remove(pPlayer);
             return;
         }
+
+        if (!m_pWorld->GetSessionService().MarkAuthenticated(aConnectionId))
+            spdlog::warn("Unable to transition session {:x} to identity binding state", aConnectionId);
 
         serverResponse.PlayerId = pPlayer->GetId();
 

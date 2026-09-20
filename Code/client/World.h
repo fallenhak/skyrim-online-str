@@ -6,6 +6,7 @@
 #include <Services/PresenceService.h>
 #include <Services/AuthorityService.h>
 #include <Services/CharacterService.h>
+#include <Services/CharacterSessionService.h>
 #include <Services/OverlayService.h>
 #include <Services/CharacterService.h>
 #include <Services/MagicService.h>
@@ -34,6 +35,8 @@ struct World : entt::registry
     const AuthorityService& GetAuthorityService() const noexcept { return ctx().at<const AuthorityService>(); }
     CharacterService& GetCharacterService() noexcept { return ctx().at<CharacterService>(); }
     const CharacterService& GetCharacterService() const noexcept { return ctx().at<const CharacterService>(); }
+    CharacterSessionService& GetCharacterSessionService() noexcept { return ctx().at<CharacterSessionService>(); }
+    const CharacterSessionService& GetCharacterSessionService() const noexcept { return ctx().at<const CharacterSessionService>(); }
     OverlayService& GetOverlayService() noexcept { return ctx().at<OverlayService>(); }
     const OverlayService& GetOverlayService() const noexcept { return ctx().at<const OverlayService>(); }
     DebugService& GetDebugService() noexcept { return ctx().at<DebugService>(); }
