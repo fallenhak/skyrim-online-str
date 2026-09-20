@@ -1,6 +1,8 @@
 #pragma once
 #include "Structs/Inventory.h"
 #include "Structs/ActorData.h"
+#include <Structs/CharacterAssignmentRejectReason.h>
+#include <Services/PopulationDisableTracker.h>
 
 struct ActorAddedEvent;
 struct ActorRemovedEvent;
@@ -90,6 +92,9 @@ struct CharacterService
     void ProcessNewEntity(entt::entity aEntity) const noexcept;
 
 private:
+    void ApplyPhysicalPopulationSuppression(entt::entity aEntity, CharacterAssignmentRejectReason aReason) const noexcept;
+    void EnsureOwnedPopulationDisable(uint32_t aFormId) const noexcept;
+    void RestoreOwnedPopulationDisable(uint32_t aFormId) const noexcept;
     void MoveActor(const Actor* apActor, const GameId& acWorldSpaceId, const GameId& acCellId, const Vector3_NetQuantize& acPosition) const noexcept;
 
     void RequestServerAssignment(entt::entity aEntity) const noexcept;
@@ -132,6 +137,7 @@ private:
     // Actor form ID -> pick form ID. The active stage lives in ActorExtension.
     // Written from const message handlers, drained by ProcessLeveledConforms.
     mutable Map<uint32_t, uint32_t> m_pendingLeveledConforms{};
+    mutable PopulationDisableTracker m_populationDisableTracker{};
 
     entt::scoped_connection m_referenceAddedConnection;
     entt::scoped_connection m_referenceRemovedConnection;

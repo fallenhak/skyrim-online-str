@@ -241,6 +241,9 @@ void CharacterService::OnActorAdded(const ActorAddedEvent& acEvent) noexcept
     m_world.emplace_or_replace<FormIdComponent>(entity, acEvent.FormId);
     m_world.emplace_or_replace<EarlyAnimationBufferComponent>(entity);
 
+    if (m_populationDisableTracker.OwnsDisable(acEvent.FormId))
+        m_world.emplace_or_replace<PopulationSuppressedComponent>(entity, CharacterAssignmentRejectReason::kPopulationHumanoidDenied);
+
     ProcessNewEntity(entity);
 }
 
@@ -270,6 +273,8 @@ void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
     if (m_world.all_of<FormIdComponent>(cId))
         m_world.remove<FormIdComponent>(cId);
 
+    // DisableImpl can make DiscoveryService report this reference as removed.
+    // Keep the independent session ownership registry so disconnect can restore it.
     m_world.remove<PopulationSuppressedComponent>(cId);
 
     if (m_world.orphan(cId))
@@ -299,6 +304,7 @@ void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const
 void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEvent) const noexcept
 {
     m_worldSyncStarted = false;
+    const auto disabledForms = m_populationDisableTracker.DrainOwnedDisables();
     auto remoteView = m_world.view<FormIdComponent, RemoteComponent>();
     for (auto entity : remoteView)
     {
@@ -330,6 +336,9 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
     }
 
     m_pendingLeveledConforms.clear();
+
+    for (const auto formId : disabledForms)
+        RestoreOwnedPopulationDisable(formId);
 }
 
 void CharacterService::BeginLocalPlayerAssignment(const CharacterPlayerAssignmentStartedEvent&) const noexcept
@@ -1176,6 +1185,126 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
     spdlog::info("Successfully teleported actor, form id: {:X}, world space: {:X}, cell: {:X}, position: ({}, {}, {})", pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
 }
 
+void CharacterService::ApplyPhysicalPopulationSuppression(const entt::entity aEntity, const CharacterAssignmentRejectReason aReason) const noexcept
+{
+    if (!PopulationSuppressionPolicy::ShouldPhysicallySuppress(aReason))
+        return;
+
+    const auto* const pFormIdComponent = m_world.try_get<FormIdComponent>(aEntity);
+    if (!pFormIdComponent)
+    {
+        spdlog::warn("Cannot physically suppress population actor without a form id component.");
+        return;
+    }
+
+    const uint32_t cFormId = pFormIdComponent->Id;
+    Actor* const pActor = Cast<Actor>(TESForm::GetById(cFormId));
+    if (!pActor)
+    {
+        spdlog::debug("Cannot physically suppress population actor {:X}: local actor is unavailable.", cFormId);
+        return;
+    }
+
+    const auto* const pExtension = pActor->GetExtension();
+    const bool isPlayer = cFormId == PopulationSuppressionPolicy::kPlayerFormId || (pExtension && pExtension->IsPlayer());
+    if (isPlayer)
+    {
+        spdlog::error("Refused to physically suppress player population actor {:X}.", cFormId);
+        return;
+    }
+
+    if (m_populationDisableTracker.OwnsDisable(cFormId))
+    {
+        EnsureOwnedPopulationDisable(cFormId);
+        return;
+    }
+
+    const bool isTemporary = pActor->IsTemporary();
+    const bool isDeleted = pActor->IsDeleted();
+    const bool wasAlreadyDisabled = pActor->IsDisabled();
+    if (!PopulationSuppressionPolicy::ShouldOwnDisable(aReason, cFormId, isPlayer, isTemporary, isDeleted, wasAlreadyDisabled))
+    {
+        spdlog::debug(
+            "Did not claim population disable for actor {:X}: temporary {}, deleted {}, already disabled {}",
+            cFormId,
+            isTemporary,
+            isDeleted,
+            wasAlreadyDisabled);
+        return;
+    }
+
+    // Record ownership before the asynchronous engine call can cause discovery
+    // to report this reference as removed.
+    if (!m_populationDisableTracker.OwnDisable(cFormId))
+        return;
+
+    pActor->DisableImpl();
+    spdlog::debug("Physically suppressed humanoid population actor {:X} for this multiplayer session.", cFormId);
+}
+
+void CharacterService::EnsureOwnedPopulationDisable(const uint32_t aFormId) const noexcept
+{
+    if (aFormId == PopulationSuppressionPolicy::kPlayerFormId)
+    {
+        spdlog::error("Refused to re-suppress player population actor {:X}.", aFormId);
+        return;
+    }
+
+    Actor* const pActor = Cast<Actor>(TESForm::GetById(aFormId));
+    if (!pActor)
+    {
+        spdlog::debug("Tracked population actor {:X} is unavailable for re-suppression.", aFormId);
+        return;
+    }
+
+    const auto* const pExtension = pActor->GetExtension();
+    if (pActor->IsTemporary() || pActor->IsDeleted() || (pExtension && pExtension->IsPlayer()))
+    {
+        spdlog::debug("Tracked population actor {:X} is no longer eligible for re-suppression.", aFormId);
+        return;
+    }
+
+    if (pActor->IsDisabled())
+        return;
+
+    pActor->DisableImpl();
+    spdlog::debug("Re-suppressed tracked humanoid population actor {:X}.", aFormId);
+}
+
+void CharacterService::RestoreOwnedPopulationDisable(const uint32_t aFormId) const noexcept
+{
+    if (aFormId == PopulationSuppressionPolicy::kPlayerFormId)
+    {
+        spdlog::error("Refused to restore player population actor {:X}.", aFormId);
+        return;
+    }
+
+    Actor* const pActor = Cast<Actor>(TESForm::GetById(aFormId));
+    if (!pActor)
+    {
+        spdlog::debug("Could not resolve tracked population actor {:X} during disconnect restoration.", aFormId);
+        return;
+    }
+
+    const auto* const pExtension = pActor->GetExtension();
+    if (pActor->IsTemporary() || (pExtension && pExtension->IsPlayer()))
+    {
+        spdlog::debug("Skipped restoration for ineligible tracked population actor {:X}.", aFormId);
+        return;
+    }
+
+    if (pActor->IsDeleted())
+    {
+        spdlog::debug("Skipped restoration for deleted tracked population actor {:X}.", aFormId);
+        return;
+    }
+
+    // Do not require IsDisabled(): DisableImpl is asynchronous and disconnect
+    // may race the engine's disabled-flag update.
+    pActor->EnableImpl();
+    spdlog::debug("Restored population actor {:X} after multiplayer disconnect.", aFormId);
+}
+
 void CharacterService::OnCharacterAssignmentRejected(const NotifyCharacterAssignmentRejected& acMessage) noexcept
 {
     auto view = m_world.view<WaitingForAssignmentComponent>();
@@ -1211,6 +1340,7 @@ void CharacterService::OnCharacterAssignmentRejected(const NotifyCharacterAssign
     m_world.remove<CacheComponent>(cEntity);
     m_world.remove<EarlyAnimationBufferComponent>(cEntity);
     m_world.emplace_or_replace<PopulationSuppressedComponent>(cEntity, acMessage.Reason);
+    ApplyPhysicalPopulationSuppression(cEntity, acMessage.Reason);
 
     spdlog::debug("Suppressed local population actor after assignment rejection for cookie {:X}, reason {}", acMessage.Cookie, static_cast<unsigned>(acMessage.Reason));
 }
@@ -1259,13 +1389,20 @@ void CharacterService::MoveActor(const Actor* apActor, const GameId& acWorldSpac
 
 void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
 {
+    const auto& formIdComponent = m_world.get<FormIdComponent>(aEntity);
+    if (m_populationDisableTracker.OwnsDisable(formIdComponent.Id))
+    {
+        m_world.remove<CacheComponent, EarlyAnimationBufferComponent>(aEntity);
+        m_world.emplace_or_replace<PopulationSuppressedComponent>(aEntity, CharacterAssignmentRejectReason::kPopulationHumanoidDenied);
+        EnsureOwnedPopulationDisable(formIdComponent.Id);
+        return;
+    }
+
     if (PopulationSuppressionPolicy::ShouldSkipAssignment(m_world.all_of<PopulationSuppressedComponent>(aEntity)))
         return;
 
     if (!m_transport.IsOnline() || !m_world.GetCharacterSessionService().IsGameplayActive())
         return;
-
-    auto& formIdComponent = m_world.get<FormIdComponent>(aEntity);
 
     Actor* const pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
     if (!pActor)
