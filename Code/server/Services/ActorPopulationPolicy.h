@@ -41,6 +41,8 @@ public:
     void SetRecordCollection(const ESLoader::RecordCollection* apRecordCollection) noexcept;
     void SetRaceClassification(TiltedPhoques::String aRaceEditorId, ActorPopulationClass aClassification);
 
+    // Accepts the local/player special case or an already-resolved server form
+    // identity. Network GameIds must go through ActorPopulationIdentityResolver.
     [[nodiscard]] ActorPopulationClassification ClassifyActor(const GameId& aActorReference) const noexcept;
     [[nodiscard]] ActorPopulationClassification ClassifyNpcBase(uint32_t aResolvedNpcBaseFormId) const noexcept;
 

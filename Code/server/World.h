@@ -11,6 +11,7 @@
 #include <Services/CharacterService.h>
 #include <Services/ProgressionService.h>
 #include <Services/ActorPopulationPolicy.h>
+#include <Services/ActorPopulationIdentityResolver.h>
 #include <Services/SessionService.h>
 #include <Services/CalendarService.h>
 #include <Services/QuestService.h>
@@ -54,6 +55,8 @@ struct World : entt::registry
     const ProgressionService& GetProgressionService() const noexcept { return ctx().at<const ProgressionService>(); }
     ActorPopulationPolicy& GetActorPopulationPolicy() noexcept { return ctx().at<ActorPopulationPolicy>(); }
     const ActorPopulationPolicy& GetActorPopulationPolicy() const noexcept { return ctx().at<const ActorPopulationPolicy>(); }
+    ActorPopulationIdentityResolver& GetActorPopulationIdentityResolver() noexcept { return ctx().at<ActorPopulationIdentityResolver>(); }
+    const ActorPopulationIdentityResolver& GetActorPopulationIdentityResolver() const noexcept { return ctx().at<const ActorPopulationIdentityResolver>(); }
     CalendarService& GetCalendarService() noexcept { return ctx().at<CalendarService>(); }
     const CalendarService& GetCalendarService() const noexcept { return ctx().at<const CalendarService>(); }
     QuestService& GetQuestService() noexcept { return ctx().at<QuestService>(); }

@@ -63,10 +63,12 @@ World::World(std::filesystem::path aDatabasePath, bool aEnableActorRecordLoading
         spdlog::warn("Actor population classification records are unavailable; NPC classification will remain Unknown.");
 
     ctx().emplace<ActorPopulationPolicy>(m_recordCollection.get());
+    auto& modsComponent = ctx().at<ModsComponent>();
     for (const auto& it : loader.GetLoadOrder())
     {
-        ctx().emplace<ModsComponent>().AddServerMod(it);
+        modsComponent.AddServerMod(it);
     }
+    ctx().emplace<ActorPopulationIdentityResolver>(modsComponent, m_recordCollection.get(), ctx().at<ActorPopulationPolicy>());
 
     // late initialize the ScriptService to ensure all components are valid
     m_pScriptService = TiltedPhoques::MakeUnique<ScriptService>(*this, m_dispatcher);
