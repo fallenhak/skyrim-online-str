@@ -47,6 +47,16 @@ Console::Setting bEnableActorRecordLoading{
     "Enable full server plugin record parsing for actor-population NPC/race classification at startup; not runtime filtering",
     false,
     Console::SettingsFlags::kLocked};
+Console::Setting bEnableHumanoidAssignmentGate{
+    "Population:bEnableHumanoidAssignmentGate",
+    "Reject trusted vanilla humanoid NPCs from becoming STR-managed server entities",
+    false,
+    Console::SettingsFlags::kLocked};
+Console::Setting bAllowUnknownActorAssignments{
+    "Population:bAllowUnknownActorAssignments",
+    "Allow actor assignments when server population identity is unknown or untrusted",
+    true,
+    Console::SettingsFlags::kLocked};
 Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
 Console::Setting bEnableDevelopmentIdentityBinding{
     "Identity:bEnableDevelopmentIdentityBinding", "(Development only) Allow server operators to bind a live player to an explicit owner profile", false, Console::SettingsFlags::kLocked};
@@ -203,7 +213,8 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole)
     spdlog::info("Server {} started on port {}", BUILD_COMMIT, GetPort());
     UpdateTitle();
 
-    m_pWorld = MakeUnique<World>(std::filesystem::path(sPersistenceDatabasePath.value()), bEnableActorRecordLoading);
+    m_pWorld = MakeUnique<World>(
+        std::filesystem::path(sPersistenceDatabasePath.value()), bEnableActorRecordLoading, bEnableHumanoidAssignmentGate, bAllowUnknownActorAssignments);
 
     if (bEnableDevelopmentIdentityBinding)
     {

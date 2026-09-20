@@ -39,6 +39,7 @@ struct SubtitleEvent;
 struct NotifySubtitle;
 struct NotifyActorTeleport;
 struct AuthorityChangedEvent;
+struct NotifyCharacterAssignmentRejected;
 
 struct Actor;
 struct World;
@@ -66,6 +67,7 @@ struct CharacterService
     void BeginLocalPlayerAssignment(const CharacterPlayerAssignmentStartedEvent& acEvent) const noexcept;
     void BeginWorldSync(const CharacterWorldSyncStartedEvent& acEvent) const noexcept;
     void OnAssignCharacter(const AssignCharacterResponse& acMessage) noexcept;
+    void OnCharacterAssignmentRejected(const NotifyCharacterAssignmentRejected& acMessage) noexcept;
     void OnCharacterSpawn(const CharacterSpawnRequest& acMessage) const noexcept;
     void OnReferencesMoveRequest(const ServerReferencesMoveRequest& acMessage) const noexcept;
     void OnActionEvent(const ActionEvent& acActionEvent) const noexcept;
@@ -143,6 +145,7 @@ private:
     entt::scoped_connection m_playerAssignmentStartedConnection;
     entt::scoped_connection m_worldSyncStartedConnection;
     entt::scoped_connection m_assignCharacterConnection;
+    entt::scoped_connection m_assignmentRejectedConnection;
     entt::scoped_connection m_characterSpawnConnection;
     entt::scoped_connection m_referenceMovementSnapshotConnection;
     entt::scoped_connection m_mountConnection;

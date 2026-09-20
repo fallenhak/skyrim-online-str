@@ -17,6 +17,7 @@
 #include <Messages/AssignCharacterResponse.h>
 #include <Messages/NotifyCharacterReadyResult.h>
 #include <Messages/NotifyCharacterEnteredWorld.h>
+#include <Messages/NotifyCharacterAssignmentRejected.h>
 #include <Messages/ServerReferencesMoveRequest.h>
 #include <Messages/ClientReferencesMoveRequest.h>
 #include <Messages/CharacterSpawnRequest.h>
@@ -211,6 +212,28 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
             static_cast<unsigned>(identity.Classification.Class),
             GetActorPopulationIdentitySourceName(identity.Source),
             identity.IsTrusted());
+
+        const auto decision = m_world.GetActorPopulationAssignmentPolicy().Decide(identity);
+        if (decision != ActorPopulationAssignmentDecision::kAllow)
+        {
+            NotifyCharacterAssignmentRejected rejection{};
+            rejection.Cookie = message.Cookie;
+            rejection.Reason = decision == ActorPopulationAssignmentDecision::kRejectHumanoid ? CharacterAssignmentRejectReason::kPopulationHumanoidDenied : CharacterAssignmentRejectReason::kPopulationUnknownDenied;
+            acMessage.pPlayer->Send(rejection);
+
+            spdlog::debug(
+                "Rejected actor assignment for player {:x}: reference {:x}:{:x}, NPC {:08x}, race {:08x} '{}', classification {}, source {}, reason {}",
+                acMessage.pPlayer->GetId(),
+                refId.ModId,
+                refId.BaseId,
+                identity.ResolvedNpcFormId,
+                identity.Classification.RaceFormId,
+                identity.Classification.RaceEditorId.c_str(),
+                static_cast<unsigned>(identity.Classification.Class),
+                GetActorPopulationIdentitySourceName(identity.Source),
+                static_cast<unsigned>(rejection.Reason));
+            return;
+        }
 
         if (identity.Source == ActorPopulationIdentitySource::kServerPlacedReference && identity.HasClientClaimedIdentity &&
             identity.ClientClaimedNpcFormId != identity.ResolvedNpcFormId)

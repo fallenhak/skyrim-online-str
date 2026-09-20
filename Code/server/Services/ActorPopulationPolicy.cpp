@@ -6,14 +6,29 @@
 
 #include <utility>
 
-ActorPopulationPolicy::ActorPopulationPolicy(const ESLoader::RecordCollection* apRecordCollection) noexcept
+ActorPopulationPolicy::ActorPopulationPolicy(const ESLoader::RecordCollection* apRecordCollection)
     : m_recordCollection(apRecordCollection)
 {
+    InstallVanillaHumanoidRules();
 }
 
 void ActorPopulationPolicy::SetRecordCollection(const ESLoader::RecordCollection* apRecordCollection) noexcept
 {
     m_recordCollection = apRecordCollection;
+}
+
+void ActorPopulationPolicy::InstallVanillaHumanoidRules()
+{
+    SetRaceClassification("NordRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("BretonRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("ImperialRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("RedguardRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("HighElfRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("WoodElfRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("DarkElfRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("OrcRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("ArgonianRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("KhajiitRace", ActorPopulationClass::kHumanoidNpc);
 }
 
 void ActorPopulationPolicy::SetRaceClassification(TiltedPhoques::String aRaceEditorId, ActorPopulationClass aClassification)

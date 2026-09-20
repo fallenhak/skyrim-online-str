@@ -12,6 +12,7 @@
 #include <Messages/CharacterReadyRequest.h>
 #include <Messages/NotifyCharacterLoadSnapshot.h>
 #include <Messages/NotifyCharacterEnteredWorld.h>
+#include <Messages/NotifyCharacterAssignmentRejected.h>
 #include <Messages/NotifyCharacterList.h>
 #include <Messages/NotifyCharacterReadyResult.h>
 #include <Messages/NotifyCharacterSelectionResult.h>
@@ -176,6 +177,24 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(enteredWorldMessage);
         auto parsedEnteredWorld = TiltedPhoques::CastUnique<NotifyCharacterEnteredWorld>(std::move(enteredWorldMessage));
         REQUIRE(*parsedEnteredWorld == enteredWorld);
+
+        NotifyCharacterAssignmentRejected rejection{};
+        rejection.Cookie = std::numeric_limits<std::uint32_t>::max();
+        rejection.Reason = CharacterAssignmentRejectReason::kPopulationHumanoidDenied;
+        TiltedPhoques::Buffer rejectionBuffer(256);
+        TiltedPhoques::Buffer::Writer rejectionWriter(&rejectionBuffer);
+        rejection.Serialize(rejectionWriter);
+
+        TiltedPhoques::Buffer::Reader rejectionReader(&rejectionBuffer);
+        auto rejectionNetworkMessage = serverFactory.Extract(rejectionReader);
+        REQUIRE(rejectionNetworkMessage);
+        auto parsedRejection = TiltedPhoques::CastUnique<NotifyCharacterAssignmentRejected>(std::move(rejectionNetworkMessage));
+        REQUIRE(*parsedRejection == rejection);
+        REQUIRE(parsedRejection->Cookie == rejection.Cookie);
+        REQUIRE(parsedRejection->Reason == CharacterAssignmentRejectReason::kPopulationHumanoidDenied);
+
+        REQUIRE(static_cast<unsigned>(kNotifyCharacterAssignmentRejected) == static_cast<unsigned>(kNotifyProgressionAward) + 1);
+        REQUIRE(static_cast<unsigned>(kServerOpcodeMax) == static_cast<unsigned>(kNotifyCharacterAssignmentRejected) + 1);
     }
 }
 

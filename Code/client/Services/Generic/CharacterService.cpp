@@ -20,6 +20,7 @@
 #include <Systems/CacheSystem.h>
 #include <Systems/FaceGenSystem.h>
 #include <Systems/LeveledNpcSystem.h>
+#include <Services/PopulationSuppressionPolicy.h>
 
 #include <Events/ActorAddedEvent.h>
 #include <Events/ActorRemovedEvent.h>
@@ -39,6 +40,7 @@
 #include <Structs/ActionEvent.h>
 #include <Messages/AssignCharacterRequest.h>
 #include <Messages/AssignCharacterResponse.h>
+#include <Messages/NotifyCharacterAssignmentRejected.h>
 #include <Messages/ServerReferencesMoveRequest.h>
 #include <Messages/ClientReferencesMoveRequest.h>
 #include <Messages/CharacterSpawnRequest.h>
@@ -80,6 +82,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
     m_worldSyncStartedConnection = m_dispatcher.sink<CharacterWorldSyncStartedEvent>().connect<&CharacterService::BeginWorldSync>(this);
 
     m_assignCharacterConnection = m_dispatcher.sink<AssignCharacterResponse>().connect<&CharacterService::OnAssignCharacter>(this);
+    m_assignmentRejectedConnection = m_dispatcher.sink<NotifyCharacterAssignmentRejected>().connect<&CharacterService::OnCharacterAssignmentRejected>(this);
     m_characterSpawnConnection = m_dispatcher.sink<CharacterSpawnRequest>().connect<&CharacterService::OnCharacterSpawn>(this);
     m_referenceMovementSnapshotConnection = m_dispatcher.sink<ServerReferencesMoveRequest>().connect<&CharacterService::OnReferencesMoveRequest>(this);
     m_factionsConnection = m_dispatcher.sink<NotifyFactionsChanges>().connect<&CharacterService::OnFactionsChanges>(this);
@@ -267,6 +270,8 @@ void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
     if (m_world.all_of<FormIdComponent>(cId))
         m_world.remove<FormIdComponent>(cId);
 
+    m_world.remove<PopulationSuppressedComponent>(cId);
+
     if (m_world.orphan(cId))
         m_world.destroy(cId);
 
@@ -309,7 +314,7 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
             pActor->GetExtension()->SetRemote(false);
     }
 
-    m_world.clear<WaitingForAssignmentComponent, LocalComponent, RemoteComponent>();
+    m_world.clear<WaitingForAssignmentComponent, LocalComponent, RemoteComponent, PopulationSuppressedComponent>();
 
     for (const auto& [formId, pickFormId] : m_pendingLeveledConforms)
     {
@@ -1171,6 +1176,45 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
     spdlog::info("Successfully teleported actor, form id: {:X}, world space: {:X}, cell: {:X}, position: ({}, {}, {})", pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
 }
 
+void CharacterService::OnCharacterAssignmentRejected(const NotifyCharacterAssignmentRejected& acMessage) noexcept
+{
+    auto view = m_world.view<WaitingForAssignmentComponent>();
+    const auto itor = std::find_if(
+        std::begin(view), std::end(view), [view, cookie = acMessage.Cookie](auto aEntity) { return view.get<WaitingForAssignmentComponent>(aEntity).Cookie == cookie; });
+
+    if (itor == std::end(view))
+    {
+        spdlog::debug("Received character assignment rejection for unknown cookie {:X}", acMessage.Cookie);
+        return;
+    }
+
+    const auto cEntity = *itor;
+    const bool isCancelled = view.get<WaitingForAssignmentComponent>(cEntity).Cancelled;
+
+    m_world.remove<WaitingForAssignmentComponent>(cEntity);
+#if (!IS_MASTER)
+    m_world.remove<ReplayedActionsDebugComponent>(cEntity);
+#endif
+
+    if (PopulationSuppressionPolicy::GetRejectionAction(isCancelled) == PopulationAssignmentRejectionAction::kDestroyCancelledEntity)
+    {
+        if (m_world.valid(cEntity))
+            m_world.destroy(cEntity);
+
+        spdlog::debug("Discarded cancelled character assignment entity for cookie {:X}", acMessage.Cookie);
+        return;
+    }
+
+    // The actor remains alive in Skyrim, but it is no longer eligible for STR
+    // assignment. Assignment-only cache and early animation data must not keep
+    // accumulating for a suppressed actor that will never become managed.
+    m_world.remove<CacheComponent>(cEntity);
+    m_world.remove<EarlyAnimationBufferComponent>(cEntity);
+    m_world.emplace_or_replace<PopulationSuppressedComponent>(cEntity, acMessage.Reason);
+
+    spdlog::debug("Suppressed local population actor after assignment rejection for cookie {:X}, reason {}", acMessage.Cookie, static_cast<unsigned>(acMessage.Reason));
+}
+
 void CharacterService::OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept
 {
     // Reprocess actors when this client becomes eligible to drive actor authority.
@@ -1215,6 +1259,9 @@ void CharacterService::MoveActor(const Actor* apActor, const GameId& acWorldSpac
 
 void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
 {
+    if (PopulationSuppressionPolicy::ShouldSkipAssignment(m_world.all_of<PopulationSuppressedComponent>(aEntity)))
+        return;
+
     if (!m_transport.IsOnline() || !m_world.GetCharacterSessionService().IsGameplayActive())
         return;
 

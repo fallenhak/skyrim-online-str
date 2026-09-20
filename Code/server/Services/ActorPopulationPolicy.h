@@ -36,9 +36,10 @@ struct ActorPopulationClassification
 class ActorPopulationPolicy final
 {
 public:
-    explicit ActorPopulationPolicy(const ESLoader::RecordCollection* apRecordCollection = nullptr) noexcept;
+    explicit ActorPopulationPolicy(const ESLoader::RecordCollection* apRecordCollection = nullptr);
 
     void SetRecordCollection(const ESLoader::RecordCollection* apRecordCollection) noexcept;
+    void InstallVanillaHumanoidRules();
     void SetRaceClassification(TiltedPhoques::String aRaceEditorId, ActorPopulationClass aClassification);
 
     // Accepts the local/player special case or an already-resolved server form

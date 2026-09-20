@@ -23,7 +23,8 @@
 
 #include <utility>
 
-World::World(std::filesystem::path aDatabasePath, bool aEnableActorRecordLoading)
+World::World(
+    std::filesystem::path aDatabasePath, bool aEnableActorRecordLoading, bool aEnableHumanoidAssignmentGate, bool aAllowUnknownActorAssignments)
 {
     m_spAdminService = std::make_shared<AdminService>(*this, m_dispatcher);
     spdlog::default_logger()->sinks().push_back(std::static_pointer_cast<spdlog::sinks::sink>(m_spAdminService));
@@ -69,6 +70,7 @@ World::World(std::filesystem::path aDatabasePath, bool aEnableActorRecordLoading
         modsComponent.AddServerMod(it);
     }
     ctx().emplace<ActorPopulationIdentityResolver>(modsComponent, m_recordCollection.get(), ctx().at<ActorPopulationPolicy>());
+    ctx().emplace<ActorPopulationAssignmentPolicy>(aEnableHumanoidAssignmentGate, aAllowUnknownActorAssignments);
 
     // late initialize the ScriptService to ensure all components are valid
     m_pScriptService = TiltedPhoques::MakeUnique<ScriptService>(*this, m_dispatcher);
