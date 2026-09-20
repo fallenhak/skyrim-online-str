@@ -44,7 +44,13 @@ void sendPlayerMessage(const ChatMessageType acType, const String acContent, Pla
 
     case kSystemMessage: spdlog::error("PlayerId {} attempted to send a System Message.", aSendingPlayer->GetId()); break;
 
-    case kPlayerDialogue: GameServer::Get()->SendToParty(notifyMessage, aSendingPlayer->GetParty()); break;
+    case kPlayerDialogue:
+        if (character)
+        {
+            if (!GameServer::Get()->SendToPlayersInRange(notifyMessage, *character, aSendingPlayer))
+                spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
+        }
+        break;
 
     case kPartyChat: GameServer::Get()->SendToParty(notifyMessage, aSendingPlayer->GetParty()); break;
 
@@ -103,5 +109,10 @@ void OverlayService::OnPlayerHealthUpdate(const PacketEvent<RequestPlayerHealthU
     notify.PlayerId = acMessage.pPlayer->GetId();
     notify.Percentage = acMessage.Packet.Percentage;
 
-    GameServer::Get()->SendToParty(notify, acMessage.pPlayer->GetParty(), acMessage.GetSender());
+    const auto character = acMessage.pPlayer->GetCharacter();
+    if (!character)
+        return;
+
+    if (!GameServer::Get()->SendToPlayersInRange(notify, *character, acMessage.GetSender()))
+        spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }
