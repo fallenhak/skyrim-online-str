@@ -15,8 +15,12 @@ struct NotifyNewPackage final : ServerMessage
     void SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept override;
     void DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept override;
 
-    bool operator==(const NotifyNewPackage& acRhs) const noexcept { return GetOpcode() == acRhs.GetOpcode() && ActorId == acRhs.ActorId && PackageId == acRhs.PackageId; }
+    bool operator==(const NotifyNewPackage& acRhs) const noexcept
+    {
+        return GetOpcode() == acRhs.GetOpcode() && ActorId == acRhs.ActorId && PackageId == acRhs.PackageId && OwnershipEpoch == acRhs.OwnershipEpoch;
+    }
 
-    uint32_t ActorId = 0;
+    uint32_t ActorId{};
     GameId PackageId{};
+    uint32_t OwnershipEpoch{};
 };

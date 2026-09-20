@@ -13,7 +13,11 @@ struct NotifyRespawn final : ServerMessage
     void SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept override;
     void DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept override;
 
-    bool operator==(const NotifyRespawn& acRhs) const noexcept { return GetOpcode() == acRhs.GetOpcode() && ActorId == acRhs.ActorId; }
+    bool operator==(const NotifyRespawn& acRhs) const noexcept
+    {
+        return GetOpcode() == acRhs.GetOpcode() && ActorId == acRhs.ActorId && OwnershipEpoch == acRhs.OwnershipEpoch;
+    }
 
-    uint32_t ActorId;
+    uint32_t ActorId{};
+    uint32_t OwnershipEpoch{};
 };

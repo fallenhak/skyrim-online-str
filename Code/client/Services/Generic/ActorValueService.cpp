@@ -197,10 +197,10 @@ void ActorValueService::OnHealthChange(const HealthChangeEvent& acEvent) noexcep
     if (acEvent.DeltaHealth > -1.0f && acEvent.DeltaHealth < 1.0f)
     {
         auto [it, inserted] = m_smallHealthChanges.try_emplace(serverId, PendingHealthChange{ownershipEpoch, 0.f});
-        if (!inserted && it->second.OwnershipEpoch != ownershipEpoch)
-            it->second = PendingHealthChange{ownershipEpoch, 0.f};
+        if (!inserted && it.value().OwnershipEpoch != ownershipEpoch)
+            it.value() = PendingHealthChange{ownershipEpoch, 0.f};
 
-        it->second.DeltaHealth += acEvent.DeltaHealth;
+        it.value().DeltaHealth += acEvent.DeltaHealth;
         return;
     }
 

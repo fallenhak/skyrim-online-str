@@ -213,6 +213,9 @@ server entity or ownership.
   delayed launch could be applied to a reused server entity ID.
 - Origin, angle, power, and scale floats were accepted without finite-value
   validation before reaching the game launch path.
+- Package, spell-cast, interrupt-cast, and respawn relay handlers also trusted
+  actor IDs without an incarnation token; respawn additionally cleared an
+  animation replay cache before checking whether the sender was the owner.
 
 ### Changes implemented
 
@@ -225,22 +228,36 @@ server entity or ownership.
 - Required the client producer to send its local ownership epoch and required
   remote clients to match the notification to the current remote incarnation
   before invoking the engine projectile launch path.
+- Added current-owner/epoch validation and matching notification epochs for
+  package updates, spell casts, and cast interrupts.
+- Added epoch validation to respawn requests and notifications, and moved the
+  replay-cache mutation inside the current-owner branch. Remote observers must
+  present the current epoch before requesting a fresh spawn snapshot.
 - Added protocol round-trip coverage and pure authority/malformed-input tests.
 
 ### Deliberately not implemented
 
 - No projectile damage attribution or hit validation was added here.
+- Draw-weapon, factions, and movement already use current-owner filtered views;
+  no redundant epoch field was added to those batch messages.
+- AddTarget remains unresolved because the event supports caster-less effects
+  and non-owner targets; it needs a separate interaction/range policy rather
+  than a blind caster-owner requirement.
 - No combat, XP, inventory, party, or session redesign was attempted.
 
 ### Tests
 
 - `git diff --check` — passed.
 - `xmake -y TPTests` — passed.
-- `xmake run TPTests` — passed, 184 assertions in 22 test cases.
+- `xmake run TPTests` — passed, 200 assertions in 22 test cases.
+- `xmake -y SkyrimTogetherServer` — passed with existing compiler warnings.
+- `xmake -y SkyrimTogetherClient` — passed with existing compiler warnings.
 
 ### Commit
 
-Pending until the focused projectile changes and tests are committed.
+- `20862de1` — enforced projectile shooter ownership/epoch and finite input
+  validation.
+- Pending follow-up commit for package, magic, respawn, and report changes.
 
 ### Remaining risks
 
