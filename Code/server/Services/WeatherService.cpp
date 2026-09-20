@@ -23,12 +23,7 @@ void WeatherService::OnWeatherChange(const PacketEvent<RequestWeatherChange>& ac
     if (!m_world.GetAuthorityService().TrySetWeatherState(acMessage.pPlayer, notify.Id))
         return;
 
-    if (!acMessage.pPlayer->GetCharacter())
-        return;
-
-    const auto origin = *acMessage.pPlayer->GetCharacter();
-
-    GameServer::Get()->SendToPartyInRange(notify, acMessage.pPlayer->GetParty(), origin, acMessage.pPlayer);
+    GameServer::Get()->SendToPlayers(notify, acMessage.pPlayer);
 }
 
 void WeatherService::OnRequestCurrentWeather(const PacketEvent<RequestCurrentWeather>& acMessage) const noexcept
