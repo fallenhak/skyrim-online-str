@@ -41,7 +41,7 @@ Console::StringSetting sPassword{"GameServer:sPassword", "Server password", ""};
 Console::StringSetting sPersistenceDatabasePath{"Persistence:sDatabasePath", "SQLite database path relative to the server working directory", "Data/SkyrimTogetherServer.db"};
 Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
 Console::Setting bEnableDevelopmentIdentityBinding{
-    "Identity:bEnableDevelopmentIdentityBinding", "(Development only) Allow server operators to bind a live player to an explicit owner profile", false};
+    "Identity:bEnableDevelopmentIdentityBinding", "(Development only) Allow server operators to bind a live player to an explicit owner profile", false, Console::SettingsFlags::kLocked};
 
 // Gameplay
 // TODO: to make this easier for users, use game names for difficulty instead of int
