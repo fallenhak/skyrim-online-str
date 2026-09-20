@@ -392,5 +392,47 @@ server entity or ownership.
 
 ## Later phases
 
-The contribution ledger, malformed-input pass, final verification, and draft
-pull request will be appended as those phases complete.
+## Phase H — Bounded combat contribution ledger
+
+### Design
+
+- Added a server-internal, header-only `CombatContributionLedger` with no
+  packet or connection API. Callers must resolve the sender's current owner,
+  epoch, and persistent character before recording an observation.
+- Keys contain the target server entity ID and lifecycle generation, avoiding
+  reuse of an old target record after ECS entity recycling.
+- Contributors are persistent `CharacterId` values stored in ordered maps, so
+  consumption order is deterministic. Repeated validated observations update a
+  bounded count and last-observed tick rather than allocating another entry.
+- Invalid zero/negative identities, zero target IDs/generations, new targets
+  beyond the target bound, and new contributors beyond the per-target bound
+  are rejected. Existing contributor counts saturate at `uint32_t` maximum.
+- Entries expire by monotonic observation tick, can be cleared explicitly, and
+  are consumed-and-erased once for a target death. Removing a character scans
+  only the bounded ledger and does not require connection state.
+
+### Deliberately not implemented
+
+- No network hit producer, damage attribution, XP, loot, or reward consumer was
+  added.
+- No server handler currently calls the ledger; this is reusable infrastructure
+  for a later validated observation path.
+
+### Tests
+
+- `git diff --check` — passed before the implementation build.
+- `xmake -y TPTests` — pending after the ledger implementation.
+- `xmake run TPTests` — pending after the ledger implementation.
+
+### Commit
+
+Pending until the ledger implementation is verified and committed.
+
+### Remaining risks
+
+- The ledger cannot make a client observation truthful by itself; the future
+  caller must enforce owner/epoch, target classification, range, replay, and
+  health/death correlation first.
+
+The malformed-input pass, final verification, and draft pull request will be
+appended as those phases complete.
