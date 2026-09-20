@@ -159,3 +159,108 @@ TEST_F(SessionServiceTest, RejectsSelectionBeforeIdentity)
     ASSERT_TRUE(sessions.BindIdentity(connectionId, "owner"));
     EXPECT_EQ(sessions.SelectCharacter(connectionId, 1), CharacterSelectionStatus::kNotFoundOrNotOwned);
 }
+
+TEST_F(SessionServiceTest, RejectsSnapshotBeforeIdentityOrCharacterSelection)
+{
+    constexpr TiltedPhoques::ConnectionId_t connectionId = 109;
+    ASSERT_TRUE(sessions.Create(connectionId));
+    EXPECT_FALSE(sessions.PrepareCharacterLoadSnapshot(connectionId).has_value());
+
+    ASSERT_TRUE(sessions.MarkAuthenticated(connectionId));
+    EXPECT_FALSE(sessions.PrepareCharacterLoadSnapshot(connectionId).has_value());
+
+    ASSERT_TRUE(sessions.BindIdentity(connectionId, "owner"));
+    EXPECT_FALSE(sessions.PrepareCharacterLoadSnapshot(connectionId).has_value());
+    EXPECT_EQ(sessions.Get(connectionId)->State, SessionState::kAwaitingCharacterSelection);
+}
+
+TEST_F(SessionServiceTest, PreparesOwnerScopedSnapshotAndAwaitsClientReady)
+{
+    constexpr TiltedPhoques::ConnectionId_t connectionId = 110;
+    auto character = MakeCharacter("owner", "Persistent", 42);
+    character.Race = GameId(0x01020304, 0x05060708);
+    character.WorldSpace = GameId(0x11121314, 0x15161718);
+    character.Cell = GameId(0x21222324, 0x25262728);
+    character.PositionX = -123.5f;
+    character.PositionY = 456.25f;
+    character.PositionZ = 789.75f;
+    character.Health = 321.5f;
+    character.Magicka = 222.25f;
+    character.Stamina = 111.75f;
+    const auto characterId = repository.CreateCharacter(character);
+
+    ASSERT_TRUE(sessions.Create(connectionId));
+    ASSERT_TRUE(sessions.MarkAuthenticated(connectionId));
+    ASSERT_TRUE(sessions.BindIdentity(connectionId, "owner"));
+    ASSERT_EQ(sessions.SelectCharacter(connectionId, static_cast<std::uint64_t>(characterId)), CharacterSelectionStatus::kSuccess);
+
+    const auto snapshot = sessions.PrepareCharacterLoadSnapshot(connectionId);
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_EQ(snapshot->CharacterId, static_cast<std::uint64_t>(characterId));
+    EXPECT_EQ(snapshot->Name, "Persistent");
+    EXPECT_EQ(snapshot->Race, character.Race);
+    EXPECT_EQ(snapshot->Sex, character.Sex);
+    EXPECT_EQ(snapshot->Level, character.Level);
+    EXPECT_EQ(snapshot->WorldSpaceId, character.WorldSpace);
+    EXPECT_EQ(snapshot->CellId, character.Cell);
+    EXPECT_EQ(snapshot->PositionX, character.PositionX);
+    EXPECT_EQ(snapshot->PositionY, character.PositionY);
+    EXPECT_EQ(snapshot->PositionZ, character.PositionZ);
+    EXPECT_EQ(snapshot->Health, character.Health);
+    EXPECT_EQ(snapshot->Magicka, character.Magicka);
+    EXPECT_EQ(snapshot->Stamina, character.Stamina);
+    EXPECT_EQ(sessions.Get(connectionId)->State, SessionState::kAwaitingClientReady);
+    EXPECT_FALSE(sessions.CanProcessGameplay(connectionId));
+}
+
+TEST_F(SessionServiceTest, RejectsAnotherOwnersSelectedRecordAndResetsSafely)
+{
+    constexpr TiltedPhoques::ConnectionId_t connectionId = 111;
+    const auto otherCharacterId = repository.CreateCharacter(MakeCharacter("other-owner", "Other", 20));
+
+    ASSERT_TRUE(sessions.Create(connectionId));
+    ASSERT_TRUE(sessions.MarkAuthenticated(connectionId));
+    ASSERT_TRUE(sessions.BindIdentity(connectionId, "owner"));
+
+    auto* session = sessions.Get(connectionId);
+    ASSERT_NE(session, nullptr);
+    session->SelectedCharacterId = otherCharacterId;
+    session->State = SessionState::kCharacterSelected;
+
+    EXPECT_FALSE(sessions.PrepareCharacterLoadSnapshot(connectionId).has_value());
+    EXPECT_EQ(session->State, SessionState::kAwaitingCharacterSelection);
+    EXPECT_FALSE(session->SelectedCharacterId.has_value());
+}
+
+TEST_F(SessionServiceTest, MissingSelectedRecordFailsSafely)
+{
+    constexpr TiltedPhoques::ConnectionId_t connectionId = 112;
+    const auto characterId = repository.CreateCharacter(MakeCharacter("owner", "Deleted", 20));
+
+    ASSERT_TRUE(sessions.Create(connectionId));
+    ASSERT_TRUE(sessions.MarkAuthenticated(connectionId));
+    ASSERT_TRUE(sessions.BindIdentity(connectionId, "owner"));
+    ASSERT_EQ(sessions.SelectCharacter(connectionId, static_cast<std::uint64_t>(characterId)), CharacterSelectionStatus::kSuccess);
+    ASSERT_TRUE(repository.DeleteCharacter(characterId, "owner"));
+
+    EXPECT_FALSE(sessions.PrepareCharacterLoadSnapshot(connectionId).has_value());
+    EXPECT_EQ(sessions.Get(connectionId)->State, SessionState::kAwaitingCharacterSelection);
+    EXPECT_FALSE(sessions.Get(connectionId)->SelectedCharacterId.has_value());
+}
+
+TEST_F(SessionServiceTest, GameplayIsGatedUntilTheFutureInWorldState)
+{
+    constexpr TiltedPhoques::ConnectionId_t connectionId = 113;
+    ASSERT_TRUE(sessions.Create(connectionId));
+    EXPECT_FALSE(sessions.CanProcessGameplay(connectionId));
+
+    ASSERT_TRUE(sessions.MarkAuthenticated(connectionId));
+    EXPECT_FALSE(sessions.CanProcessGameplay(connectionId));
+    ASSERT_TRUE(sessions.BindIdentity(connectionId, "owner"));
+    EXPECT_FALSE(sessions.CanProcessGameplay(connectionId));
+
+    sessions.Get(connectionId)->State = SessionState::kAwaitingClientReady;
+    EXPECT_FALSE(sessions.CanProcessGameplay(connectionId));
+    sessions.Get(connectionId)->State = SessionState::kInWorld;
+    EXPECT_TRUE(sessions.CanProcessGameplay(connectionId));
+}

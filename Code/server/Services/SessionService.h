@@ -2,6 +2,7 @@
 
 #include <Persistence/CharacterRepository.h>
 
+#include <Structs/CharacterLoadSnapshot.h>
 #include <Structs/CharacterSelectionStatus.h>
 #include <Structs/CharacterSummary.h>
 
@@ -21,7 +22,9 @@ enum class SessionState : std::uint8_t
     kConnected = 0,
     kAwaitingIdentity,
     kAwaitingCharacterSelection,
-    kCharacterSelected
+    kCharacterSelected,
+    kAwaitingClientReady,
+    kInWorld
 };
 
 struct CharacterSession final
@@ -51,6 +54,7 @@ struct SessionService final
     [[nodiscard]] bool Create(ConnectionId_t aConnectionId);
     [[nodiscard]] bool MarkAuthenticated(ConnectionId_t aConnectionId) noexcept;
     [[nodiscard]] bool BindIdentity(ConnectionId_t aConnectionId, std::string_view acOwnerProfileId);
+    [[nodiscard]] bool CanProcessGameplay(ConnectionId_t aConnectionId) const noexcept;
     void Remove(ConnectionId_t aConnectionId) noexcept;
 
     [[nodiscard]] CharacterSession* Get(ConnectionId_t aConnectionId) noexcept;
@@ -58,6 +62,7 @@ struct SessionService final
 
     [[nodiscard]] std::optional<std::vector<CharacterSummary>> ListCharacters(ConnectionId_t aConnectionId) const;
     [[nodiscard]] CharacterSelectionStatus SelectCharacter(ConnectionId_t aConnectionId, std::uint64_t aCharacterId);
+    [[nodiscard]] std::optional<CharacterLoadSnapshot> PrepareCharacterLoadSnapshot(ConnectionId_t aConnectionId);
 
 private:
     Persistence::CharacterRepository& m_characterRepository;
