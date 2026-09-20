@@ -52,9 +52,31 @@ trust distinction so a later enforcement milestone can make an explicit policy
 decision without treating client claims as server authority.
 
 Race rules are explicitly configurable with `SetRaceClassification`. The
-default rule set is empty. Editor ID is currently the policy key, so duplicate
-editor IDs across plugins are not disambiguated by this foundation; plugin
-identity can be added later if the loader exposes it as a required policy key.
+default rule set marks only these vanilla editor IDs as `HumanoidNpc`:
+`NordRace`, `BretonRace`, `ImperialRace`, `RedguardRace`, `HighElfRace`,
+`WoodElfRace`, `DarkElfRace`, `OrcRace`, `ArgonianRace`, and `KhajiitRace`.
+Other and edge/modded races remain `Unknown` unless an explicit server-side
+rule is added. Editor ID is currently the policy key, so duplicate editor IDs
+across plugins are not disambiguated by this foundation; plugin identity can be
+added later if the loader exposes it as a required policy key.
+
+## Assignment gate
+
+`ActorPopulationAssignmentPolicy` consumes the resolved identity and never
+treats a client actor-base or leveled-NPC claim as authoritative. Players are
+always allowed. When `Population:bEnableHumanoidAssignmentGate` is enabled,
+trusted vanilla humanoid NPCs are rejected before managed-actor lookup or ECS
+entity creation, while trusted creatures remain allowed. Unknown or untrusted
+identities are allowed by default; setting
+`Population:bAllowUnknownActorAssignments` to `false` rejects them instead.
+Both settings are locked, startup-only server settings. The humanoid gate is
+disabled by default and the unknown-identity allowance is enabled by default.
+
+Humanoid rejection is sent to the client with the assignment cookie and an
+explicit rejection reason. The client keeps the live actor in Skyrim but marks
+the local entity as population-suppressed, preventing retry loops during the
+current connection. Cancelled assignments are cleaned up instead. This
+milestone does not disable, delete, kill, or otherwise alter the vanilla NPC.
 
 ## Startup activation
 
@@ -67,7 +89,9 @@ disabled while load-order metadata remained available for ModPolicy.
 
 With the setting disabled, `World` still loads the load order and gives
 `ActorPopulationPolicy` an empty `RecordCollection`; NPC classification is
-`Unknown` and `GameId(0, 0x14)` is still `Player`. With it enabled, `World`
+`Unknown` and `GameId(0, 0x14)` is still `Player`. Since the assignment gate is
+also disabled by default, this preserves the existing assignment behavior.
+With it enabled, `World`
 asks ESLoader to parse server plugin files and build references. If the Data
 directory, `loadorder.txt`, or record collection is unavailable, the server
 logs the condition and the policy keeps NPC results `Unknown`.
@@ -76,11 +100,8 @@ This parser opt-in is not hardened for arbitrary modlists, is not production
 ready filtering/enforcement, and does not change runtime actor population.
 Do not enable it as a substitute for a later loader-hardening milestone.
 
-This milestone is classification data, identity resolution, and debug
-diagnostics only. It does not filter or despawn actors, reject assignments,
-alter creature authority, or change interest management. The resolver is
-currently called from the character-assignment path for logging and does not
-change assignment behavior. Draugr, Falmer, vampires, and modded races remain
-policy decisions, not parser assumptions. A later milestone can use the
-trusted classification result to gate humanoid NPC population after real
-mod-list behavior has been inspected.
+This milestone adds the first assignment gate on top of the classification and
+identity data. It does not physically filter or despawn actors, alter creature
+authority, or change interest management. Draugr, Falmer, vampires, and modded
+races remain `Unknown` unless explicitly configured. Character selection,
+authentication, and the later world-entry/spawn flow remain separate work.

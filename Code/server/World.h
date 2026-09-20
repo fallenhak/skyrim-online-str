@@ -12,6 +12,7 @@
 #include <Services/ProgressionService.h>
 #include <Services/ActorPopulationPolicy.h>
 #include <Services/ActorPopulationIdentityResolver.h>
+#include <Services/ActorPopulationAssignmentPolicy.h>
 #include <Services/SessionService.h>
 #include <Services/CalendarService.h>
 #include <Services/QuestService.h>
@@ -28,7 +29,9 @@ struct RecordCollection;
 
 struct World : entt::registry
 {
-    explicit World(std::filesystem::path aDatabasePath = PersistenceService::DefaultDatabasePath(), bool aEnableActorRecordLoading = false);
+    explicit World(
+        std::filesystem::path aDatabasePath = PersistenceService::DefaultDatabasePath(), bool aEnableActorRecordLoading = false,
+        bool aEnableHumanoidAssignmentGate = false, bool aAllowUnknownActorAssignments = true);
     ~World() noexcept;
 
     TP_NOCOPYMOVE(World);
@@ -57,6 +60,8 @@ struct World : entt::registry
     const ActorPopulationPolicy& GetActorPopulationPolicy() const noexcept { return ctx().at<const ActorPopulationPolicy>(); }
     ActorPopulationIdentityResolver& GetActorPopulationIdentityResolver() noexcept { return ctx().at<ActorPopulationIdentityResolver>(); }
     const ActorPopulationIdentityResolver& GetActorPopulationIdentityResolver() const noexcept { return ctx().at<const ActorPopulationIdentityResolver>(); }
+    ActorPopulationAssignmentPolicy& GetActorPopulationAssignmentPolicy() noexcept { return ctx().at<ActorPopulationAssignmentPolicy>(); }
+    const ActorPopulationAssignmentPolicy& GetActorPopulationAssignmentPolicy() const noexcept { return ctx().at<const ActorPopulationAssignmentPolicy>(); }
     CalendarService& GetCalendarService() noexcept { return ctx().at<CalendarService>(); }
     const CalendarService& GetCalendarService() const noexcept { return ctx().at<const CalendarService>(); }
     QuestService& GetQuestService() noexcept { return ctx().at<QuestService>(); }

@@ -1,5 +1,6 @@
 #include <Services/ActorPopulationPolicy.h>
 #include <Services/ActorPopulationIdentityResolver.h>
+#include <Services/ActorPopulationAssignmentPolicy.h>
 
 #define TP_INTERNAL_COMPONENTS_GUARD
 #include <Components/ModsComponent.h>
@@ -28,6 +29,7 @@ constexpr uint32_t kWolfRaceRawId = 0x01001100;
 constexpr uint32_t kDraugrRaceRawId = 0x01001200;
 constexpr uint32_t kEdgeRaceRawId = 0x01001300;
 constexpr uint32_t kNoEditorRaceRawId = 0x01001400;
+constexpr uint32_t kBretonRaceRawId = 0x01001500;
 
 constexpr uint32_t kNordNpcRawId = 0x01002000;
 constexpr uint32_t kWolfNpcRawId = 0x01002100;
@@ -37,6 +39,7 @@ constexpr uint32_t kMissingRnamNpcRawId = 0x01002400;
 constexpr uint32_t kMissingRaceNpcRawId = 0x01002500;
 constexpr uint32_t kNoEditorNpcRawId = 0x01002600;
 constexpr uint32_t kMasterNpcRawId = 0x01002700;
+constexpr uint32_t kBretonNpcRawId = 0x01002800;
 
 constexpr uint32_t kNordActorReferenceRawId = 0x01003000;
 constexpr uint32_t kWolfActorReferenceRawId = 0x01003100;
@@ -58,6 +61,7 @@ constexpr uint32_t kMissingRnamNpcId = kMissingRnamNpcRawId;
 constexpr uint32_t kMissingRaceNpcId = kMissingRaceNpcRawId;
 constexpr uint32_t kNoEditorNpcId = kNoEditorNpcRawId;
 constexpr uint32_t kMasterNpcId = kMasterNpcRawId;
+constexpr uint32_t kBretonNpcId = kBretonNpcRawId;
 constexpr uint32_t kNordActorReferenceId = kNordActorReferenceRawId;
 constexpr uint32_t kWolfActorReferenceId = kWolfActorReferenceRawId;
 constexpr uint32_t kMissingNpcActorReferenceId = kMissingNpcActorReferenceRawId;
@@ -144,6 +148,7 @@ Bytes MakePluginData()
     AppendRecord(data, FormEnum::RACE, kDraugrRaceRawId, MakeRaceData("DraugrRace"));
     AppendRecord(data, FormEnum::RACE, kEdgeRaceRawId, MakeRaceData("EdgeRace"));
     AppendRecord(data, FormEnum::RACE, kNoEditorRaceRawId, MakeRaceData(nullptr));
+    AppendRecord(data, FormEnum::RACE, kBretonRaceRawId, MakeRaceData("BretonRace"));
 
     AppendRecord(data, FormEnum::NPC_, kNordNpcRawId, MakeNpcData("NordNpc", &kNordRaceRawId));
     AppendRecord(data, FormEnum::NPC_, kWolfNpcRawId, MakeNpcData("WolfNpc", &kWolfRaceRawId));
@@ -155,6 +160,7 @@ Bytes MakePluginData()
     AppendRecord(data, FormEnum::NPC_, kMissingRaceNpcRawId, MakeNpcData("MissingRaceNpc", &missingRaceRawId));
     AppendRecord(data, FormEnum::NPC_, kNoEditorNpcRawId, MakeNpcData("NoEditorNpc", &kNoEditorRaceRawId));
     AppendRecord(data, FormEnum::NPC_, kMasterNpcRawId, MakeNpcData("MasterRefNpc", &kMasterRaceRawId));
+    AppendRecord(data, FormEnum::NPC_, kBretonNpcRawId, MakeNpcData("BretonNpc", &kBretonRaceRawId));
 
     AppendRecord(data, FormEnum::ACHR, kNordActorReferenceRawId, MakeActorReferenceData(kNordNpcRawId));
     AppendRecord(data, FormEnum::ACHR, kWolfActorReferenceRawId, MakeActorReferenceData(kWolfNpcRawId));
@@ -265,6 +271,17 @@ TEST_F(ActorPopulationTests, ClassifiesPlayersAndConfiguredNpcRaces)
     EXPECT_EQ(policy.ClassifyNpcBase(kEdgeNpcId).Class, ActorPopulationClass::kHumanoidNpc);
 }
 
+TEST_F(ActorPopulationTests, InstallsConservativeVanillaHumanoidRules)
+{
+    ActorPopulationPolicy policy(&m_records);
+
+    EXPECT_EQ(policy.ClassifyNpcBase(kNordNpcId).Class, ActorPopulationClass::kHumanoidNpc);
+    EXPECT_EQ(policy.ClassifyNpcBase(kBretonNpcId).Class, ActorPopulationClass::kHumanoidNpc);
+    EXPECT_EQ(policy.ClassifyNpcBase(kWolfNpcId).Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(policy.ClassifyNpcBase(kDraugrNpcId).Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(policy.ClassifyNpcBase(kEdgeNpcId).Class, ActorPopulationClass::kUnknown);
+}
+
 TEST(ActorPopulationPolicy, KeepsNpcUnknownWithoutLoadedRecords)
 {
     ESLoader::RecordCollection records;
@@ -307,6 +324,49 @@ TEST(ActorPopulationIdentityResolver, ResolvesStandardAndLightServerFormIds)
 
     EXPECT_FALSE(mods.ResolveServerFormId(GameId(mismatchedNetworkId, 0x00000ABC), resolvedFormId));
     EXPECT_FALSE(mods.ResolveServerFormId(GameId(unknownNetworkId, 0x00000ABC), resolvedFormId));
+}
+
+TEST(ActorPopulationAssignmentPolicy, AppliesGateTrustAndUnknownRules)
+{
+    ActorPopulationIdentity humanoid;
+    humanoid.Source = ActorPopulationIdentitySource::kServerPlacedReference;
+    humanoid.Classification.Class = ActorPopulationClass::kHumanoidNpc;
+
+    ActorPopulationIdentity creature;
+    creature.Source = ActorPopulationIdentitySource::kServerPlacedReference;
+    creature.Classification.Class = ActorPopulationClass::kCreature;
+
+    ActorPopulationIdentity unknown;
+    unknown.Source = ActorPopulationIdentitySource::kUnknown;
+
+    ActorPopulationIdentity clientCreatureClaim;
+    clientCreatureClaim.Source = ActorPopulationIdentitySource::kClientClaimedTemporaryBase;
+    clientCreatureClaim.ClientClaimedClassification.Class = ActorPopulationClass::kCreature;
+
+    ActorPopulationIdentity conflictingClaim = humanoid;
+    conflictingClaim.HasClientClaimedIdentity = true;
+    conflictingClaim.ClientClaimedClassification.Class = ActorPopulationClass::kCreature;
+
+    ActorPopulationIdentity player;
+    player.IsPlayer = true;
+    player.Source = ActorPopulationIdentitySource::kPlayer;
+    player.Classification.Class = ActorPopulationClass::kPlayer;
+
+    ActorPopulationAssignmentPolicy disabled(false, false);
+    EXPECT_EQ(disabled.Decide(humanoid), ActorPopulationAssignmentDecision::kAllow);
+
+    ActorPopulationAssignmentPolicy permissive(true, true);
+    EXPECT_EQ(permissive.Decide(humanoid), ActorPopulationAssignmentDecision::kRejectHumanoid);
+    EXPECT_EQ(permissive.Decide(creature), ActorPopulationAssignmentDecision::kAllow);
+    EXPECT_EQ(permissive.Decide(unknown), ActorPopulationAssignmentDecision::kAllow);
+    EXPECT_EQ(permissive.Decide(clientCreatureClaim), ActorPopulationAssignmentDecision::kAllow);
+    EXPECT_EQ(permissive.Decide(conflictingClaim), ActorPopulationAssignmentDecision::kRejectHumanoid);
+    EXPECT_EQ(permissive.Decide(player), ActorPopulationAssignmentDecision::kAllow);
+
+    ActorPopulationAssignmentPolicy strict(true, false);
+    EXPECT_EQ(strict.Decide(unknown), ActorPopulationAssignmentDecision::kRejectUnknown);
+    EXPECT_EQ(strict.Decide(clientCreatureClaim), ActorPopulationAssignmentDecision::kRejectUnknown);
+    EXPECT_EQ(strict.Decide(conflictingClaim), ActorPopulationAssignmentDecision::kRejectHumanoid);
 }
 
 TEST_F(ActorPopulationTests, ResolvesPlacedActorsWithServerAuthorityAndKeepsClaimsUntrusted)
@@ -390,7 +450,7 @@ TEST_F(ActorPopulationTests, KeepsRequiredUnknownConditionsDistinct)
     EXPECT_EQ(policy.ClassifyNpcBase(kMissingRnamNpcId).Class, ActorPopulationClass::kUnknown);
     EXPECT_EQ(policy.ClassifyNpcBase(kMissingRaceNpcId).Class, ActorPopulationClass::kUnknown);
     EXPECT_EQ(policy.ClassifyNpcBase(kNoEditorNpcId).Class, ActorPopulationClass::kUnknown);
-    EXPECT_EQ(policy.ClassifyNpcBase(kNordNpcId).Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(policy.ClassifyNpcBase(kWolfNpcId).Class, ActorPopulationClass::kUnknown);
 
     EXPECT_EQ(policy.ClassifyActor(GameId(0x42, kNordNpcId)).Class, ActorPopulationClass::kUnknown);
 }
