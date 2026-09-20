@@ -42,24 +42,29 @@ The server cannot currently establish from a client hit claim alone:
 Therefore the current safe rule is to accept only owner/epoch-bound state
 observations and to avoid deriving XP, loot, or rewards from them.
 
-## Future validated observation shape
+## Phase I — Proposed validated hit-observation protocol
 
-If combat attribution is added later, the request should identify an event with
-bounded, replayable identity rather than trusting a client-provided persistent
-character ID:
+No production packet is enabled by this phase. If combat attribution is added
+later, a request such as `CombatHitObservationRequest` should identify an event
+with bounded, replayable identity rather than trusting a client-provided
+persistent character ID:
 
 - attacker server entity ID and attacker ownership epoch;
 - target server entity ID and target lifecycle generation/epoch;
-- a per-attacker observation ID;
+- a strictly bounded per-attacker observation/event ID;
 - a client tick or bounded observation timestamp for ordering diagnostics;
 - optional weapon/projectile/effect identity only after server-side form and
   classification checks.
 
-The server should resolve the sender to the current owner, resolve both ECS
-entities, reject self/PvP/unsupported target classes according to an explicit
-policy, and correlate the observation with canonical health/death changes. A
-bounded replay cache must reject duplicate observation IDs and stale entity
-incarnations. No client-provided `CharacterId`, XP amount, or reward amount
+The server must resolve the sender to the current owner, then resolve the
+attacker server ID to the authoritative ECS entity and its persistent
+`CharacterId`. The client must not choose that `CharacterId`. The target server
+ID must resolve to a canonical entity with trusted creature classification;
+self-hits, PvP targets, unsupported target classes, missing entities, and stale
+epochs must be rejected by explicit policy. A bounded replay cache must reject
+duplicate observation IDs and stale entity incarnations. The accepted
+observation must be correlated with canonical health/death changes before any
+future contribution is recorded. No client-provided XP amount or reward amount
 should be authoritative.
 
 ## Contribution and transfer implications

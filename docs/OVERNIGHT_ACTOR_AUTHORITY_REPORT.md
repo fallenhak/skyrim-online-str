@@ -390,8 +390,6 @@ server entity or ownership.
   current health/death relay.
 - `AddTarget` still needs a separate caster-less/non-owner interaction policy.
 
-## Later phases
-
 ## Phase H — Bounded combat contribution ledger
 
 ### Design
@@ -434,6 +432,35 @@ server entity or ownership.
 - The ledger cannot make a client observation truthful by itself; the future
   caller must enforce owner/epoch, target classification, range, replay, and
   health/death correlation first.
+
+## Phase I — Next validated hit protocol design
+
+### Design decision
+
+- Added the concrete proposal to
+  [`docs/COMBAT_AUTHORITY.md`](COMBAT_AUTHORITY.md) without enabling a network
+  packet or production reward flow.
+- A future observation carries attacker server ID/epoch, target server ID and
+  lifecycle generation/epoch, a bounded replayable observation ID, and only
+  limited metadata. It never carries a client-authoritative `CharacterId`, XP,
+  or reward amount.
+- The server resolves sender → current owner → attacker ECS entity →
+  persistent `CharacterId`, resolves the target through the canonical ECS
+  entity and trusted creature classification, applies explicit self/PvP/target
+  exclusions, and correlates the observation with canonical health/death
+  changes before recording a contribution.
+- A bounded replay cache is required to reject duplicate observation IDs and
+  stale entity incarnations. Because the repository does not yet expose a
+  complete server-side hit/collision proof, only the DTO/policy design is
+  documented; no unsafe handler was added.
+
+### Tests
+
+- Documentation-only phase; no production behavior or test target was added.
+
+### Commit
+
+Pending until the Phase I design documentation is committed.
 
 The malformed-input pass, final verification, and draft pull request will be
 appended as those phases complete.
