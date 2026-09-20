@@ -23,3 +23,29 @@ bool AuthorityService::CanClaimActor(Player* apClaimant, Player* apCurrentOwner)
 
     return std::find(pParty->Members.begin(), pParty->Members.end(), apCurrentOwner) != pParty->Members.end();
 }
+
+bool AuthorityService::TrySetWeatherState(Player* apPlayer, const GameId& acWeather) const noexcept
+{
+    if (!apPlayer)
+        return false;
+
+    PartyService::Party* const pParty = m_world.GetPartyService().GetPlayerParty(apPlayer);
+    if (!pParty)
+        return false;
+
+    pParty->CachedWeather = acWeather;
+    return true;
+}
+
+bool AuthorityService::TryGetWeatherState(Player* apPlayer, GameId& aWeather) const noexcept
+{
+    if (!apPlayer)
+        return false;
+
+    PartyService::Party* const pParty = m_world.GetPartyService().GetPlayerParty(apPlayer);
+    if (!pParty)
+        return false;
+
+    aWeather = pParty->CachedWeather;
+    return true;
+}
