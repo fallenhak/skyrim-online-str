@@ -19,6 +19,8 @@
 #include <Messages/NotifyCharacterSelectionResult.h>
 #include <Messages/RequestCharacterList.h>
 #include <Messages/RequestHealthChangeBroadcast.h>
+#include <Messages/NotifyProjectileLaunch.h>
+#include <Messages/ProjectileLaunchRequest.h>
 #include <Messages/SelectCharacterRequest.h>
 #include <Messages/ServerMessageFactory.h>
 
@@ -115,6 +117,22 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(healthMessage);
         auto parsedHealthRequest = TiltedPhoques::CastUnique<RequestHealthChangeBroadcast>(std::move(healthMessage));
         REQUIRE(*parsedHealthRequest == healthRequest);
+
+        ProjectileLaunchRequest projectileRequest{};
+        projectileRequest.ShooterID = 0x1234;
+        projectileRequest.OriginX = 1.5f;
+        projectileRequest.Power = 2.5f;
+        projectileRequest.Scale = 0.75f;
+        projectileRequest.OwnershipEpoch = 19;
+        TiltedPhoques::Buffer projectileBuffer(512);
+        TiltedPhoques::Buffer::Writer projectileWriter(&projectileBuffer);
+        projectileRequest.Serialize(projectileWriter);
+
+        TiltedPhoques::Buffer::Reader projectileReader(&projectileBuffer);
+        auto projectileMessage = clientFactory.Extract(projectileReader);
+        REQUIRE(projectileMessage);
+        auto parsedProjectileRequest = TiltedPhoques::CastUnique<ProjectileLaunchRequest>(std::move(projectileMessage));
+        REQUIRE(*parsedProjectileRequest == projectileRequest);
     }
 
     SECTION("server list and selection result")
@@ -207,6 +225,22 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(healthNotificationMessage);
         auto parsedHealthNotification = TiltedPhoques::CastUnique<NotifyHealthChangeBroadcast>(std::move(healthNotificationMessage));
         REQUIRE(*parsedHealthNotification == healthNotification);
+
+        NotifyProjectileLaunch projectileNotification{};
+        projectileNotification.ShooterID = 0x9ABC;
+        projectileNotification.OriginZ = -4.5f;
+        projectileNotification.Power = 3.5f;
+        projectileNotification.Scale = 1.25f;
+        projectileNotification.OwnershipEpoch = 29;
+        TiltedPhoques::Buffer projectileNotificationBuffer(512);
+        TiltedPhoques::Buffer::Writer projectileNotificationWriter(&projectileNotificationBuffer);
+        projectileNotification.Serialize(projectileNotificationWriter);
+
+        TiltedPhoques::Buffer::Reader projectileNotificationReader(&projectileNotificationBuffer);
+        auto projectileNotificationMessage = serverFactory.Extract(projectileNotificationReader);
+        REQUIRE(projectileNotificationMessage);
+        auto parsedProjectileNotification = TiltedPhoques::CastUnique<NotifyProjectileLaunch>(std::move(projectileNotificationMessage));
+        REQUIRE(*parsedProjectileNotification == projectileNotification);
 
         NotifyCharacterAssignmentRejected rejection{};
         rejection.Cookie = std::numeric_limits<std::uint32_t>::max();

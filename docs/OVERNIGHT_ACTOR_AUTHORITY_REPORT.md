@@ -202,6 +202,51 @@ server entity or ownership.
 - Projectile launch and other relay/mutation surfaces still need focused
   authority treatment.
 
+## Phase D — Projectile launch authority hardening
+
+### Findings
+
+- The server previously copied the client-provided `ShooterID` directly into a
+  broadcast and used it as the range origin without proving that the sender
+  owned that actor.
+- Projectile request and notification messages had no ownership epoch, so a
+  delayed launch could be applied to a reused server entity ID.
+- Origin, angle, power, and scale floats were accepted without finite-value
+  validation before reaching the game launch path.
+
+### Changes implemented
+
+- Appended `OwnershipEpoch` to projectile request and notification messages,
+  preserving the existing opcode and field order.
+- Required a valid character entity, an owner component, the current sender
+  owner, and a non-zero matching epoch before the server relays a launch.
+- Rejected non-finite launch numeric parameters without imposing arbitrary
+  gameplay caps.
+- Required the client producer to send its local ownership epoch and required
+  remote clients to match the notification to the current remote incarnation
+  before invoking the engine projectile launch path.
+- Added protocol round-trip coverage and pure authority/malformed-input tests.
+
+### Deliberately not implemented
+
+- No projectile damage attribution or hit validation was added here.
+- No combat, XP, inventory, party, or session redesign was attempted.
+
+### Tests
+
+- `git diff --check` — passed.
+- `xmake -y TPTests` — passed.
+- `xmake run TPTests` — passed, 184 assertions in 22 test cases.
+
+### Commit
+
+Pending until the focused projectile changes and tests are committed.
+
+### Remaining risks
+
+- Package, spell, object, and other actor mutation/relay surfaces remain under
+  focused review.
+
 ## Later phases
 
 Sections for the message authority audit, session gate audit, health hardening,
