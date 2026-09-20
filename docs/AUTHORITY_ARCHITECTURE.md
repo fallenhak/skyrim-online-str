@@ -4,7 +4,7 @@
 
 Upstream Skyrim Together Reborn currently uses `PartyService` for both social grouping and world-authority decisions. That coupling is incompatible with a persistent RP server where core replication must work even when players are not members of a party.
 
-The first migration step is intentionally behavior-preserving: move authority checks behind `AuthorityService` while still delegating to the existing party rules internally.
+The migration began by moving authority checks behind `AuthorityService`. Actor ownership has now moved to a server-coordinated handoff model: party leadership no longer grants the right to take ownership of an already-managed actor.
 
 ## Current upstream coupling
 
@@ -39,4 +39,11 @@ Persistence
 
 Do not remove `PartyService` until every non-social caller has moved behind a replacement abstraction.
 
-The initial `AuthorityService::CanClaimActor` implementation intentionally preserves the old party-leader behavior. A later milestone will replace that implementation with proximity/interest/server policy without changing `CharacterService` again.
+Actor authority policy now follows these rules:
+
+- the client that first registers an unmanaged actor becomes its initial owner;
+- party leadership does not allow a client to steal ownership from the current owner;
+- when an owner relinquishes an actor or becomes unavailable, the server's existing `TransferToNextOwner` path selects another eligible in-range player;
+- a later milestone should add explicit orphan/stale-owner recovery and stronger interest-management policy.
+
+Weather authority is still temporarily backed by party state and is the next authority subsystem that must be made independent.
