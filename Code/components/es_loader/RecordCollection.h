@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Records/ACHR.h"
 #include "Records/CLMT.h"
 #include "Records/CONT.h"
 #include "Records/GMST.h"
@@ -30,6 +31,18 @@ struct RecordCollection
     bool HasAnyRecords() const noexcept { return m_allRecords.size(); }
 
     REFR& GetObjectRefById(uint32_t aFormId) noexcept { return m_objectReferences[aFormId]; }
+    [[nodiscard]] const ACHR* FindActorReferenceById(uint32_t aFormId) const noexcept
+    {
+        const auto it = m_actorReferences.find(aFormId);
+        return it == m_actorReferences.end() ? nullptr : &it->second;
+    }
+
+    [[nodiscard]] ACHR* FindActorReferenceById(uint32_t aFormId) noexcept
+    {
+        auto it = m_actorReferences.find(aFormId);
+        return it == m_actorReferences.end() ? nullptr : &it.value();
+    }
+
     CLMT& GetClimateById(uint32_t aFormId) noexcept { return m_climates[aFormId]; }
     NPC& GetNpcById(uint32_t aFormId) noexcept { return m_npcs[aFormId]; }
     [[nodiscard]] const NPC* FindNpcById(uint32_t aFormId) const noexcept
@@ -65,6 +78,7 @@ struct RecordCollection
 
 private:
     Map<uint32_t, Record> m_allRecords{};
+    Map<uint32_t, ACHR> m_actorReferences{};
     Map<uint32_t, REFR> m_objectReferences{};
     Map<uint32_t, CLMT> m_climates{};
     Map<uint32_t, NPC> m_npcs{};

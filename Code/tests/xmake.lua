@@ -54,6 +54,8 @@ target("ActorPopulationTests")
         ".", "../encoding", "../server", "../components/es_loader")
     add_files("ActorPopulationTests.cpp", "../TestMain.cpp")
     add_files("../server/Services/ActorPopulationPolicy.cpp")
+    add_files("../server/Components/ModsComponent.cpp")
+    add_files("../server/Services/ActorPopulationIdentityResolver.cpp")
     add_deps("ESLoader", "SkyrimEncoding")
     add_packages(
         "tiltedcore",

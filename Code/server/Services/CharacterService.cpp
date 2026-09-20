@@ -197,6 +197,31 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
     if (!isPlayer && !sessionService.CanProcessGameplay(acMessage.pPlayer->GetConnectionId()))
         return;
 
+    if (!isPlayer)
+    {
+        const auto identity = m_world.GetActorPopulationIdentityResolver().Resolve(refId, message.FormId, message.LeveledNpcPickId);
+        spdlog::debug(
+            "Actor population identity for reference {:x}:{:x}: resolved reference {:08x}, NPC {:08x}, race {:08x} '{}', classification {}, source {}, trusted {}",
+            refId.ModId,
+            refId.BaseId,
+            identity.ResolvedReferenceFormId,
+            identity.ResolvedNpcFormId,
+            identity.Classification.RaceFormId,
+            identity.Classification.RaceEditorId.c_str(),
+            static_cast<unsigned>(identity.Classification.Class),
+            GetActorPopulationIdentitySourceName(identity.Source),
+            identity.IsTrusted());
+
+        if (identity.Source == ActorPopulationIdentitySource::kServerPlacedReference && identity.HasClientClaimedIdentity &&
+            identity.ClientClaimedNpcFormId != identity.ResolvedNpcFormId)
+        {
+            spdlog::debug(
+                "Ignored client actor base claim {:08x} for server-resolved placed reference {:08x}; server NPC identity is authoritative",
+                identity.ClientClaimedNpcFormId,
+                identity.ResolvedNpcFormId);
+        }
+    }
+
     const auto isCustom = isPlayer || refId.ModId == std::numeric_limits<uint32_t>::max();
 
     // Check if id is the player

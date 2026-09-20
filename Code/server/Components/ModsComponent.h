@@ -9,6 +9,8 @@ namespace ESLoader
 struct PluginData;
 }
 
+struct GameId;
+
 struct ModsComponent
 {
     struct Entry
@@ -16,6 +18,10 @@ struct ModsComponent
         uint32_t id;
         uint32_t refCount;
     };
+
+    // Resolves a network GameId's server-assigned ModId and BaseId into the
+    // ESLoader form identity selected by the server's load order.
+    bool ResolveServerFormId(const GameId& acNetworkId, uint32_t& aResolvedFormId) const noexcept;
 
     uint32_t AddStandard(const String& acpFilename) noexcept;
     uint32_t AddLite(const String& acpFilename) noexcept;
@@ -31,6 +37,18 @@ struct ModsComponent
     using TModList = TiltedPhoques::Map<String, Entry>;
 
 private:
+    struct NetworkModIdentity
+    {
+        String Filename;
+        bool IsLite{};
+    };
+
+    struct ServerPluginIdentity
+    {
+        uint16_t LoadOrderId{};
+        bool IsLite{};
+    };
+
     uint32_t m_seed = 0;
     // Mappings of ids owned by the server
     TModList m_standardMods;
@@ -38,4 +56,10 @@ private:
 
     // List of mods installed on the server.
     TModList m_serverMods;
+
+    // The network id is assigned from the client mod list during authentication;
+    // these maps connect it to authoritative server plugin metadata without
+    // trusting a client-supplied form prefix.
+    TiltedPhoques::Map<uint32_t, NetworkModIdentity> m_networkModIdentities;
+    TiltedPhoques::Map<String, ServerPluginIdentity> m_serverPluginIdentities;
 };

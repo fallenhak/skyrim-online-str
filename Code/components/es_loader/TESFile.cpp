@@ -103,7 +103,12 @@ bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aReco
 
             break;
         }
-        // case FormEnum::ACHR:
+        case FormEnum::ACHR:
+        {
+            ACHR parsedRecord = CopyAndParseRecord<ACHR>(pRecord);
+            aRecordCollection.m_actorReferences[parsedRecord.GetFormId()] = parsedRecord;
+            break;
+        }
         case FormEnum::REFR:
         {
             REFR parsedRecord = CopyAndParseRecord<REFR>(pRecord);
