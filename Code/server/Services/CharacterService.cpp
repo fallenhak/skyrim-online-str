@@ -41,7 +41,7 @@
 #include <Setting.h>
 namespace
 {
-Console::Setting bEnableXpSync{"Gameplay:bEnableXpSync", "Syncs combat XP within the party", true};
+Console::Setting bEnableXpSync{"Gameplay:bEnableXpSync", "Legacy co-op combat XP sharing. Disabled by default for persistent-world mode.", false};
 }
 
 CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
