@@ -1,8 +1,6 @@
 #include "Forms/TESObjectCELL.h"
 #include "Forms/TESWorldSpace.h"
 #include "Services/PapyrusService.h"
-#include <Services/PartyService.h>
-
 #include <Services/CharacterService.h>
 #include <Services/QuestService.h>
 #include <Services/TransportService.h>
@@ -1906,29 +1904,9 @@ void CharacterService::RunSpawnUpdates() const noexcept
 
 void CharacterService::RunExperienceUpdates() noexcept
 {
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenSnapshots = 1000ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenSnapshots)
-        return;
-
-    lastSendTimePoint = now;
-
-    if (m_cachedExperience == 0.f)
-        return;
-
-    if (!World::Get().GetPartyService().IsInParty())
-        return;
-
-    SyncExperienceRequest message;
-    message.Experience = m_cachedExperience;
-
+    // Persistent-world characters keep combat skill XP local.
+    // Clear the legacy co-op sharing accumulator without sending it.
     m_cachedExperience = 0.f;
-
-    m_transport.Send(message);
-
-    spdlog::debug("Sending over experience {}", message.Experience);
 }
 
 void CharacterService::ApplyCachedWeaponDraws(const UpdateEvent& acUpdateEvent) noexcept
