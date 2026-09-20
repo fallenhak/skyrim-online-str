@@ -31,27 +31,35 @@ ESLoader::ESLoader()
     m_directory = fs::current_path() / "Data"; //< Keep upper case to match Skyrim's file system
 }
 
-UniquePtr<RecordCollection> ESLoader::BuildRecordCollection() noexcept
+UniquePtr<RecordCollection> ESLoader::BuildRecordCollection(bool aLoadRecords) noexcept
 {
     if (!fs::is_directory(m_directory))
     {
-        // spdlog::warn("Data directory not found.");
+        if (aLoadRecords)
+            spdlog::warn("Actor population record loading unavailable: ESLoader Data directory not found at '{}'", m_directory.string());
         return nullptr;
     }
 
     if (!LoadLoadOrder())
     {
+        if (aLoadRecords)
+            spdlog::warn("Actor population record loading unavailable: ESLoader could not read loadorder.txt from '{}'", m_directory.string());
         return nullptr;
     }
 
-    return MakeUnique<RecordCollection>();
+    if (!aLoadRecords)
+        return MakeUnique<RecordCollection>();
 
-    /*
     auto recordCollection = LoadFiles();
+    if (!recordCollection)
+    {
+        spdlog::warn("Actor population record loading unavailable: ESLoader could not create a RecordCollection");
+        return nullptr;
+    }
+
     recordCollection->BuildReferences();
 
-    return std::move(recordCollection);
-    */
+    return recordCollection;
 }
 
 bool ESLoader::LoadLoadOrder()

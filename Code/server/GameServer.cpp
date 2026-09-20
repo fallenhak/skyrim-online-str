@@ -42,6 +42,11 @@ Console::StringSetting sServerName{"GameServer:sServerName", "Name that shows up
 Console::StringSetting sAdminPassword{"GameServer:sAdminPassword", "Admin authentication password", ""};
 Console::StringSetting sPassword{"GameServer:sPassword", "Server password", ""};
 Console::StringSetting sPersistenceDatabasePath{"Persistence:sDatabasePath", "SQLite database path relative to the server working directory", "Data/SkyrimTogetherServer.db"};
+Console::Setting bEnableActorRecordLoading{
+    "Population:bEnableActorRecordLoading",
+    "Enable full server plugin record parsing for actor-population NPC/race classification at startup; not runtime filtering",
+    false,
+    Console::SettingsFlags::kLocked};
 Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
 Console::Setting bEnableDevelopmentIdentityBinding{
     "Identity:bEnableDevelopmentIdentityBinding", "(Development only) Allow server operators to bind a live player to an explicit owner profile", false, Console::SettingsFlags::kLocked};
@@ -198,7 +203,7 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole)
     spdlog::info("Server {} started on port {}", BUILD_COMMIT, GetPort());
     UpdateTitle();
 
-    m_pWorld = MakeUnique<World>(std::filesystem::path(sPersistenceDatabasePath.value()));
+    m_pWorld = MakeUnique<World>(std::filesystem::path(sPersistenceDatabasePath.value()), bEnableActorRecordLoading);
 
     if (bEnableDevelopmentIdentityBinding)
     {

@@ -16,7 +16,7 @@ using OwnerProfileId = std::string;
 struct CharacterRecord final
 {
     CharacterId Id{};
-    OwnerProfileId OwnerProfileId;
+    Persistence::OwnerProfileId OwnerProfileId;
     std::string Name;
     GameId Race{};
     std::int32_t Sex{};

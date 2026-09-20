@@ -23,7 +23,7 @@
 
 #include <utility>
 
-World::World(std::filesystem::path aDatabasePath)
+World::World(std::filesystem::path aDatabasePath, bool aEnableActorRecordLoading)
 {
     m_spAdminService = std::make_shared<AdminService>(*this, m_dispatcher);
     spdlog::default_logger()->sinks().push_back(std::static_pointer_cast<spdlog::sinks::sink>(m_spAdminService));
@@ -53,8 +53,16 @@ World::World(std::filesystem::path aDatabasePath)
     ctx().emplace<MapService>(*this, m_dispatcher);
 
     ESLoader::ESLoader loader;
-    // emplace loaded mods into modscomponent.
-    m_recordCollection = loader.BuildRecordCollection();
+    if (aEnableActorRecordLoading)
+        spdlog::info("Actor population record loading enabled; ESLoader will parse server plugins for NPC/race classification.");
+
+    // Load order metadata remains available for ModPolicy. Full plugin parsing is an explicit
+    // startup-only opt-in because actor population classification is not runtime filtering.
+    m_recordCollection = loader.BuildRecordCollection(aEnableActorRecordLoading);
+    if (aEnableActorRecordLoading && m_recordCollection == nullptr)
+        spdlog::warn("Actor population classification records are unavailable; NPC classification will remain Unknown.");
+
+    ctx().emplace<ActorPopulationPolicy>(m_recordCollection.get());
     for (const auto& it : loader.GetLoadOrder())
     {
         ctx().emplace<ModsComponent>().AddServerMod(it);
