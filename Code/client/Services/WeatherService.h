@@ -4,8 +4,7 @@ struct World;
 struct TransportService;
 struct UpdateEvent;
 struct DisconnectedEvent;
-struct PartyJoinedEvent;
-struct PartyLeftEvent;
+struct AuthorityChangedEvent;
 struct NotifyWeatherChange;
 
 /**
@@ -21,8 +20,7 @@ struct WeatherService
 protected:
     void OnUpdate(const UpdateEvent& acEvent) noexcept;
     void OnDisconnected(const DisconnectedEvent& acEvent) noexcept;
-    void OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept;
-    void OnPartyLeftEvent(const PartyLeftEvent& acEvent) noexcept;
+    void OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept;
     void OnWaitingFor3DRemoved(entt::registry& aRegistry, entt::entity aEntity) noexcept;
     void OnPlayerComponentRemoved(entt::registry& aRegistry, entt::entity aEntity) noexcept;
     void OnWeatherChange(const NotifyWeatherChange& acMessage) noexcept;
@@ -45,8 +43,7 @@ private:
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_disconnectConnection;
-    entt::scoped_connection m_partyJoinedConnection;
-    entt::scoped_connection m_partyLeftConnection;
+    entt::scoped_connection m_authorityChangedConnection;
     entt::scoped_connection m_playerAddedConnection;
     entt::scoped_connection m_playerRemovedConnection;
     entt::scoped_connection m_weatherChangeConnection;
