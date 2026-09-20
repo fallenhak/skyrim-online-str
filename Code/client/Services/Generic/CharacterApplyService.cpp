@@ -11,6 +11,7 @@
 #include <Forms/TESWorldSpace.h>
 #include <Games/Primitives.h>
 #include <Forms/ActorValueInfo.h>
+#include <misc/ActorValueOwner.h>
 #include <PlayerCharacter.h>
 
 #include <Structs/GridCellCoords.h>
@@ -119,9 +120,12 @@ bool CharacterApplyService::ApplySnapshot(const CharacterLoadSnapshot& acSnapsho
         pNpc->actorData.actorBaseFlags &= ~TESActorBaseData::IS_FEMALE;
 
     pPlayer->SetLevelMod(static_cast<uint32_t>(acSnapshot.Level));
-    pPlayer->SetActorValue(ActorValueInfo::kHealth, acSnapshot.Health);
-    pPlayer->SetActorValue(ActorValueInfo::kMagicka, acSnapshot.Magicka);
-    pPlayer->SetActorValue(ActorValueInfo::kStamina, acSnapshot.Stamina);
+
+    // V1 persists current vitals only. ForceActorValue routes through ForceCurrent so these
+    // values do not redefine the actor's base, permanent, or maximum values.
+    pPlayer->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kHealth, acSnapshot.Health);
+    pPlayer->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kMagicka, acSnapshot.Magicka);
+    pPlayer->ForceActorValue(ActorValueOwner::ForceMode::DAMAGE, ActorValueInfo::kStamina, acSnapshot.Stamina);
 
     NiPoint3 position;
     position.x = acSnapshot.PositionX;

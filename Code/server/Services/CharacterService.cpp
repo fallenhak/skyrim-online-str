@@ -602,7 +602,6 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     const auto gameId = message.ReferenceId;
     const auto baseId = message.FormId;
 
-    const auto cEntity = m_world.create();
     const auto isTemporary = gameId.ModId == std::numeric_limits<uint32_t>::max();
     const auto isPlayer = (gameId.ModId == 0 && gameId.BaseId == 0x14);
     const auto isCustom = isPlayer || isTemporary;
@@ -628,17 +627,18 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
         }
     }
 
-    // For player characters and temporary forms
-    if (!isCustom)
+    // Reject malformed player references before allocating an ECS entity.
+    if (isCustom && baseId != GameId{} && !isTemporary)
     {
-        m_world.emplace<FormIdComponent>(cEntity, gameId.BaseId, gameId.ModId);
-    }
-    else if (baseId != GameId{} && !isTemporary)
-    {
-        m_world.destroy(cEntity);
         spdlog::warn("Unexpected NpcId, player {:x} might be forging packets", acMessage.pPlayer->GetConnectionId());
         return;
     }
+
+    const auto cEntity = m_world.create();
+
+    // For player characters and temporary forms
+    if (!isCustom)
+        m_world.emplace<FormIdComponent>(cEntity, gameId.BaseId, gameId.ModId);
 
     auto* const pServer = GameServer::Get();
 
@@ -702,15 +702,9 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     {
         const auto pPlayer = acMessage.pPlayer;
 
-        if (persistentCharacter.has_value())
-        {
-            pPlayer->SetUsername(String(persistentCharacter->Name.c_str()));
-            pPlayer->SetLevel(static_cast<std::uint16_t>(persistentCharacter->Level));
-            pPlayer->SetCellComponent(cellIdComponent);
-        }
-
+        // The character link is needed while completing the assignment, but persisted
+        // player-facing metadata is committed only after the session transition succeeds.
         pPlayer->SetCharacter(cEntity);
-        pPlayer->GetQuestLogComponent().QuestContent = message.QuestContent;
         characterComponent.PlayerId = pPlayer->GetId();
 
         auto& dispatcher = m_world.GetDispatcher();
@@ -727,6 +721,15 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
                 return;
             }
         }
+
+        if (persistentCharacter.has_value())
+        {
+            pPlayer->SetUsername(String(persistentCharacter->Name.c_str()));
+            pPlayer->SetLevel(static_cast<std::uint16_t>(persistentCharacter->Level));
+            pPlayer->SetCellComponent(cellIdComponent);
+        }
+
+        pPlayer->GetQuestLogComponent().QuestContent = message.QuestContent;
 
         dispatcher.trigger(PlayerEnterWorldEvent(pPlayer));
     }
