@@ -1,17 +1,17 @@
 #include <TiltedOnlinePCH.h>
 
 #include <Services/AuthorityService.h>
-#include <Services/PartyService.h>
+#include <Services/PresenceService.h>
 #include <World.h>
 
 #include <Events/AuthorityChangedEvent.h>
-#include <Events/PartyStateChangedEvent.h>
+#include <Events/PresenceChangedEvent.h>
 
 AuthorityService::AuthorityService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
     : m_world(aWorld)
     , m_dispatcher(aDispatcher)
 {
-    m_partyStateChangedConnection = aDispatcher.sink<PartyStateChangedEvent>().connect<&AuthorityService::OnPartyStateChanged>(this);
+    m_presenceChangedConnection = aDispatcher.sink<PresenceChangedEvent>().connect<&AuthorityService::OnPresenceChanged>(this);
 }
 
 bool AuthorityService::HasLocalActorAuthority() const noexcept
@@ -23,33 +23,34 @@ bool AuthorityService::HasLocalActorAuthority() const noexcept
 
 bool AuthorityService::HasLocalWorldAuthority() const noexcept
 {
-    return m_world.GetPartyService().IsLeader();
+    const auto& presence = m_world.GetPresenceService();
+    return presence.IsConnected() && presence.GetLocalPlayerId() == presence.GetWorldAuthorityPlayerId();
 }
 
-bool AuthorityService::HasWorldAuthorityGroup() const noexcept
+bool AuthorityService::HasWorldAuthoritySource() const noexcept
 {
-    return m_world.GetPartyService().IsInParty();
+    return m_world.GetPresenceService().IsConnected();
 }
 
 uint32_t AuthorityService::GetWorldAuthorityPlayerId() const noexcept
 {
-    return m_world.GetPartyService().GetLeaderPlayerId();
+    return m_world.GetPresenceService().GetWorldAuthorityPlayerId();
 }
 
-void AuthorityService::OnPartyStateChanged(const PartyStateChangedEvent&) noexcept
+void AuthorityService::OnPresenceChanged(const PresenceChangedEvent&) noexcept
 {
     PublishAuthorityChanged();
 }
 
 void AuthorityService::PublishAuthorityChanged() noexcept
 {
-    const bool hasGroup = HasWorldAuthorityGroup();
+    const bool hasSource = HasWorldAuthoritySource();
 
     AuthorityChangedEvent event{};
     event.HasLocalActorAuthority = HasLocalActorAuthority();
     event.HasLocalWorldAuthority = HasLocalWorldAuthority();
-    event.HasWorldAuthorityGroup = hasGroup;
-    event.WorldAuthorityPlayerId = hasGroup ? GetWorldAuthorityPlayerId() : 0;
+    event.HasWorldAuthoritySource = hasSource;
+    event.WorldAuthorityPlayerId = hasSource ? GetWorldAuthorityPlayerId() : 0;
 
     m_dispatcher.trigger(event);
 }
