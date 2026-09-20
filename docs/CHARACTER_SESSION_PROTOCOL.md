@@ -31,6 +31,8 @@ The bootstrap Skyrim save is not persistent character truth. The snapshot is pop
 
 The client caches the snapshot, applies it through `CharacterApplyService`, dispatches `CharacterSnapshotAppliedEvent`, and sends only the snapshot `CharacterId` in `CharacterReadyRequest`. A validation or native-form resolution failure dispatches `CharacterSnapshotApplyFailedEvent` and keeps the client pre-world. After the server confirms readiness, the client assigns only the local player; after the server creates the persistent entity and transitions its session to `InWorld`, it sends `NotifyCharacterEnteredWorld`. The client then dispatches `CharacterWorldSyncStartedEvent` and performs the normal actor scan exactly once.
 
+Authentication/transport connection is not global persistent-world presence. `PlayerJoinEvent` remains a legacy connection-level event, while `PlayerEnterWorldEvent` is the boundary at which `PresenceService` publishes the persisted character's name, level, and cell/worldspace through global presence messages. A client may cache remote presence messages received near world entry, but local world authority stays inactive until `CharacterWorldSyncStartedEvent` confirms the local character is in-world.
+
 The client service exposes request methods and dispatcher events for a future UI. Authentication, character creation/editing/deletion, UI/CEF, inventory persistence, XP, and later session features remain outside this milestone.
 
 ## Local development identity binding

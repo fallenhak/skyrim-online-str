@@ -7,7 +7,7 @@ struct PresenceChangedEvent;
  * @brief Client-side view of local world authority.
  *
  * Actor ownership is server-coordinated, while world authority is selected from
- * connected-player presence rather than party leadership.
+ * in-world player presence rather than connection state or party leadership.
  */
 struct AuthorityService
 {

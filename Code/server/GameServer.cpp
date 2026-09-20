@@ -16,8 +16,6 @@
 #include <AdminMessages/ClientAdminMessageFactory.h>
 #include <Messages/AuthenticationResponse.h>
 #include <Messages/ClientMessageFactory.h>
-#include <Messages/NotifyPlayerJoined.h>
-#include <Messages/NotifyPlayerLeft.h>
 #include <Messages/NotifySettingsChange.h>
 #include <Messages/NotifyCharacterList.h>
 #include <Messages/NotifyCharacterSelectionResult.h>
@@ -809,11 +807,6 @@ void GameServer::OnDisconnection(const ConnectionId_t aConnectionId, EDisconnect
 
         m_pWorld->GetDispatcher().trigger(PlayerLeaveEvent(pPlayer));
 
-        NotifyPlayerLeft notify{};
-        notify.PlayerId = pPlayer->GetId();
-        notify.Username = pPlayer->GetUsername();
-        SendToPlayers(notify);
-
         entt::entity playerCharacter = pPlayer->GetCharacter().value_or(static_cast<entt::entity>(0));
 
         // Cleanup all entities that we own
@@ -1170,26 +1163,6 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
         pPlayer->SetStringCacheId(startId);
 
         Send(aConnectionId, initStringCache);
-
-        for (auto* pOtherPlayer : m_pWorld->GetPlayerManager())
-        {
-            if (pOtherPlayer == pPlayer)
-                continue;
-
-            NotifyPlayerJoined notify{};
-            notify.PlayerId = pOtherPlayer->GetId();
-            notify.Username = pOtherPlayer->GetUsername();
-
-            auto& cellComponent = pOtherPlayer->GetCellComponent();
-            notify.WorldSpaceId = cellComponent.WorldSpaceId;
-            notify.CellId = cellComponent.Cell;
-
-            notify.Level = pOtherPlayer->GetLevel();
-
-            spdlog::debug("[GameServer] New notify player {:x} {}", notify.PlayerId, notify.Username.c_str());
-
-            Send(pPlayer->GetConnectionId(), notify);
-        }
 
         m_pWorld->GetDispatcher().trigger(PlayerJoinEvent(pPlayer, acRequest->WorldSpaceId, acRequest->CellId, acRequest->PlayerTime));
     }

@@ -24,12 +24,12 @@ bool AuthorityService::HasLocalActorAuthority() const noexcept
 bool AuthorityService::HasLocalWorldAuthority() const noexcept
 {
     const auto& presence = m_world.GetPresenceService();
-    return presence.IsConnected() && presence.GetLocalPlayerId() == presence.GetWorldAuthorityPlayerId();
+    return presence.IsInWorld() && presence.GetLocalPlayerId() == presence.GetWorldAuthorityPlayerId();
 }
 
 bool AuthorityService::HasWorldAuthoritySource() const noexcept
 {
-    return m_world.GetPresenceService().IsConnected();
+    return m_world.GetPresenceService().IsInWorld();
 }
 
 uint32_t AuthorityService::GetWorldAuthorityPlayerId() const noexcept
