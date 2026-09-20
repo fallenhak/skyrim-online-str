@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Services/ActorMutationAuthorityPolicy.h>
 #include <TiltedCore/Stl.hpp>
 
 #include <cmath>
@@ -15,7 +16,7 @@ struct ActorHealthChangePolicy final
         const bool aIsCurrentOwner,
         const uint32_t aOwnershipEpoch) noexcept
     {
-        return aEntityExists && aOwnerExists && aIsCurrentOwner && aOwnershipEpoch != 0;
+        return ActorMutationAuthorityPolicy::IsCurrentOwner(aEntityExists, aOwnerExists, aIsCurrentOwner, aOwnershipEpoch);
     }
 
     static bool TryApplySignedDelta(TiltedPhoques::Map<uint32_t, float>& aActorValues, const float aDeltaHealth) noexcept

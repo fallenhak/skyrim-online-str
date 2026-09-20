@@ -257,12 +257,57 @@ server entity or ownership.
 
 - `20862de1` — enforced projectile shooter ownership/epoch and finite input
   validation.
-- Pending follow-up commit for package, magic, respawn, and report changes.
+- `f0118219` — added package, magic, and respawn owner/epoch validation and
+  protocol regression coverage.
 
 ### Remaining risks
 
 - Package, spell, object, and other actor mutation/relay surfaces remain under
   focused review.
+
+## Phase E — Reusable authority test infrastructure
+
+### Inspected systems
+
+- The pure health and projectile authority policies and their focused Catch2
+  tests.
+- Server `OwnerComponent::IsCurrentOwner` and the existing ownership epoch
+  transfer paths.
+
+### Findings
+
+- Both concrete policies need the same four facts: the entity exists, an owner
+  exists, the sender is the current owner, and the epoch is non-zero.
+- The domain-specific checks differ: health validates signed finite deltas and
+  projectile launch validates finite launch parameters. They should not be
+  merged into a broad mock or shared gameplay policy.
+
+### Changes implemented
+
+- Added the small reusable `ActorMutationAuthorityPolicy::IsCurrentOwner`
+  predicate and made the health/projectile policies delegate to it.
+- Kept tests pure and deterministic; they cover correct authority, missing
+  entities/owners, wrong or stale authority, zero epochs, and malformed values.
+
+### Deliberately not implemented
+
+- No mock-world framework or test-only ownership model was introduced.
+- No aesthetic refactor of existing handlers was performed.
+
+### Tests
+
+- `git diff --check` — passed.
+- `xmake -y TPTests` — passed.
+- `xmake run TPTests` — passed, 200 assertions in 22 test cases.
+
+### Commit
+
+Pending until the shared policy header is committed.
+
+### Remaining risks
+
+- The pure policy tests do not replace integration coverage of every ECS
+  handler; unresolved interaction semantics remain documented in Phase D/B.
 
 ## Later phases
 

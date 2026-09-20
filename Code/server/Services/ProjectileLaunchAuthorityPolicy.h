@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Services/ActorMutationAuthorityPolicy.h>
 #include <cmath>
 #include <cstdint>
 
@@ -11,7 +12,7 @@ struct ProjectileLaunchAuthorityPolicy final
         const bool aIsCurrentOwner,
         const uint32_t aOwnershipEpoch) noexcept
     {
-        return aEntityExists && aOwnerExists && aIsCurrentOwner && aOwnershipEpoch != 0;
+        return ActorMutationAuthorityPolicy::IsCurrentOwner(aEntityExists, aOwnerExists, aIsCurrentOwner, aOwnershipEpoch);
     }
 
     static bool HasFiniteParameters(
