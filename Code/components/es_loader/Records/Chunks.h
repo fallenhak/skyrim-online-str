@@ -5,6 +5,8 @@ class Record;
 namespace Chunks
 {
 
+[[nodiscard]] uint32_t ReadFormId(Buffer::Reader& aReader, Map<uint8_t, uint32_t>& aParentToFormIdPrefix);
+
 struct ScriptProperty
 {
     enum class Type

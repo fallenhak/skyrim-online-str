@@ -55,6 +55,7 @@ World::World(std::filesystem::path aDatabasePath)
     ESLoader::ESLoader loader;
     // emplace loaded mods into modscomponent.
     m_recordCollection = loader.BuildRecordCollection();
+    ctx().emplace<ActorPopulationPolicy>(m_recordCollection.get());
     for (const auto& it : loader.GetLoadOrder())
     {
         ctx().emplace<ModsComponent>().AddServerMod(it);

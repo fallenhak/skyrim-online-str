@@ -5,7 +5,7 @@ target("TPTests")
     add_includedirs(
         ".", "../encoding")
     add_headerfiles("**.h")
-    add_files("*.cpp|PersistenceTests.cpp|SessionServiceTests.cpp")
+    add_files("*.cpp|PersistenceTests.cpp|SessionServiceTests.cpp|ActorPopulationTests.cpp")
     add_deps("SkyrimEncoding")
     add_packages(
         "tiltedcore",
@@ -44,4 +44,21 @@ target("SessionTests")
         "gtest",
         "gamenetworkingsockets",
         "sqlite3",
+        "spdlog")
+
+target("ActorPopulationTests")
+    set_kind("binary")
+    set_group("Tests")
+    set_pcxxheader("../components/es_loader/stdafx.h")
+    add_includedirs(
+        ".", "../encoding", "../server", "../components/es_loader")
+    add_files("ActorPopulationTests.cpp", "../TestMain.cpp")
+    add_files("../server/Services/ActorPopulationPolicy.cpp")
+    add_deps("ESLoader", "SkyrimEncoding")
+    add_packages(
+        "tiltedcore",
+        "hopscotch-map",
+        "gtest",
+        "zlib",
+        "glm",
         "spdlog")

@@ -123,6 +123,12 @@ bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aReco
             aRecordCollection.m_npcs[parsedRecord.GetFormId()] = parsedRecord;
             break;
         }
+        case FormEnum::RACE:
+        {
+            RACE parsedRecord = CopyAndParseRecord<RACE>(pRecord);
+            aRecordCollection.m_races[parsedRecord.GetFormId()] = parsedRecord;
+            break;
+        }
         case FormEnum::CONT:
         {
             CONT parsedRecord = CopyAndParseRecord<CONT>(pRecord);
