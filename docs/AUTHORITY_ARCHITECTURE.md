@@ -28,7 +28,7 @@ AuthorityService
   authority transfer policy
 
 Presence / Interest Management
-  who is connected
+  who is visibly in the persistent world
   which entities/events each client should receive
 
 Persistence
@@ -47,3 +47,13 @@ Actor authority policy now follows these rules:
 - a later milestone should add explicit orphan/stale-owner recovery and stronger interest-management policy.
 
 Weather authority is still temporarily backed by party state and is the next authority subsystem that must be made independent.
+
+## Persistent-world presence boundary
+
+Authentication creates a transport connection and a `Player` record, but it does not make that player globally visible. `PlayerJoinEvent` remains a connection-level legacy event for calendar, party, server-list, and scripting integrations.
+
+`PresenceService` is the sole publisher of global `NotifyPlayerList`, `NotifyPlayerJoined`, and `NotifyPlayerLeft` messages. Its visible set begins only on `PlayerEnterWorldEvent`, after the persistent character entity has been created and the session has entered `InWorld`. It uses the `Player`'s persisted name, level, and cell/worldspace at that point.
+
+Disconnecting before world entry produces no global leave notification. An in-world disconnect removes the player from the explicit presence set and publishes exactly one leave notification to the remaining in-world players. Presence lists never iterate unfiltered `PlayerManager` entries.
+
+On the client, transport connection and persistent-world presence are separate states. Remote presence messages may be cached before local world sync, but `AuthorityService` has no world-authority source until `CharacterWorldSyncStartedEvent` confirms that the local persistent character is in-world. The transitional authority policy then chooses the lowest ID among the local in-world player and announced remote in-world players.
