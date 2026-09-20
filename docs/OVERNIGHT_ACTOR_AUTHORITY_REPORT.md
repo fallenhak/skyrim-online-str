@@ -460,7 +460,8 @@ server entity or ownership.
 
 ### Commit
 
-Pending until the Phase I design documentation is committed.
+- `41e65907` — defined the validated hit-observation proposal without enabling
+  production hit or reward flow.
 
 The malformed-input pass, final verification, and draft pull request will be
 appended as those phases complete.
