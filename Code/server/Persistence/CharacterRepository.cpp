@@ -162,6 +162,39 @@ bool CharacterRepository::UpdateCharacter(const CharacterRecord& acCharacter)
     return updated;
 }
 
+bool CharacterRepository::UpdateCharacterRuntimeState(const CharacterId aCharacterId, const std::string_view acOwnerProfileId,
+                                                      const CharacterRuntimeState& acState)
+{
+    Database::Transaction transaction(m_database);
+
+    auto statement = m_database.Prepare(R"sql(
+        UPDATE characters SET
+            worldspace_mod_id = ?, worldspace_base_id = ?, cell_mod_id = ?, cell_base_id = ?,
+            position_x = ?, position_y = ?, position_z = ?, health = ?, magicka = ?, stamina = ?, updated_at = ?
+        WHERE id = ? AND owner_profile_id = ?;
+    )sql");
+
+    int index = 1;
+    BindGameId(statement, index, index + 1, acState.WorldSpace);
+    index += 2;
+    BindGameId(statement, index, index + 1, acState.Cell);
+    index += 2;
+    statement.Bind(index++, static_cast<double>(acState.PositionX));
+    statement.Bind(index++, static_cast<double>(acState.PositionY));
+    statement.Bind(index++, static_cast<double>(acState.PositionZ));
+    statement.Bind(index++, static_cast<double>(acState.Health));
+    statement.Bind(index++, static_cast<double>(acState.Magicka));
+    statement.Bind(index++, static_cast<double>(acState.Stamina));
+    statement.Bind(index++, GetUnixTimestamp());
+    statement.Bind(index++, aCharacterId);
+    statement.Bind(index, acOwnerProfileId);
+    (void)statement.Step();
+
+    const bool updated = m_database.Changes() == 1;
+    transaction.Commit();
+    return updated;
+}
+
 bool CharacterRepository::DeleteCharacter(const CharacterId aCharacterId, const std::string_view acOwnerProfileId)
 {
     Database::Transaction transaction(m_database);

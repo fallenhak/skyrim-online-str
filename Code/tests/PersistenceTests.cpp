@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -46,6 +47,21 @@ void CheckCharacterValues(const Persistence::CharacterRecord& acExpected, const 
     EXPECT_FLOAT_EQ(acActual.Stamina, acExpected.Stamina);
     EXPECT_GT(acActual.CreatedAt, 0);
     EXPECT_GE(acActual.UpdatedAt, acActual.CreatedAt);
+}
+
+Persistence::CharacterRuntimeState MakeRuntimeState()
+{
+    Persistence::CharacterRuntimeState state{};
+    // An empty worldspace represents an interior and is valid for runtime save-back.
+    state.WorldSpace = {};
+    state.Cell = GameId(0x03, 0x00000055);
+    state.PositionX = -901.5f;
+    state.PositionY = 42.25f;
+    state.PositionZ = 18.75f;
+    state.Health = 97.0f;
+    state.Magicka = 61.5f;
+    state.Stamina = 88.25f;
+    return state;
 }
 
 struct TemporaryDatabaseFile final
@@ -143,4 +159,69 @@ TEST(PersistenceCharacterRepository, PersistsRecordsAfterReopeningAnOnDiskDataba
         EXPECT_EQ(loadedCharacter->Name, "Persistent Character");
         EXPECT_EQ(loadedCharacter->OwnerProfileId, "disk-profile");
     }
+}
+
+TEST(PersistenceCharacterRepository, RuntimeUpdateOnlyChangesLocationAndCurrentVitals)
+{
+    Persistence::Database database(":memory:");
+    database.Migrate();
+    Persistence::CharacterRepository repository(database);
+
+    auto character = MakeCharacter("runtime-owner-' OR 1=1 --", "Runtime Save Character");
+    const auto characterId = repository.CreateCharacter(character);
+    ASSERT_GT(characterId, 0);
+
+    const auto before = repository.GetCharacterForOwner(characterId, character.OwnerProfileId);
+    ASSERT_TRUE(before.has_value());
+
+    const auto runtimeState = MakeRuntimeState();
+    ASSERT_TRUE(repository.UpdateCharacterRuntimeState(characterId, character.OwnerProfileId, runtimeState));
+
+    const auto after = repository.GetCharacterForOwner(characterId, character.OwnerProfileId);
+    ASSERT_TRUE(after.has_value());
+    EXPECT_EQ(after->Id, before->Id);
+    EXPECT_EQ(after->OwnerProfileId, before->OwnerProfileId);
+    EXPECT_EQ(after->Name, before->Name);
+    EXPECT_EQ(after->Race, before->Race);
+    EXPECT_EQ(after->Sex, before->Sex);
+    EXPECT_EQ(after->Level, before->Level);
+    EXPECT_EQ(after->CreatedAt, before->CreatedAt);
+    EXPECT_EQ(after->WorldSpace, runtimeState.WorldSpace);
+    EXPECT_EQ(after->Cell, runtimeState.Cell);
+    EXPECT_FLOAT_EQ(after->PositionX, runtimeState.PositionX);
+    EXPECT_FLOAT_EQ(after->PositionY, runtimeState.PositionY);
+    EXPECT_FLOAT_EQ(after->PositionZ, runtimeState.PositionZ);
+    EXPECT_FLOAT_EQ(after->Health, runtimeState.Health);
+    EXPECT_FLOAT_EQ(after->Magicka, runtimeState.Magicka);
+    EXPECT_FLOAT_EQ(after->Stamina, runtimeState.Stamina);
+    EXPECT_GE(after->UpdatedAt, before->UpdatedAt);
+
+    const auto sqlLookingWrongOwner = "runtime-owner-' OR 'x'='x";
+    EXPECT_FALSE(repository.UpdateCharacterRuntimeState(characterId, sqlLookingWrongOwner, MakeRuntimeState()));
+    EXPECT_FALSE(repository.UpdateCharacterRuntimeState(characterId + 1, character.OwnerProfileId, MakeRuntimeState()));
+}
+
+TEST(PersistenceCharacterRuntimeState, ValidatesOnlySafeFiniteV1RuntimeValues)
+{
+    const auto validState = MakeRuntimeState();
+    EXPECT_TRUE(Persistence::IsValidCharacterRuntimeState(1, "owner", validState));
+
+    auto invalidState = validState;
+    invalidState.PositionX = std::numeric_limits<float>::quiet_NaN();
+    EXPECT_FALSE(Persistence::IsValidCharacterRuntimeState(1, "owner", invalidState));
+
+    invalidState = validState;
+    invalidState.PositionY = std::numeric_limits<float>::infinity();
+    EXPECT_FALSE(Persistence::IsValidCharacterRuntimeState(1, "owner", invalidState));
+
+    invalidState = validState;
+    invalidState.Health = -1.f;
+    EXPECT_FALSE(Persistence::IsValidCharacterRuntimeState(1, "owner", invalidState));
+
+    EXPECT_FALSE(Persistence::IsValidCharacterRuntimeState(0, "owner", validState));
+    EXPECT_FALSE(Persistence::IsValidCharacterRuntimeState(1, "", validState));
+
+    invalidState = validState;
+    invalidState.Cell = {};
+    EXPECT_FALSE(Persistence::IsValidCharacterRuntimeState(1, "owner", invalidState));
 }
