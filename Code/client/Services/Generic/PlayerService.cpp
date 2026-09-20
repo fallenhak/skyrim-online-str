@@ -152,10 +152,6 @@ void PlayerService::OnPlayerDialogueEvent(const PlayerDialogueEvent& acEvent) co
     if (!m_transport.IsConnected())
         return;
 
-    const auto& partyService = m_world.GetPartyService();
-    if (!partyService.IsInParty())
-        return;
-
     PlayerDialogueRequest request{};
     request.Text = acEvent.Text;
 
