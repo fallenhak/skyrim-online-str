@@ -22,6 +22,10 @@
 #include <Messages/NotifyCharacterList.h>
 #include <Messages/NotifyCharacterSelectionResult.h>
 #include <Messages/NotifyCharacterLoadSnapshot.h>
+#include <Messages/NotifyCharacterReadyResult.h>
+#include <Messages/CharacterReadyRequest.h>
+#include <Messages/AssignCharacterRequest.h>
+#include <Messages/NotifyCharacterEnteredWorld.h>
 #include <Messages/RequestCharacterList.h>
 #include <Messages/SelectCharacterRequest.h>
 #include <console/ConsoleRegistry.h>
@@ -355,6 +359,43 @@ void GameServer::BindMessageHandlers()
         }
 
         pPlayer->Send(response);
+    };
+
+    m_messageHandlers[CharacterReadyRequest::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
+    {
+        auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
+        if (!pPlayer)
+        {
+            spdlog::error("Connection {:x} is not associated with a player.", aConnectionId);
+            Kick(aConnectionId);
+            return;
+        }
+
+        const auto pRealMessage = CastUnique<CharacterReadyRequest>(std::move(apMessage));
+        NotifyCharacterReadyResult response{};
+        response.Status = m_pWorld->GetSessionService().AcceptCharacterReady(aConnectionId, pRealMessage->CharacterId);
+        pPlayer->Send(response);
+    };
+
+    // Character assignment is the one pre-world exception. Only the real local player
+    // reference may cross this gate while the session is awaiting player assignment.
+    m_messageHandlers[AssignCharacterRequest::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
+    {
+        const auto pRealMessage = CastUnique<AssignCharacterRequest>(std::move(apMessage));
+        const bool isPlayerReference = pRealMessage->ReferenceId.ModId == 0 && pRealMessage->ReferenceId.BaseId == 0x14;
+        const auto& sessionService = m_pWorld->GetSessionService();
+        if ((isPlayerReference && !sessionService.CanAssignPlayer(aConnectionId)) || (!isPlayerReference && !sessionService.CanProcessGameplay(aConnectionId)))
+            return;
+
+        auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
+        if (!pPlayer)
+        {
+            spdlog::error("Connection {:x} is not associated with a player.", aConnectionId);
+            Kick(aConnectionId);
+            return;
+        }
+
+        m_pWorld->GetDispatcher().trigger(PacketEvent<AssignCharacterRequest>(pRealMessage.get(), pPlayer));
     };
 
     // Override authentication request

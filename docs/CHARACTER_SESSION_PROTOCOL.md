@@ -1,6 +1,6 @@
-# Character session and selection protocol
+# Character session, character apply, and world-entry protocol
 
-This milestone adds the protocol foundation for character selection without loading a character into Skyrim.
+This milestone applies the owner-validated V1 character snapshot to the local Skyrim player and completes world entry only after the server has created the corresponding persistent player entity.
 
 The server flow is:
 
@@ -12,19 +12,26 @@ SessionService (connection)
     -> owner-scoped validation / NotifyCharacterSelectionResult
     -> server-authoritative CharacterLoadSnapshot
     -> AwaitingClientReady
+    -> CharacterReadyRequest
+    -> AwaitingPlayerAssignment
+    -> local PlayerCharacter (form 0x14) AssignCharacterRequest
+    -> persisted player entity / NotifyCharacterEnteredWorld
+    -> InWorld
 ```
+
+The client follows the corresponding sequence `AwaitingClientReady -> ApplyingCharacter -> AwaitingClientReady -> AwaitingPlayerAssignment -> InWorld`. Applying the snapshot validates all basic values and resolves the race, worldspace, and cell before mutating Skyrim. It then applies the V1 fields: name, race, sex, level, location, and current health/magicka/stamina. Inventory, equipment, perks, skills, XP, spells, shouts, factions, and appearance are not authoritative in this milestone, apart from the safe race/sex refresh.
 
 `SessionService` is keyed by the live connection identity and stores an optional verified `OwnerProfileId`, the session state, and the selected persistence `CharacterId`. Client-supplied `DiscordId`, username, profile strings, and transient `PlayerId` values are not used as authenticated ownership.
 
 Character list responses expose only network `CharacterSummary` fields: ID, name, race, sex, and level. Selection always calls the persistence repository's owner-scoped lookup. A missing character and a character owned by another profile produce the same `kNotFoundOrNotOwned` status.
 
-Normal gameplay packets are accepted by the server only for a future `InWorld` session. Pre-world gameplay packets are silently dropped, and the client does not begin its normal actor-assignment scan while `CharacterSessionService::IsGameplayActive()` is false.
+Normal gameplay packets are accepted by the server only for an `InWorld` session. A valid ready request advances only to `AwaitingPlayerAssignment`; it never enters `InWorld` directly. During that intermediate state, the only allowed assignment is the local player reference (`GameId(0, 0x14)`). The client transport gate also allows only the protocol messages and that one local assignment. Ordinary gameplay and the full actor-assignment scan remain disabled until `NotifyCharacterEnteredWorld` is received.
 
-The bootstrap Skyrim save is not persistent character truth. The snapshot is populated only from the owner-validated database record selected by the server session; authentication fields such as username, level, worldspace, cell, time, and Discord ID do not populate it.
+The bootstrap Skyrim save is not persistent character truth. The snapshot is populated only from the owner-validated database record selected by the server session. On final assignment the server reloads that record owner-scoped and its V1 name, level, worldspace, cell, position, and current health/magicka/stamina override client-provided bootstrap values. Authentication fields such as username, level, worldspace, cell, time, and Discord ID do not override the persisted record.
 
-The client caches the snapshot and dispatches `CharacterLoadSnapshotReceivedEvent`, but does not apply it to Skyrim, teleport, mutate actor values, spawn the player, or enter the world. Snapshot application and the final readiness/world-entry transition are the next milestone.
+The client caches the snapshot, applies it through `CharacterApplyService`, dispatches `CharacterSnapshotAppliedEvent`, and sends only the snapshot `CharacterId` in `CharacterReadyRequest`. A validation or native-form resolution failure dispatches `CharacterSnapshotApplyFailedEvent` and keeps the client pre-world. After the server confirms readiness, the client assigns only the local player; after the server creates the persistent entity and transitions its session to `InWorld`, it sends `NotifyCharacterEnteredWorld`. The client then dispatches `CharacterWorldSyncStartedEvent` and performs the normal actor scan exactly once.
 
-The client service exposes request methods and dispatcher events for a future UI. Authentication, character creation/editing/deletion, UI/CEF, loading, applying, and spawning remain outside this milestone.
+The client service exposes request methods and dispatcher events for a future UI. Authentication, character creation/editing/deletion, UI/CEF, inventory persistence, XP, and later session features remain outside this milestone.
 
 ## Local development identity binding
 

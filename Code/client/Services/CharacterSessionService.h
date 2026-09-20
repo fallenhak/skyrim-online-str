@@ -5,6 +5,10 @@
 #include <Events/CharacterLoadSnapshotReceivedEvent.h>
 #include <Events/CharacterListReceivedEvent.h>
 #include <Events/CharacterSelectionResultEvent.h>
+#include <Events/CharacterSnapshotAppliedEvent.h>
+#include <Events/CharacterSnapshotApplyFailedEvent.h>
+#include <Events/CharacterPlayerAssignmentStartedEvent.h>
+#include <Events/CharacterWorldSyncStartedEvent.h>
 
 #include <Structs/CharacterLoadSnapshot.h>
 
@@ -16,6 +20,8 @@
 struct NotifyCharacterList;
 struct NotifyCharacterLoadSnapshot;
 struct NotifyCharacterSelectionResult;
+struct NotifyCharacterReadyResult;
+struct NotifyCharacterEnteredWorld;
 struct TransportService;
 
 enum class ClientCharacterSessionState : std::uint8_t
@@ -23,7 +29,9 @@ enum class ClientCharacterSessionState : std::uint8_t
     kDisconnected = 0,
     kAwaitingCharacterSelection,
     kCharacterSelected,
+    kApplyingCharacter,
     kAwaitingClientReady,
+    kAwaitingPlayerAssignment,
     kInWorld
 };
 
@@ -54,6 +62,10 @@ private:
     void HandleCharacterList(const NotifyCharacterList& acMessage) const noexcept;
     void HandleCharacterSelectionResult(const NotifyCharacterSelectionResult& acMessage) noexcept;
     void HandleCharacterLoadSnapshot(const NotifyCharacterLoadSnapshot& acMessage) noexcept;
+    void HandleCharacterSnapshotApplied(const CharacterSnapshotAppliedEvent& acEvent) noexcept;
+    void HandleCharacterSnapshotApplyFailed(const CharacterSnapshotApplyFailedEvent& acEvent) noexcept;
+    void HandleCharacterReadyResult(const NotifyCharacterReadyResult& acMessage) noexcept;
+    void HandleCharacterEnteredWorld(const NotifyCharacterEnteredWorld& acMessage) noexcept;
 
     TransportService& m_transport;
     entt::dispatcher& m_dispatcher;
@@ -64,4 +76,8 @@ private:
     entt::scoped_connection m_characterListConnection;
     entt::scoped_connection m_characterSelectionResultConnection;
     entt::scoped_connection m_characterLoadSnapshotConnection;
+    entt::scoped_connection m_characterSnapshotAppliedConnection;
+    entt::scoped_connection m_characterSnapshotApplyFailedConnection;
+    entt::scoped_connection m_characterReadyResultConnection;
+    entt::scoped_connection m_characterEnteredWorldConnection;
 };

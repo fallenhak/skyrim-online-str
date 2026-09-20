@@ -15,6 +15,8 @@
 
 #include <Messages/AssignCharacterRequest.h>
 #include <Messages/AssignCharacterResponse.h>
+#include <Messages/NotifyCharacterReadyResult.h>
+#include <Messages/NotifyCharacterEnteredWorld.h>
 #include <Messages/ServerReferencesMoveRequest.h>
 #include <Messages/ClientReferencesMoveRequest.h>
 #include <Messages/CharacterSpawnRequest.h>
@@ -41,6 +43,10 @@
 #include <Setting.h>
 namespace
 {
+constexpr std::uint32_t kHealthActorValue = 24;
+constexpr std::uint32_t kMagickaActorValue = 25;
+constexpr std::uint32_t kStaminaActorValue = 26;
+
 Console::Setting bEnableXpSync{"Gameplay:bEnableXpSync", "Legacy co-op combat XP sharing. Disabled by default for persistent-world mode.", false};
 }
 
@@ -185,13 +191,18 @@ void CharacterService::OnCharacterInteriorCellChange(const CharacterInteriorCell
 
 void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacterRequest>& acMessage) const noexcept
 {
-    if (!m_world.GetSessionService().CanProcessGameplay(acMessage.pPlayer->GetConnectionId()))
-        return;
-
     auto& message = acMessage.Packet;
     const auto& refId = message.ReferenceId;
 
     const auto isPlayer = (refId.ModId == 0 && refId.BaseId == 0x14);
+    const auto& sessionService = m_world.GetSessionService();
+    const bool canAssignPlayer = sessionService.CanAssignPlayer(acMessage.pPlayer->GetConnectionId());
+    if (isPlayer && !canAssignPlayer)
+        return;
+
+    if (!isPlayer && !sessionService.CanProcessGameplay(acMessage.pPlayer->GetConnectionId()))
+        return;
+
     const auto isCustom = isPlayer || refId.ModId == std::numeric_limits<uint32_t>::max();
 
     // Check if id is the player
@@ -591,32 +602,57 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     const auto gameId = message.ReferenceId;
     const auto baseId = message.FormId;
 
-    const auto cEntity = m_world.create();
     const auto isTemporary = gameId.ModId == std::numeric_limits<uint32_t>::max();
     const auto isPlayer = (gameId.ModId == 0 && gameId.BaseId == 0x14);
     const auto isCustom = isPlayer || isTemporary;
+    const bool isPersistentPlayerAssignment = isPlayer && m_world.GetSessionService().CanAssignPlayer(acMessage.pPlayer->GetConnectionId());
 
-    // For player characters and temporary forms
-    if (!isCustom)
+    std::optional<Persistence::CharacterRecord> persistentCharacter;
+    if (isPersistentPlayerAssignment)
     {
-        m_world.emplace<FormIdComponent>(cEntity, gameId.BaseId, gameId.ModId);
+        if (acMessage.pPlayer->GetCharacter().has_value())
+        {
+            spdlog::warn("Rejected duplicate local player assignment for connection {:x}", acMessage.pPlayer->GetConnectionId());
+            return;
+        }
+
+        persistentCharacter = m_world.GetSessionService().GetSelectedCharacterForAssignment(acMessage.pPlayer->GetConnectionId());
+        if (!persistentCharacter.has_value())
+        {
+            NotifyCharacterReadyResult failure{};
+            failure.Status = CharacterReadyStatus::kCharacterMismatchOrUnavailable;
+            acMessage.pPlayer->Send(failure);
+            spdlog::error("Persistent character disappeared or became invalid before assignment for connection {:x}", acMessage.pPlayer->GetConnectionId());
+            return;
+        }
     }
-    else if (baseId != GameId{} && !isTemporary)
+
+    // Reject malformed player references before allocating an ECS entity.
+    if (isCustom && baseId != GameId{} && !isTemporary)
     {
-        m_world.destroy(cEntity);
         spdlog::warn("Unexpected NpcId, player {:x} might be forging packets", acMessage.pPlayer->GetConnectionId());
         return;
     }
+
+    const auto cEntity = m_world.create();
+
+    // For player characters and temporary forms
+    if (!isCustom)
+        m_world.emplace<FormIdComponent>(cEntity, gameId.BaseId, gameId.ModId);
 
     auto* const pServer = GameServer::Get();
 
     m_world.emplace<OwnerComponent>(cEntity, acMessage.pPlayer);
 
-    auto& cellIdComponent = m_world.emplace<CellIdComponent>(cEntity, message.CellId);
-    if (message.WorldSpaceId != GameId{})
+    const GameId cellId = persistentCharacter.has_value() ? persistentCharacter->Cell : message.CellId;
+    const GameId worldSpaceId = persistentCharacter.has_value() ? persistentCharacter->WorldSpace : message.WorldSpaceId;
+    const auto position = persistentCharacter.has_value() ? glm::vec3{persistentCharacter->PositionX, persistentCharacter->PositionY, persistentCharacter->PositionZ} : message.Position;
+
+    auto& cellIdComponent = m_world.emplace<CellIdComponent>(cEntity, cellId);
+    if (worldSpaceId != GameId{})
     {
-        cellIdComponent.WorldSpaceId = message.WorldSpaceId;
-        cellIdComponent.CenterCoords = GridCellCoords::CalculateGridCellCoords(message.Position);
+        cellIdComponent.WorldSpaceId = worldSpaceId;
+        cellIdComponent.CenterCoords = GridCellCoords::CalculateGridCellCoords(position.x, position.y);
     }
 
     auto& characterComponent = m_world.emplace<CharacterComponent>(cEntity);
@@ -643,12 +679,19 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
 
     auto& actorValuesComponent = m_world.emplace<ActorValuesComponent>(cEntity);
     actorValuesComponent.CurrentActorValues = message.CurrentActorData.InitialActorValues;
+    if (persistentCharacter.has_value())
+    {
+        actorValuesComponent.CurrentActorValues.ActorValuesList[kHealthActorValue] = persistentCharacter->Health;
+        actorValuesComponent.CurrentActorValues.ActorValuesList[kMagickaActorValue] = persistentCharacter->Magicka;
+        actorValuesComponent.CurrentActorValues.ActorValuesList[kStaminaActorValue] = persistentCharacter->Stamina;
+        m_world.emplace<PersistentCharacterComponent>(cEntity, static_cast<std::uint64_t>(persistentCharacter->Id));
+    }
 
     spdlog::debug("FormId: {:x}:{:x} - NpcId: {:x}:{:x} assigned to {:x}", gameId.ModId, gameId.BaseId, baseId.ModId, baseId.BaseId, acMessage.pPlayer->GetConnectionId());
 
     auto& movementComponent = m_world.emplace<MovementComponent>(cEntity);
     movementComponent.Tick = pServer->GetTick();
-    movementComponent.Position = message.Position;
+    movementComponent.Position = position;
     movementComponent.Rotation = {message.Rotation.x, 0.f, message.Rotation.y};
     movementComponent.Sent = false;
 
@@ -659,11 +702,35 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     {
         const auto pPlayer = acMessage.pPlayer;
 
+        // The character link is needed while completing the assignment, but persisted
+        // player-facing metadata is committed only after the session transition succeeds.
         pPlayer->SetCharacter(cEntity);
-        pPlayer->GetQuestLogComponent().QuestContent = message.QuestContent;
         characterComponent.PlayerId = pPlayer->GetId();
 
         auto& dispatcher = m_world.GetDispatcher();
+        if (persistentCharacter.has_value())
+        {
+            if (!m_world.GetSessionService().CompletePlayerAssignment(pPlayer->GetConnectionId(), persistentCharacter->Id))
+            {
+                pPlayer->ClearCharacter();
+                m_world.destroy(cEntity);
+                NotifyCharacterReadyResult failure{};
+                failure.Status = CharacterReadyStatus::kCharacterMismatchOrUnavailable;
+                pPlayer->Send(failure);
+                spdlog::error("Failed to complete persistent player assignment for connection {:x}", pPlayer->GetConnectionId());
+                return;
+            }
+        }
+
+        if (persistentCharacter.has_value())
+        {
+            pPlayer->SetUsername(String(persistentCharacter->Name.c_str()));
+            pPlayer->SetLevel(static_cast<std::uint16_t>(persistentCharacter->Level));
+            pPlayer->SetCellComponent(cellIdComponent);
+        }
+
+        pPlayer->GetQuestLogComponent().QuestContent = message.QuestContent;
+
         dispatcher.trigger(PlayerEnterWorldEvent(pPlayer));
     }
 
@@ -673,6 +740,13 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     PopulateAssignmentResponse(cEntity, response);
 
     pServer->Send(acMessage.pPlayer->GetConnectionId(), response);
+
+    if (persistentCharacter.has_value())
+    {
+        NotifyCharacterEnteredWorld enteredWorld{};
+        enteredWorld.CharacterId = static_cast<std::uint64_t>(persistentCharacter->Id);
+        pServer->Send(acMessage.pPlayer->GetConnectionId(), enteredWorld);
+    }
 
     auto& dispatcher = m_world.GetDispatcher();
     dispatcher.trigger(CharacterSpawnedEvent(cEntity));

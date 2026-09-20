@@ -7,6 +7,8 @@ struct ActorRemovedEvent;
 struct UpdateEvent;
 struct ConnectedEvent;
 struct DisconnectedEvent;
+struct CharacterPlayerAssignmentStartedEvent;
+struct CharacterWorldSyncStartedEvent;
 struct EquipmentChangeEvent;
 struct FormIdComponent;
 struct ActionEvent;
@@ -63,6 +65,8 @@ struct CharacterService
     void OnUpdate(const UpdateEvent& acUpdateEvent) noexcept;
     void OnConnected(const ConnectedEvent& acConnectedEvent) const noexcept;
     void OnDisconnected(const DisconnectedEvent& acDisconnectedEvent) const noexcept;
+    void BeginLocalPlayerAssignment(const CharacterPlayerAssignmentStartedEvent& acEvent) const noexcept;
+    void BeginWorldSync(const CharacterWorldSyncStartedEvent& acEvent) const noexcept;
     void OnAssignCharacter(const AssignCharacterResponse& acMessage) noexcept;
     void OnCharacterSpawn(const CharacterSpawnRequest& acMessage) const noexcept;
     void OnReferencesMoveRequest(const ServerReferencesMoveRequest& acMessage) const noexcept;
@@ -143,6 +147,8 @@ private:
     entt::scoped_connection m_removeCharacterConnection;
     entt::scoped_connection m_connectedConnection;
     entt::scoped_connection m_disconnectedConnection;
+    entt::scoped_connection m_playerAssignmentStartedConnection;
+    entt::scoped_connection m_worldSyncStartedConnection;
     entt::scoped_connection m_assignCharacterConnection;
     entt::scoped_connection m_characterSpawnConnection;
     entt::scoped_connection m_referenceMovementSnapshotConnection;
@@ -160,4 +166,5 @@ private:
     entt::scoped_connection m_subtitleSyncConnection;
     entt::scoped_connection m_actorTeleportConnection;
     entt::scoped_connection m_authorityChangedConnection;
+    mutable bool m_worldSyncStarted{};
 };

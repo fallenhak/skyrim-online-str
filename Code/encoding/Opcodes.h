@@ -55,6 +55,7 @@ enum ClientOpcode : unsigned char
     kSetTimeCommandRequest,
     kRequestCharacterList,
     kSelectCharacterRequest,
+    kCharacterReadyRequest,
     kClientOpcodeMax
 };
 
@@ -117,5 +118,7 @@ enum ServerOpcode : unsigned char
     kNotifyCharacterList,
     kNotifyCharacterSelectionResult,
     kNotifyCharacterLoadSnapshot,
+    kNotifyCharacterReadyResult,
+    kNotifyCharacterEnteredWorld,
     kServerOpcodeMax
 };

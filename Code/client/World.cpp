@@ -23,6 +23,7 @@
 #include <Services/CombatService.h>
 #include <Services/WeatherService.h>
 #include <Services/MapService.h>
+#include <Services/CharacterApplyService.h>
 
 #include <Events/PreUpdateEvent.h>
 #include <Events/UpdateEvent.h>
@@ -37,6 +38,7 @@ World::World()
 {
     ctx().emplace<ImguiService>();
     ctx().emplace<CharacterSessionService>(m_transport, m_dispatcher);
+    ctx().emplace<CharacterApplyService>(*this, m_dispatcher);
     ctx().emplace<DiscoveryService>(*this, m_dispatcher);
     ctx().emplace<OverlayService>(*this, m_transport, m_dispatcher);
     ctx().emplace<InputService>(ctx().at<OverlayService>());

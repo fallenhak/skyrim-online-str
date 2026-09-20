@@ -18,9 +18,13 @@
 #include <World.h>
 
 #include <Messages/AuthenticationRequest.h>
+#include <Messages/AssignCharacterRequest.h>
+#include <Messages/CharacterReadyRequest.h>
 #include <Messages/ServerMessageFactory.h>
 #include <Messages/NotifySettingsChange.h>
 #include <Packet.hpp>
+
+#include <Structs/CharacterSessionOutboundPolicy.h>
 
 #include <ScriptExtender.h>
 #include <Services/DiscordService.h>
@@ -74,6 +78,9 @@ bool TransportService::Send(const ClientMessage& acMessage) const noexcept
         ~ScopedReset() { s_allocator.Reset(); }
     } allocatorGuard;
 
+    if (!CanSendMessage(acMessage))
+        return false;
+
     if (IsConnected())
     {
         ScopedAllocator _{s_allocator};
@@ -91,6 +98,42 @@ bool TransportService::Send(const ClientMessage& acMessage) const noexcept
     }
 
     return false;
+}
+
+bool TransportService::CanSendMessage(const ClientMessage& acMessage) const noexcept
+{
+    const auto clientState = m_world.GetCharacterSessionService().GetState();
+    CharacterClientSessionPhase phase = CharacterClientSessionPhase::kDisconnected;
+    switch (clientState)
+    {
+    case ClientCharacterSessionState::kAwaitingCharacterSelection:
+        phase = CharacterClientSessionPhase::kAwaitingCharacterSelection;
+        break;
+    case ClientCharacterSessionState::kApplyingCharacter:
+        phase = CharacterClientSessionPhase::kApplyingCharacter;
+        break;
+    case ClientCharacterSessionState::kAwaitingClientReady:
+        phase = CharacterClientSessionPhase::kAwaitingClientReady;
+        break;
+    case ClientCharacterSessionState::kAwaitingPlayerAssignment:
+        phase = CharacterClientSessionPhase::kAwaitingPlayerAssignment;
+        break;
+    case ClientCharacterSessionState::kInWorld:
+        phase = CharacterClientSessionPhase::kInWorld;
+        break;
+    case ClientCharacterSessionState::kDisconnected:
+    case ClientCharacterSessionState::kCharacterSelected:
+        break;
+    }
+
+    bool isLocalPlayerAssignment = false;
+    if (acMessage.GetOpcode() == kAssignCharacterRequest)
+    {
+        const auto& request = static_cast<const AssignCharacterRequest&>(acMessage);
+        isLocalPlayerAssignment = request.ReferenceId.ModId == 0 && request.ReferenceId.BaseId == 0x14;
+    }
+
+    return CanSendCharacterProtocolMessage(acMessage.GetOpcode(), phase, isLocalPlayerAssignment);
 }
 
 void TransportService::OnConsume(const void* apData, uint32_t aSize)
