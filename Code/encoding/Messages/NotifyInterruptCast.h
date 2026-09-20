@@ -14,8 +14,12 @@ struct NotifyInterruptCast final : ServerMessage
     void SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept override;
     void DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept override;
 
-    bool operator==(const NotifyInterruptCast& acRhs) const noexcept { return GetOpcode() == acRhs.GetOpcode() && CasterId == acRhs.CasterId && CastingSource == acRhs.CastingSource; }
+    bool operator==(const NotifyInterruptCast& acRhs) const noexcept
+    {
+        return GetOpcode() == acRhs.GetOpcode() && CasterId == acRhs.CasterId && CastingSource == acRhs.CastingSource && OwnershipEpoch == acRhs.OwnershipEpoch;
+    }
 
-    uint32_t CasterId;
-    int32_t CastingSource;
+    uint32_t CasterId{};
+    int32_t CastingSource{};
+    uint32_t OwnershipEpoch{};
 };

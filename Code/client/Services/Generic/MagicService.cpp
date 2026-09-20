@@ -31,6 +31,8 @@
 
 #include <Games/TES.h>
 
+#include <cmath>
+
 MagicService::MagicService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept
     : m_world(aWorld)
     , m_dispatcher(aDispatcher)
@@ -98,10 +100,13 @@ void MagicService::OnSpellCastEvent(const SpellCastEvent& acEvent) const noexcep
         return;
 
     auto& localComponent = view.get<LocalComponent>(*casterEntityIt);
+    if (localComponent.OwnershipEpoch == 0)
+        return;
 
     SpellCastRequest request{};
 
     request.CasterId = localComponent.Id;
+    request.OwnershipEpoch = localComponent.OwnershipEpoch;
     request.CastingSource = acEvent.pCaster->GetCastingSource();
     request.IsDualCasting = acEvent.pCaster->GetIsDualCasting();
 
@@ -136,7 +141,11 @@ void MagicService::OnNotifySpellCast(const NotifySpellCast& acMessage) const noe
     using CS = MagicSystem::CastingSource;
 
     auto remoteView = m_world.view<RemoteComponent, FormIdComponent>();
-    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, Id = acMessage.CasterId](auto entity) { return remoteView.get<RemoteComponent>(entity).Id == Id; });
+    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, &acMessage](auto entity)
+    {
+        const auto& remoteComponent = remoteView.get<RemoteComponent>(entity);
+        return remoteComponent.Id == acMessage.CasterId && remoteComponent.OwnershipEpoch == acMessage.OwnershipEpoch;
+    });
 
     if (remoteIt == std::end(remoteView))
     {
@@ -153,7 +162,7 @@ void MagicService::OnNotifySpellCast(const NotifySpellCast& acMessage) const noe
     // Only left hand casters need dual casting (?)
     pActor->casters[CS::LEFT_HAND]->SetDualCasting(acMessage.IsDualCasting);
 
-    if (acMessage.CastingSource >= 4)
+    if (acMessage.CastingSource < 0 || acMessage.CastingSource >= 4)
     {
         spdlog::warn("{}: could not find casting source {}", __FUNCTION__, acMessage.CastingSource);
         return;
@@ -251,10 +260,13 @@ void MagicService::OnInterruptCastEvent(const InterruptCastEvent& acEvent) const
     }
 
     auto& localComponent = view.get<LocalComponent>(*casterEntityIt);
+    if (localComponent.OwnershipEpoch == 0)
+        return;
 
     InterruptCastRequest request;
     request.CasterId = localComponent.Id;
     request.CastingSource = acEvent.CastingSource;
+    request.OwnershipEpoch = localComponent.OwnershipEpoch;
 
     spdlog::debug("Sending out interrupt cast");
 
@@ -263,14 +275,18 @@ void MagicService::OnInterruptCastEvent(const InterruptCastEvent& acEvent) const
 
 void MagicService::OnNotifyInterruptCast(const NotifyInterruptCast& acMessage) const noexcept
 {
-    if (acMessage.CastingSource >= 4)
+    if (acMessage.CastingSource < 0 || acMessage.CastingSource >= 4)
     {
         spdlog::warn("{}: could not find casting source {}", __FUNCTION__, acMessage.CastingSource);
         return;
     }
 
     auto remoteView = m_world.view<RemoteComponent, FormIdComponent>();
-    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, Id = acMessage.CasterId](auto entity) { return remoteView.get<RemoteComponent>(entity).Id == Id; });
+    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, &acMessage](auto entity)
+    {
+        const auto& remoteComponent = remoteView.get<RemoteComponent>(entity);
+        return remoteComponent.Id == acMessage.CasterId && remoteComponent.OwnershipEpoch == acMessage.OwnershipEpoch;
+    });
 
     if (remoteIt == std::end(remoteView))
     {
@@ -382,6 +398,9 @@ void MagicService::OnAddTargetEvent(const AddTargetEvent& acEvent) noexcept
 
 void MagicService::OnNotifyAddTarget(const NotifyAddTarget& acMessage) noexcept
 {
+    if (!std::isfinite(acMessage.Magnitude))
+        return;
+
     const uint32_t cSpellId = World::Get().GetModSystem().GetGameId(acMessage.SpellId);
     if (cSpellId == 0)
     {

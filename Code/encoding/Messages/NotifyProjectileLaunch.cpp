@@ -33,6 +33,7 @@ void NotifyProjectileLaunch::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter
 
     Serialization::WriteBool(aWriter, UnkBool1);
     Serialization::WriteBool(aWriter, UnkBool2);
+    Serialization::WriteVarInt(aWriter, OwnershipEpoch);
 }
 
 void NotifyProjectileLaunch::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept
@@ -70,4 +71,5 @@ void NotifyProjectileLaunch::DeserializeRaw(TiltedPhoques::Buffer::Reader& aRead
 
     UnkBool1 = Serialization::ReadBool(aReader);
     UnkBool2 = Serialization::ReadBool(aReader);
+    OwnershipEpoch = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
 }

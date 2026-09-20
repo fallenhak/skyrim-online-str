@@ -886,7 +886,11 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
 void CharacterService::OnNotifyRespawn(const NotifyRespawn& acMessage) const noexcept
 {
     auto view = m_world.view<FormIdComponent, RemoteComponent>();
-    const auto entityIt = std::find_if(view.begin(), view.end(), [view, id = acMessage.ActorId](auto aEntity) { return view.get<RemoteComponent>(aEntity).Id == id; });
+    const auto entityIt = std::find_if(view.begin(), view.end(), [view, &acMessage](auto aEntity)
+    {
+        const auto& remoteComponent = view.get<RemoteComponent>(aEntity);
+        return remoteComponent.Id == acMessage.ActorId && remoteComponent.OwnershipEpoch == acMessage.OwnershipEpoch;
+    });
 
     if (entityIt == view.end())
     {
@@ -909,27 +913,32 @@ void CharacterService::OnNotifyRespawn(const NotifyRespawn& acMessage) const noe
 
     RequestRespawn request;
     request.ActorId = acMessage.ActorId;
+    request.OwnershipEpoch = acMessage.OwnershipEpoch;
 
     m_transport.Send(request);
 }
 
 void CharacterService::OnBeastFormChange(const BeastFormChangeEvent& acEvent) const noexcept
 {
-    auto view = m_world.view<FormIdComponent>();
+    auto view = m_world.view<FormIdComponent, LocalComponent>();
 
     const auto it = std::find_if(view.begin(), view.end(), [view](auto entity) { return view.get<FormIdComponent>(entity).Id == 0x14; });
 
-    std::optional<uint32_t> serverIdRes = Utils::GetServerId(*it);
-    if (!serverIdRes.has_value())
+    if (it == view.end())
+        return;
+
+    const auto& localComponent = view.get<LocalComponent>(*it);
+    if (localComponent.OwnershipEpoch == 0)
     {
-        spdlog::error("{}: failed to find server id", __FUNCTION__);
+        spdlog::debug("{}: local player has no ownership epoch", __FUNCTION__);
         return;
     }
 
-    uint32_t serverId = serverIdRes.value();
+    const uint32_t serverId = localComponent.Id;
 
     RequestRespawn request;
     request.ActorId = serverId;
+    request.OwnershipEpoch = localComponent.OwnershipEpoch;
 
     Actor* pActor = Utils::GetByServerId<Actor>(serverId);
     if (!pActor)
@@ -1040,7 +1049,7 @@ void CharacterService::OnInitPackageEvent(const InitPackageEvent& acEvent) const
     if (!m_transport.IsConnected())
         return;
 
-    auto view = m_world.view<FormIdComponent>();
+    auto view = m_world.view<FormIdComponent, LocalComponent>();
 
     const auto actorIt = std::find_if(std::begin(view), std::end(view), [id = acEvent.ActorId, view](auto entity) { return view.get<FormIdComponent>(entity).Id == id; });
 
@@ -1049,15 +1058,16 @@ void CharacterService::OnInitPackageEvent(const InitPackageEvent& acEvent) const
 
     const entt::entity cActorEntity = *actorIt;
 
-    std::optional<uint32_t> actorServerIdRes = Utils::GetServerId(cActorEntity);
-    if (!actorServerIdRes.has_value())
+    const auto& localComponent = view.get<LocalComponent>(cActorEntity);
+    if (localComponent.OwnershipEpoch == 0)
     {
-        spdlog::error("{}: failed to find server id", __FUNCTION__);
+        spdlog::debug("{}: local actor has no ownership epoch", __FUNCTION__);
         return;
     }
 
     NewPackageRequest request;
-    request.ActorId = actorServerIdRes.value();
+    request.ActorId = localComponent.Id;
+    request.OwnershipEpoch = localComponent.OwnershipEpoch;
     if (!m_world.GetModSystem().GetServerModId(acEvent.PackageId, request.PackageId.ModId, request.PackageId.BaseId))
         return;
 
@@ -1067,7 +1077,11 @@ void CharacterService::OnInitPackageEvent(const InitPackageEvent& acEvent) const
 void CharacterService::OnNotifyNewPackage(const NotifyNewPackage& acMessage) const noexcept
 {
     auto remoteView = m_world.view<RemoteComponent, FormIdComponent>();
-    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, Id = acMessage.ActorId](auto entity) { return remoteView.get<RemoteComponent>(entity).Id == Id; });
+    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, &acMessage](auto entity)
+    {
+        const auto& remoteComponent = remoteView.get<RemoteComponent>(entity);
+        return remoteComponent.Id == acMessage.ActorId && remoteComponent.OwnershipEpoch == acMessage.OwnershipEpoch;
+    });
 
     if (remoteIt == std::end(remoteView))
     {
@@ -1185,9 +1199,10 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
     spdlog::info("Successfully teleported actor, form id: {:X}, world space: {:X}, cell: {:X}, position: ({}, {}, {})", pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
 }
 
-void CharacterService::ApplyPhysicalPopulationSuppression(const entt::entity aEntity, const CharacterAssignmentRejectReason aReason) const noexcept
+void CharacterService::ApplyPhysicalPopulationSuppression(
+    const entt::entity aEntity, const CharacterAssignmentRejectReason aReason, const bool aAssignmentWasCancelled) const noexcept
 {
-    if (!PopulationSuppressionPolicy::ShouldPhysicallySuppress(aReason))
+    if (!PopulationSuppressionPolicy::ShouldPhysicallySuppress(aReason, aAssignmentWasCancelled))
         return;
 
     const auto* const pFormIdComponent = m_world.try_get<FormIdComponent>(aEntity);
@@ -1340,7 +1355,7 @@ void CharacterService::OnCharacterAssignmentRejected(const NotifyCharacterAssign
     m_world.remove<CacheComponent>(cEntity);
     m_world.remove<EarlyAnimationBufferComponent>(cEntity);
     m_world.emplace_or_replace<PopulationSuppressedComponent>(cEntity, acMessage.Reason);
-    ApplyPhysicalPopulationSuppression(cEntity, acMessage.Reason);
+    ApplyPhysicalPopulationSuppression(cEntity, acMessage.Reason, isCancelled);
 
     spdlog::debug("Suppressed local population actor after assignment rejection for cookie {:X}, reason {}", acMessage.Cookie, static_cast<unsigned>(acMessage.Reason));
 }

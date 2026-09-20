@@ -1,5 +1,10 @@
 #include <Messages/NotifyActorMaxValueChanges.h>
 
+namespace
+{
+constexpr uint64_t kMaxActorValueChangeCount = 256;
+}
+
 void NotifyActorMaxValueChanges::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
 {
     Serialization::WriteVarInt(aWriter, Id);
@@ -20,10 +25,13 @@ void NotifyActorMaxValueChanges::DeserializeRaw(TiltedPhoques::Buffer::Reader& a
     Id = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
     OwnershipEpoch = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
 
-    auto count = Serialization::ReadVarInt(aReader);
-    for (int i = 0; i < count; i++)
+    const auto count = Serialization::ReadVarInt(aReader);
+    if (count > kMaxActorValueChangeCount)
+        return;
+
+    for (uint64_t i = 0; i < count; i++)
     {
-        auto key = Serialization::ReadVarInt(aReader);
+        const uint32_t key = static_cast<uint32_t>(Serialization::ReadVarInt(aReader));
         auto value = Serialization::ReadFloat(aReader);
         Values.insert({key, value});
     }

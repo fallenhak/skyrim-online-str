@@ -16,6 +16,8 @@
 #include <Forms/TESAmmo.h>
 #include <Games/ActorExtension.h>
 
+#include <cmath>
+
 CombatService::CombatService(World& aWorld, TransportService& aTransport, entt::dispatcher& aDispatcher)
     : m_world(aWorld)
     , m_transport(aTransport)
@@ -49,6 +51,8 @@ void CombatService::OnProjectileLaunchedEvent(const ProjectileLaunchedEvent& acE
         return;
 
     LocalComponent& localComponent = view.get<LocalComponent>(*shooterEntityIt);
+    if (localComponent.OwnershipEpoch == 0)
+        return;
 
     ProjectileLaunchRequest request{};
 
@@ -61,6 +65,7 @@ void CombatService::OnProjectileLaunchedEvent(const ProjectileLaunchedEvent& acE
     modSystem.GetServerModId(acEvent.AmmoID, request.AmmoID);
 
     request.ShooterID = localComponent.Id;
+    request.OwnershipEpoch = localComponent.OwnershipEpoch;
 
     request.ZAngle = acEvent.ZAngle;
     request.XAngle = acEvent.XAngle;
@@ -89,10 +94,20 @@ void CombatService::OnProjectileLaunchedEvent(const ProjectileLaunchedEvent& acE
 
 void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMessage) const noexcept
 {
+    if (acMessage.OwnershipEpoch == 0 || acMessage.CastingSource < 0 || acMessage.CastingSource >= 4 ||
+        !std::isfinite(acMessage.OriginX) || !std::isfinite(acMessage.OriginY) || !std::isfinite(acMessage.OriginZ) ||
+        !std::isfinite(acMessage.ZAngle) || !std::isfinite(acMessage.XAngle) || !std::isfinite(acMessage.YAngle) ||
+        !std::isfinite(acMessage.Power) || !std::isfinite(acMessage.Scale))
+        return;
+
     ModSystem& modSystem = World::Get().GetModSystem();
 
     auto remoteView = m_world.view<RemoteComponent, FormIdComponent>();
-    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, Id = acMessage.ShooterID](auto entity) { return remoteView.get<RemoteComponent>(entity).Id == Id; });
+    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, &acMessage](auto entity)
+    {
+        const auto& remoteComponent = remoteView.get<RemoteComponent>(entity);
+        return remoteComponent.Id == acMessage.ShooterID && remoteComponent.OwnershipEpoch == acMessage.OwnershipEpoch;
+    });
 
     if (remoteIt == std::end(remoteView))
     {
@@ -116,6 +131,8 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
     }
 
     launchData.pShooter = Cast<TESObjectREFR>(TESForm::GetById(formIdComponent.Id));
+    if (!launchData.pShooter)
+        return;
 
     launchData.Origin.x = acMessage.OriginX;
     launchData.Origin.y = acMessage.OriginY;

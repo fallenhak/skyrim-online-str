@@ -548,11 +548,16 @@ void CharacterService::OnMountRequest(const PacketEvent<MountRequest>& acMessage
 
 void CharacterService::OnNewPackageRequest(const PacketEvent<NewPackageRequest>& acMessage) const noexcept
 {
-    auto& message = acMessage.Packet;
+    const auto& message = acMessage.Packet;
+    const auto characterView = m_world.view<CharacterComponent, OwnerComponent>();
+    const auto it = characterView.find(static_cast<entt::entity>(message.ActorId));
+    if (it == characterView.end() || !characterView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
+        return;
 
     NotifyNewPackage notify;
     notify.ActorId = message.ActorId;
     notify.PackageId = message.PackageId;
+    notify.OwnershipEpoch = message.OwnershipEpoch;
 
     const entt::entity cEntity = static_cast<entt::entity>(message.ActorId);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cEntity, acMessage.GetSender()))
@@ -570,13 +575,15 @@ void CharacterService::OnRequestRespawn(const PacketEvent<RequestRespawn>& acMes
     }
 
     auto& ownerComponent = view.get<OwnerComponent>(*it);
+    if (acMessage.Packet.OwnershipEpoch == 0 || ownerComponent.OwnershipEpoch != acMessage.Packet.OwnershipEpoch)
+        return;
 
-    // Replay cache needs to be cleared when a character respawns
-    if (auto* pAnimationComponent = m_world.try_get<AnimationComponent>(*it))
-        pAnimationComponent->ActionsReplayCache.Clear();
-
-    if (ownerComponent.GetOwner() == acMessage.pPlayer)
+    if (ownerComponent.IsCurrentOwner(acMessage.pPlayer, acMessage.Packet.OwnershipEpoch))
     {
+        // Replay cache needs to be cleared when the current owner respawns.
+        if (auto* pAnimationComponent = m_world.try_get<AnimationComponent>(*it))
+            pAnimationComponent->ActionsReplayCache.Clear();
+
         if (!acMessage.Packet.AppearanceBuffer.empty())
         {
             auto& characterComponent = view.get<CharacterComponent>(*it);
@@ -586,6 +593,7 @@ void CharacterService::OnRequestRespawn(const PacketEvent<RequestRespawn>& acMes
 
         NotifyRespawn notify;
         notify.ActorId = acMessage.Packet.ActorId;
+        notify.OwnershipEpoch = ownerComponent.OwnershipEpoch;
 
         if (!GameServer::Get()->SendToPlayersInRange(notify, *it, acMessage.GetSender()))
             spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);

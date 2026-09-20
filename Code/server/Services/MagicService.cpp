@@ -1,5 +1,6 @@
 #include <Services/MagicService.h>
 
+#include <Components.h>
 #include <GameServer.h>
 #include <World.h>
 
@@ -12,6 +13,8 @@
 #include <Messages/NotifyAddTarget.h>
 #include <Messages/NotifyRemoveSpell.h>
 
+#include <cmath>
+
 MagicService::MagicService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
     : m_world(aWorld)
 {
@@ -23,7 +26,14 @@ MagicService::MagicService(World& aWorld, entt::dispatcher& aDispatcher) noexcep
 
 void MagicService::OnSpellCastRequest(const PacketEvent<SpellCastRequest>& acMessage) const noexcept
 {
-    auto& message = acMessage.Packet;
+    const auto& message = acMessage.Packet;
+    if (message.CastingSource < 0 || message.CastingSource >= 4)
+        return;
+
+    const auto characterView = m_world.view<CharacterComponent, OwnerComponent>();
+    const auto it = characterView.find(static_cast<entt::entity>(message.CasterId));
+    if (it == characterView.end() || !characterView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
+        return;
 
     NotifySpellCast notify;
     notify.CasterId = message.CasterId;
@@ -31,6 +41,7 @@ void MagicService::OnSpellCastRequest(const PacketEvent<SpellCastRequest>& acMes
     notify.CastingSource = message.CastingSource;
     notify.IsDualCasting = message.IsDualCasting;
     notify.DesiredTarget = message.DesiredTarget;
+    notify.OwnershipEpoch = message.OwnershipEpoch;
 
     const auto entity = static_cast<entt::entity>(message.CasterId);
     if (!GameServer::Get()->SendToPlayersInRange(notify, entity, acMessage.GetSender()))
@@ -39,11 +50,19 @@ void MagicService::OnSpellCastRequest(const PacketEvent<SpellCastRequest>& acMes
 
 void MagicService::OnInterruptCastRequest(const PacketEvent<InterruptCastRequest>& acMessage) const noexcept
 {
-    auto& message = acMessage.Packet;
+    const auto& message = acMessage.Packet;
+    if (message.CastingSource < 0 || message.CastingSource >= 4)
+        return;
+
+    const auto characterView = m_world.view<CharacterComponent, OwnerComponent>();
+    const auto it = characterView.find(static_cast<entt::entity>(message.CasterId));
+    if (it == characterView.end() || !characterView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
+        return;
 
     NotifyInterruptCast notify;
     notify.CasterId = message.CasterId;
     notify.CastingSource = message.CastingSource;
+    notify.OwnershipEpoch = message.OwnershipEpoch;
 
     const auto entity = static_cast<entt::entity>(message.CasterId);
     if (!GameServer::Get()->SendToPlayersInRange(notify, entity, acMessage.GetSender()))
@@ -53,6 +72,8 @@ void MagicService::OnInterruptCastRequest(const PacketEvent<InterruptCastRequest
 void MagicService::OnAddTargetRequest(const PacketEvent<AddTargetRequest>& acMessage) const noexcept
 {
     auto& message = acMessage.Packet;
+    if (!std::isfinite(message.Magnitude))
+        return;
 
     NotifyAddTarget notify;
     notify.TargetId = message.TargetId;
