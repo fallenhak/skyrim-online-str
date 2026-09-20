@@ -113,10 +113,11 @@ CharacterId CharacterRepository::CreateCharacter(const CharacterRecord& acCharac
     return characterId;
 }
 
-std::optional<CharacterRecord> CharacterRepository::GetCharacter(const CharacterId aCharacterId) const
+std::optional<CharacterRecord> CharacterRepository::GetCharacterForOwner(const CharacterId aCharacterId, const std::string_view acOwnerProfileId) const
 {
-    auto statement = m_database.Prepare(std::string("SELECT ") + std::string(kCharacterColumns) + " FROM characters WHERE id = ?;");
+    auto statement = m_database.Prepare(std::string("SELECT ") + std::string(kCharacterColumns) + " FROM characters WHERE id = ? AND owner_profile_id = ?;");
     statement.Bind(1, aCharacterId);
+    statement.Bind(2, acOwnerProfileId);
 
     if (!statement.Step())
         return std::nullopt;

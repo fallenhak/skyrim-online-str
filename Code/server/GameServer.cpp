@@ -148,7 +148,7 @@ ServerSettings GetSettings()
     return settings;
 }
 
-GameServer::GameServer(Console::ConsoleRegistry& aConsole) noexcept
+GameServer::GameServer(Console::ConsoleRegistry& aConsole)
     : m_lastFrameTime(std::chrono::high_resolution_clock::now())
     , m_startTime(std::chrono::high_resolution_clock::now())
     , m_commands(aConsole)

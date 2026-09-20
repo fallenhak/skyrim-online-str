@@ -20,7 +20,8 @@ struct CharacterRepository final
     CharacterRepository& operator=(CharacterRepository&&) = delete;
 
     [[nodiscard]] CharacterId CreateCharacter(const CharacterRecord& acCharacter);
-    [[nodiscard]] std::optional<CharacterRecord> GetCharacter(CharacterId aCharacterId) const;
+    // Ownership is enforced in the SQL query; use this for authenticated player/session access.
+    [[nodiscard]] std::optional<CharacterRecord> GetCharacterForOwner(CharacterId aCharacterId, std::string_view acOwnerProfileId) const;
     [[nodiscard]] std::vector<CharacterRecord> ListCharactersForOwner(std::string_view acOwnerProfileId) const;
     [[nodiscard]] bool UpdateCharacter(const CharacterRecord& acCharacter);
     [[nodiscard]] bool DeleteCharacter(CharacterId aCharacterId, std::string_view acOwnerProfileId);

@@ -78,10 +78,12 @@ TEST(PersistenceCharacterRepository, InitializesAndPersistsOwnerScopedRecords)
     const auto characterId = repository.CreateCharacter(character);
     ASSERT_GT(characterId, 0);
 
-    const auto loadedCharacter = repository.GetCharacter(characterId);
+    const auto loadedCharacter = repository.GetCharacterForOwner(characterId, character.OwnerProfileId);
     ASSERT_TRUE(loadedCharacter.has_value());
     EXPECT_EQ(loadedCharacter->Id, characterId);
     CheckCharacterValues(character, *loadedCharacter);
+    EXPECT_FALSE(repository.GetCharacterForOwner(characterId, "wrong-profile").has_value());
+    EXPECT_FALSE(repository.GetCharacterForOwner(characterId, "profile-' OR 1=1 --' OR 'x'='x").has_value());
 
     auto secondCharacter = MakeCharacter(character.OwnerProfileId, "Second Character");
     secondCharacter.Level = 18;
@@ -105,7 +107,7 @@ TEST(PersistenceCharacterRepository, InitializesAndPersistsOwnerScopedRecords)
     character.Health = 200.0f;
     ASSERT_TRUE(repository.UpdateCharacter(character));
 
-    const auto updatedCharacter = repository.GetCharacter(characterId);
+    const auto updatedCharacter = repository.GetCharacterForOwner(characterId, character.OwnerProfileId);
     ASSERT_TRUE(updatedCharacter.has_value());
     CheckCharacterValues(character, *updatedCharacter);
 
@@ -116,7 +118,7 @@ TEST(PersistenceCharacterRepository, InitializesAndPersistsOwnerScopedRecords)
     EXPECT_FALSE(repository.DeleteCharacter(characterId, "another-profile"));
 
     ASSERT_TRUE(repository.DeleteCharacter(characterId, character.OwnerProfileId));
-    EXPECT_FALSE(repository.GetCharacter(characterId).has_value());
+    EXPECT_FALSE(repository.GetCharacterForOwner(characterId, character.OwnerProfileId).has_value());
 }
 
 TEST(PersistenceCharacterRepository, PersistsRecordsAfterReopeningAnOnDiskDatabase)
@@ -136,7 +138,7 @@ TEST(PersistenceCharacterRepository, PersistsRecordsAfterReopeningAnOnDiskDataba
         Persistence::Database database(temporaryDatabase.path);
         database.Migrate();
         Persistence::CharacterRepository repository(database);
-        const auto loadedCharacter = repository.GetCharacter(characterId);
+        const auto loadedCharacter = repository.GetCharacterForOwner(characterId, "disk-profile");
         ASSERT_TRUE(loadedCharacter.has_value());
         EXPECT_EQ(loadedCharacter->Name, "Persistent Character");
         EXPECT_EQ(loadedCharacter->OwnerProfileId, "disk-profile");

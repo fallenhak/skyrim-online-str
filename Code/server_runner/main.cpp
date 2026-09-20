@@ -1,5 +1,6 @@
 
 #include <TiltedCore/Filesystem.hpp>
+#include <exception>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -216,16 +217,29 @@ int main(int argc, char** argv)
     (void)logger;
 
     // Note(Vince): This started crashing on 1.7+ lets disable it for now.
-    // RegisterQuitHandler(); 
+    // RegisterQuitHandler();
 
-    // Keep stack free.
-    const auto cpRunner{std::make_unique<DediRunner>(argc, argv)};
-    if (bConsole)
+    try
     {
-        cpRunner->StartTerminalIO();
+        // Keep stack free.
+        const auto cpRunner{std::make_unique<DediRunner>(argc, argv)};
+        if (bConsole)
+        {
+            cpRunner->StartTerminalIO();
+        }
+
+        cpRunner->RunGSThread();
+
+        return 0;
     }
-
-    cpRunner->RunGSThread();
-
-    return 0;
+    catch (const std::exception& acException)
+    {
+        spdlog::critical("Server startup failed: {}", acException.what());
+        return 1;
+    }
+    catch (...)
+    {
+        spdlog::critical("Server startup failed with an unknown exception");
+        return 1;
+    }
 }
