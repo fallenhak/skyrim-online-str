@@ -5,20 +5,13 @@
 #include <World.h>
 
 #include <Events/AuthorityChangedEvent.h>
-#include <Events/PartyJoinedEvent.h>
-#include <Events/PartyLeftEvent.h>
-#include <Events/DisconnectedEvent.h>
-
-#include <Messages/NotifyPartyInfo.h>
+#include <Events/PartyStateChangedEvent.h>
 
 AuthorityService::AuthorityService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
     : m_world(aWorld)
     , m_dispatcher(aDispatcher)
 {
-    m_partyJoinedConnection = aDispatcher.sink<PartyJoinedEvent>().connect<&AuthorityService::OnPartyJoined>(this);
-    m_partyLeftConnection = aDispatcher.sink<PartyLeftEvent>().connect<&AuthorityService::OnPartyLeft>(this);
-    m_partyInfoConnection = aDispatcher.sink<NotifyPartyInfo>().connect<&AuthorityService::OnPartyInfo>(this);
-    m_disconnectedConnection = aDispatcher.sink<DisconnectedEvent>().connect<&AuthorityService::OnDisconnected>(this);
+    m_partyStateChangedConnection = aDispatcher.sink<PartyStateChangedEvent>().connect<&AuthorityService::OnPartyStateChanged>(this);
 }
 
 bool AuthorityService::HasLocalActorAuthority() const noexcept
@@ -41,22 +34,7 @@ uint32_t AuthorityService::GetWorldAuthorityPlayerId() const noexcept
     return m_world.GetPartyService().GetLeaderPlayerId();
 }
 
-void AuthorityService::OnPartyJoined(const PartyJoinedEvent&) noexcept
-{
-    PublishAuthorityChanged();
-}
-
-void AuthorityService::OnPartyLeft(const PartyLeftEvent&) noexcept
-{
-    PublishAuthorityChanged();
-}
-
-void AuthorityService::OnPartyInfo(const NotifyPartyInfo&) noexcept
-{
-    PublishAuthorityChanged();
-}
-
-void AuthorityService::OnDisconnected(const DisconnectedEvent&) noexcept
+void AuthorityService::OnPartyStateChanged(const PartyStateChangedEvent&) noexcept
 {
     PublishAuthorityChanged();
 }
