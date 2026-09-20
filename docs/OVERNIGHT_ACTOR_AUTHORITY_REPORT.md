@@ -302,15 +302,93 @@ server entity or ownership.
 
 ### Commit
 
-Pending until the shared policy header is committed.
+- `8d79d648` — extracted the shared current-owner/epoch predicate used by the
+  health and projectile policies.
 
 ### Remaining risks
 
 - The pure policy tests do not replace integration coverage of every ECS
   handler; unresolved interaction semantics remain documented in Phase D/B.
 
+## Phase F — Creature authority readiness audit
+
+### Findings
+
+- Local high-process actor discovery leads to `AssignCharacterRequest`; the
+  server resolves identity/classification and creates the canonical ECS entity
+  before publishing `CharacterSpawnedEvent` state to eligible remote clients.
+- `OwnerComponent` and its non-zero epoch define the current simulation owner.
+  The server validates owner/epoch-bound observations but does not simulate
+  Skyrim AI.
+- Owner loss queues either character removal for the player actor or an
+  ownership search for other owned actors. The next owner must be connected,
+  in range, and not in the current `InvalidOwners` set; successful transfer
+  increments the epoch.
+- Health and death are current-owner observations. They are not killer or
+  reward attribution, and a stale epoch cannot mutate the canonical entity.
+- `PartyService` is not consulted by creature creation, transfer, health,
+  death, or disconnect authority. `AuthorityService::CanClaimActor` rejects
+  social/party-role claims; the legacy party wording is diagnostic only.
+- Client actor authority is server-coordinated. Client world authority comes
+  from presence and is not an actor claim shortcut.
+
+### Changes
+
+- Added [`docs/CREATURE_AUTHORITY.md`](CREATURE_AUTHORITY.md) with the full
+  discovery → assignment → spawn → ownership → health/death → transfer/remove
+  lifecycle and the PartyService boundary.
+- No production decoupling patch was necessary because the reviewed authority
+  paths already use `CharacterService`, `OwnerComponent`, and
+  `AuthorityService`, not party membership.
+
+### Tests
+
+- Documentation-only phase; no new production behavior or test target was
+  introduced.
+- The existing actor-population and authority-policy tests remain the relevant
+  executable coverage and are rerun in the phase verification.
+
+### Commit
+
+Pending until the Phase F documentation commit.
+
+## Phase G — Combat authority readiness audit
+
+### Findings
+
+- Skyrim exposes local hit observations with attacker and target form IDs, but
+  the active network path does not contain a server hit-claim producer or
+  handler; the existing `CombatService` hit/target code is disabled.
+- Projectile launch, health delta, and death-state paths are observation
+  relays. They now require current owner/epoch evidence, but they do not prove
+  causation or identify a killer.
+- A client-provided attacker ID, damage amount, XP amount, or persistent
+  character ID is insufficient evidence for attribution. Ownership transfer
+  and server entity reuse require an incarnation/epoch check.
+
+### Changes
+
+- Added [`docs/COMBAT_AUTHORITY.md`](COMBAT_AUTHORITY.md), defining current
+  authority boundaries and a future bounded observation shape for attacker,
+  target, epoch, lifecycle, and replay identity.
+- Deliberately did not enable hit networking or implement damage, XP, loot,
+  inventory, party, session, or reward behavior.
+
+### Tests
+
+- Documentation-only phase; no production behavior or test target was added.
+
+### Commit
+
+Pending until the Phase G documentation commit.
+
+### Remaining risks
+
+- Combat attribution remains unimplemented and must not be inferred from the
+  current health/death relay.
+- `AddTarget` still needs a separate caster-less/non-owner interaction policy.
+
 ## Later phases
 
-Sections for the message authority audit, session gate audit, health hardening,
-creature authority, combat attribution research, contribution ledger, malformed
-input pass, and final verification will be appended as those phases complete.
+The contribution ledger, malformed-input pass, final verification, and draft
+pull request will be appended as those phases complete.
