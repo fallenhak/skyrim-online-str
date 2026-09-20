@@ -194,7 +194,8 @@ server entity or ownership.
 
 ### Commit
 
-Pending until the focused health changes and tests are committed.
+- `ae6c8784` — required ownership epochs for health changes, enforced current
+  owner validation, and added signed-delta regression tests.
 
 ### Remaining risks
 
