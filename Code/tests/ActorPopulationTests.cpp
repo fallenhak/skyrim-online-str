@@ -225,6 +225,15 @@ TEST_F(ActorPopulationTests, ClassifiesPlayersAndConfiguredNpcRaces)
     EXPECT_EQ(policy.ClassifyNpcBase(kEdgeNpcId).Class, ActorPopulationClass::kHumanoidNpc);
 }
 
+TEST(ActorPopulationPolicy, KeepsNpcUnknownWithoutLoadedRecords)
+{
+    ESLoader::RecordCollection records;
+    ActorPopulationPolicy policy(&records);
+
+    EXPECT_EQ(policy.ClassifyNpcBase(kNordNpcId).Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(policy.ClassifyActor(GameId(0, 0x14)).Class, ActorPopulationClass::kPlayer);
+}
+
 TEST_F(ActorPopulationTests, KeepsRequiredUnknownConditionsDistinct)
 {
     ActorPopulationPolicy policy(&m_records);

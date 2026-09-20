@@ -27,7 +27,7 @@ struct RecordCollection;
 
 struct World : entt::registry
 {
-    explicit World(std::filesystem::path aDatabasePath = PersistenceService::DefaultDatabasePath());
+    explicit World(std::filesystem::path aDatabasePath = PersistenceService::DefaultDatabasePath(), bool aEnableActorRecordLoading = false);
     ~World() noexcept;
 
     TP_NOCOPYMOVE(World);

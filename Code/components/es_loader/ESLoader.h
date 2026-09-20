@@ -30,7 +30,7 @@ class ESLoader
 public:
     ESLoader();
 
-    UniquePtr<RecordCollection> BuildRecordCollection() noexcept;
+    UniquePtr<RecordCollection> BuildRecordCollection(bool aLoadRecords = false) noexcept;
 
     PluginCollection& GetLoadOrder() noexcept { return m_loadOrder; }
 

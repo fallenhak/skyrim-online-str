@@ -31,6 +31,26 @@ default rule set is empty. Editor ID is currently the policy key, so duplicate
 editor IDs across plugins are not disambiguated by this foundation; plugin
 identity can be added later if the loader exposes it as a required policy key.
 
+## Startup activation
+
+`Population:bEnableActorRecordLoading` is a locked, startup-only setting and
+defaults to `false`. The RNAM/RACE parser remains available, but full server
+plugin record loading is an explicit opt-in for actor-population
+classification. This preserves the upstream behavior from
+`0d942fc55b19592aa5395a6a86a7700e3276309b`, where full ESLoader parsing was
+disabled while load-order metadata remained available for ModPolicy.
+
+With the setting disabled, `World` still loads the load order and gives
+`ActorPopulationPolicy` an empty `RecordCollection`; NPC classification is
+`Unknown` and `GameId(0, 0x14)` is still `Player`. With it enabled, `World`
+asks ESLoader to parse server plugin files and build references. If the Data
+directory, `loadorder.txt`, or record collection is unavailable, the server
+logs the condition and the policy keeps NPC results `Unknown`.
+
+This parser opt-in is not hardened for arbitrary modlists, is not production
+ready filtering/enforcement, and does not change runtime actor population.
+Do not enable it as a substitute for a later loader-hardening milestone.
+
 This milestone is classification data and policy only. It does not filter or
 despawn actors, reject assignments, alter creature authority, or change interest
 management. Draugr, Falmer, vampires, and modded races remain policy decisions,

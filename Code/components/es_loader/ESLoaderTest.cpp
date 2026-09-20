@@ -14,7 +14,7 @@ public:
     static void SetUpTestSuite()
     {
         ESLoader::ESLoader loader;
-        s_collection = loader.BuildRecordCollection();
+        s_collection = loader.BuildRecordCollection(true);
     }
 
     UniquePtr<ESLoader::RecordCollection>& GetCollection() { return s_collection; }
