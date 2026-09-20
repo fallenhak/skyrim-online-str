@@ -1,6 +1,6 @@
 # Client-to-Server Actor Authority Audit
 
-Tracking issue: #28  
+Tracking issue: #28
 Scope: client messages and packet handlers that mutate, relay, or represent
 actor/world state.
 
@@ -95,4 +95,3 @@ boundary. A client-side send restriction is not treated as authority.
 - No persistent inventory-authority redesign was attempted.
 - No combat damage attribution or XP producer was enabled.
 - No PartyService deletion or UI/social behavior was changed.
-
