@@ -74,8 +74,8 @@ Findings:
 
 ### Tests
 
-Phase A uses the existing population/tracker test target; final command output
-and commit SHA will be recorded below after the phase commit.
+- `xmake -y TPTests` — passed.
+- `xmake run TPTests` — passed, 150 assertions in 18 test cases.
 
 ### Security implication
 
@@ -85,13 +85,73 @@ server entity or ownership.
 
 ### Commit
 
-Pending.
+- `70d8283bf15dae9956cfef680d62e171bb14a9c0` — guarded cancelled assignments
+  from physical suppression and added the Phase A report.
+- `72c4be1405af02044ff6315b2afe66995bee1f2c` — cleaned report formatting.
 
 ### Remaining risks
 
 - Restoration is best effort if Skyrim cannot resolve a form during disconnect.
 - A process crash can prevent runtime restoration.
 - The server still has broader actor mutation surfaces under audit in Phase B.
+
+## Phase B — Client-to-server actor authority audit
+
+### Inspected files and systems
+
+- `GameServer::BindMessageHandlers`, `SessionService`, and the client outbound
+  session policy.
+- Server packet handlers in `CharacterService`, `ActorValueService`,
+  `InventoryService`, `CombatService`, `MagicService`, `ObjectService`,
+  `PlayerService`, `OverlayService`, `WeatherService`, `MapService`,
+  `CommandService`, `QuestService`, and `PartyService`.
+- Client producers in `CharacterService`, `ActorValueService`,
+  `InventoryService`, `CombatService`, `MagicService`, and `ObjectService`.
+- All relevant request/notification DTOs and serialization paths.
+
+### Findings
+
+- The server's generated gameplay dispatch boundary requires `InWorld`; the
+  explicit protocol handlers are the only pre-world paths.
+- `OwnerView` filters by current owner pointer but not ownership epoch.
+- Health lacks both current-owner validation and an epoch in the baseline.
+- Projectile launch trusts the client-provided shooter ID.
+- Package, spell, interrupt, target, remove-spell, script-animation, and some
+  object paths are relay/mutation surfaces whose authority semantics need
+  targeted treatment rather than a blanket owner check.
+- Inventory deliberately supports non-owner in-range NPC interaction, so it
+  requires a separate interaction policy and must distinguish persistent player
+  actors from ordinary NPCs and objects.
+
+### Changes implemented
+
+- Added the full message/handler matrix and classifications to
+  `docs/ACTOR_AUTHORITY_AUDIT.md`.
+- Recorded the exact session gate boundary and high-confidence health,
+  projectile, stale-epoch, package, magic, and object risks.
+
+### Deliberately not implemented
+
+- No mechanical epoch field was added to every message during the audit-only
+  phase.
+- No blanket owner requirement was imposed on legitimate non-owner interaction
+  paths.
+- No persistent inventory redesign, combat attribution, XP, or PartyService
+  removal was attempted.
+
+### Tests
+
+- The audit-only changes reused the Phase A test run: `xmake -y TPTests` and
+  `xmake run TPTests` passed with 150 assertions in 18 cases.
+
+### Commit
+
+Pending.
+
+### Remaining risks
+
+- Health, projectile, and other concrete mutation/relay gaps remain until their
+  focused implementation phases.
 
 ## Later phases
 
