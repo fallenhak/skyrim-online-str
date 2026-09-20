@@ -8,7 +8,7 @@ struct AuthorityChangedEvent;
 struct NotifyWeatherChange;
 
 /**
- * @brief Responsible for weather changes, which is controlled on a party-per-party basis.
+ * @brief Responsible for weather changes, which is controlled by the shared world's elected authority client.
  */
 struct WeatherService
 {
@@ -21,8 +21,6 @@ protected:
     void OnUpdate(const UpdateEvent& acEvent) noexcept;
     void OnDisconnected(const DisconnectedEvent& acEvent) noexcept;
     void OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept;
-    void OnWaitingFor3DRemoved(entt::registry& aRegistry, entt::entity aEntity) noexcept;
-    void OnPlayerComponentRemoved(entt::registry& aRegistry, entt::entity aEntity) noexcept;
     void OnWeatherChange(const NotifyWeatherChange& acMessage) noexcept;
 
     void RunWeatherUpdates(const double acDelta) noexcept;
@@ -44,7 +42,5 @@ private:
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_disconnectConnection;
     entt::scoped_connection m_authorityChangedConnection;
-    entt::scoped_connection m_playerAddedConnection;
-    entt::scoped_connection m_playerRemovedConnection;
     entt::scoped_connection m_weatherChangeConnection;
 };
