@@ -505,7 +505,8 @@ server entity or ownership.
 
 ### Commit
 
-Pending until the malformed-input changes are committed.
+- `30360e69` — rejected malformed actor-value, casting-source, and magic
+  mutation inputs and added focused negative coverage.
 
 The malformed-input pass, final verification, and draft pull request will be
 appended as those phases complete.
