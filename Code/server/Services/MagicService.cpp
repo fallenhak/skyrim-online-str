@@ -13,6 +13,8 @@
 #include <Messages/NotifyAddTarget.h>
 #include <Messages/NotifyRemoveSpell.h>
 
+#include <cmath>
+
 MagicService::MagicService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
     : m_world(aWorld)
 {
@@ -25,6 +27,9 @@ MagicService::MagicService(World& aWorld, entt::dispatcher& aDispatcher) noexcep
 void MagicService::OnSpellCastRequest(const PacketEvent<SpellCastRequest>& acMessage) const noexcept
 {
     const auto& message = acMessage.Packet;
+    if (message.CastingSource < 0 || message.CastingSource >= 4)
+        return;
+
     const auto characterView = m_world.view<CharacterComponent, OwnerComponent>();
     const auto it = characterView.find(static_cast<entt::entity>(message.CasterId));
     if (it == characterView.end() || !characterView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
@@ -46,6 +51,9 @@ void MagicService::OnSpellCastRequest(const PacketEvent<SpellCastRequest>& acMes
 void MagicService::OnInterruptCastRequest(const PacketEvent<InterruptCastRequest>& acMessage) const noexcept
 {
     const auto& message = acMessage.Packet;
+    if (message.CastingSource < 0 || message.CastingSource >= 4)
+        return;
+
     const auto characterView = m_world.view<CharacterComponent, OwnerComponent>();
     const auto it = characterView.find(static_cast<entt::entity>(message.CasterId));
     if (it == characterView.end() || !characterView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
@@ -64,6 +72,8 @@ void MagicService::OnInterruptCastRequest(const PacketEvent<InterruptCastRequest
 void MagicService::OnAddTargetRequest(const PacketEvent<AddTargetRequest>& acMessage) const noexcept
 {
     auto& message = acMessage.Packet;
+    if (!std::isfinite(message.Magnitude))
+        return;
 
     NotifyAddTarget notify;
     notify.TargetId = message.TargetId;

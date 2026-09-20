@@ -31,6 +31,8 @@
 
 #include <Games/TES.h>
 
+#include <cmath>
+
 MagicService::MagicService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept
     : m_world(aWorld)
     , m_dispatcher(aDispatcher)
@@ -160,7 +162,7 @@ void MagicService::OnNotifySpellCast(const NotifySpellCast& acMessage) const noe
     // Only left hand casters need dual casting (?)
     pActor->casters[CS::LEFT_HAND]->SetDualCasting(acMessage.IsDualCasting);
 
-    if (acMessage.CastingSource >= 4)
+    if (acMessage.CastingSource < 0 || acMessage.CastingSource >= 4)
     {
         spdlog::warn("{}: could not find casting source {}", __FUNCTION__, acMessage.CastingSource);
         return;
@@ -273,7 +275,7 @@ void MagicService::OnInterruptCastEvent(const InterruptCastEvent& acEvent) const
 
 void MagicService::OnNotifyInterruptCast(const NotifyInterruptCast& acMessage) const noexcept
 {
-    if (acMessage.CastingSource >= 4)
+    if (acMessage.CastingSource < 0 || acMessage.CastingSource >= 4)
     {
         spdlog::warn("{}: could not find casting source {}", __FUNCTION__, acMessage.CastingSource);
         return;
@@ -396,6 +398,9 @@ void MagicService::OnAddTargetEvent(const AddTargetEvent& acEvent) noexcept
 
 void MagicService::OnNotifyAddTarget(const NotifyAddTarget& acMessage) noexcept
 {
+    if (!std::isfinite(acMessage.Magnitude))
+        return;
+
     const uint32_t cSpellId = World::Get().GetModSystem().GetGameId(acMessage.SpellId);
     if (cSpellId == 0)
     {

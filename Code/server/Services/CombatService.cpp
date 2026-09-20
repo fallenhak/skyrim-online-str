@@ -28,6 +28,9 @@ void CombatService::OnProjectileLaunchRequest(const PacketEvent<ProjectileLaunch
             packet.OriginX, packet.OriginY, packet.OriginZ, packet.ZAngle, packet.XAngle, packet.YAngle, packet.Power, packet.Scale))
         return;
 
+    if (packet.CastingSource < 0 || packet.CastingSource >= 4)
+        return;
+
     NotifyProjectileLaunch notify{};
 
     notify.ShooterID = packet.ShooterID;

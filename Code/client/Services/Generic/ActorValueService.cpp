@@ -360,6 +360,9 @@ void ActorValueService::OnActorValueChanges(const NotifyActorValueChanges& acMes
 
     for (const auto& [key, value] : acMessage.Values)
     {
+        if (key >= static_cast<uint32_t>(ActorValueInfo::kActorValueCount) || !std::isfinite(value))
+            continue;
+
         // Syncing dragon souls triggers "Dragon soul collected" event
         if (key == ActorValueInfo::kDragonSouls || key == ActorValueInfo::kHealth)
             continue;
@@ -396,6 +399,9 @@ void ActorValueService::OnActorMaxValueChanges(const NotifyActorMaxValueChanges&
 
     for (const auto& [key, value] : acMessage.Values)
     {
+        if (key >= static_cast<uint32_t>(ActorValueInfo::kActorValueCount) || !std::isfinite(value))
+            continue;
+
         if (key == ActorValueInfo::kDragonSouls)
             continue;
 

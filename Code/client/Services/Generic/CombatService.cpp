@@ -94,7 +94,7 @@ void CombatService::OnProjectileLaunchedEvent(const ProjectileLaunchedEvent& acE
 
 void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMessage) const noexcept
 {
-    if (acMessage.OwnershipEpoch == 0 ||
+    if (acMessage.OwnershipEpoch == 0 || acMessage.CastingSource < 0 || acMessage.CastingSource >= 4 ||
         !std::isfinite(acMessage.OriginX) || !std::isfinite(acMessage.OriginY) || !std::isfinite(acMessage.OriginZ) ||
         !std::isfinite(acMessage.ZAngle) || !std::isfinite(acMessage.XAngle) || !std::isfinite(acMessage.YAngle) ||
         !std::isfinite(acMessage.Power) || !std::isfinite(acMessage.Scale))

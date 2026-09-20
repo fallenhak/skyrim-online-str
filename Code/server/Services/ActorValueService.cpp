@@ -11,6 +11,10 @@
 #include <Messages/NotifyActorMaxValueChanges.h>
 #include <Messages/NotifyHealthChangeBroadcast.h>
 #include <Messages/NotifyDeathStateChange.h>
+#include <Services/ActorValueMutationPolicy.h>
+
+#include <cmath>
+#include <utility>
 
 ActorValueService::ActorValueService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
     : m_world(aWorld)
@@ -33,15 +37,27 @@ void ActorValueService::OnActorValueChanges(const PacketEvent<RequestActorValueC
         return;
 
     auto& actorValuesComponent = actorValuesView.get<ActorValuesComponent>(*it);
-    for (auto& [id, value] : message.Values)
+    TiltedPhoques::Map<uint32_t, float> acceptedValues;
+    for (const auto& [id, value] : message.Values)
     {
-        actorValuesComponent.CurrentActorValues.ActorValuesList[id] = value;
+        if (!ActorValueMutationPolicy::IsValidIndexAndValue(id, value, ActorValueMutationPolicy::kActorValueCount))
+            continue;
+
+        auto currentValueIt = actorValuesComponent.CurrentActorValues.ActorValuesList.find(id);
+        if (currentValueIt == actorValuesComponent.CurrentActorValues.ActorValuesList.end())
+            continue;
+
+        currentValueIt.value() = value;
+        acceptedValues.emplace(id, value);
     }
+
+    if (acceptedValues.empty())
+        return;
 
     NotifyActorValueChanges notify;
     notify.OwnershipEpoch = message.OwnershipEpoch;
     notify.Id = acMessage.Packet.Id;
-    notify.Values = acMessage.Packet.Values;
+    notify.Values = std::move(acceptedValues);
 
     const entt::entity cEntity = static_cast<entt::entity>(message.Id);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cEntity, acMessage.pPlayer))
@@ -60,15 +76,27 @@ void ActorValueService::OnActorMaxValueChanges(const PacketEvent<RequestActorMax
         return;
 
     auto& actorValuesComponent = actorValuesView.get<ActorValuesComponent>(*it);
-    for (auto& [id, value] : message.Values)
+    TiltedPhoques::Map<uint32_t, float> acceptedValues;
+    for (const auto& [id, value] : message.Values)
     {
-        actorValuesComponent.CurrentActorValues.ActorMaxValuesList[id] = value;
+        if (!ActorValueMutationPolicy::IsValidIndexAndValue(id, value, ActorValueMutationPolicy::kActorValueCount))
+            continue;
+
+        auto currentValueIt = actorValuesComponent.CurrentActorValues.ActorMaxValuesList.find(id);
+        if (currentValueIt == actorValuesComponent.CurrentActorValues.ActorMaxValuesList.end())
+            continue;
+
+        currentValueIt.value() = value;
+        acceptedValues.emplace(id, value);
     }
+
+    if (acceptedValues.empty())
+        return;
 
     NotifyActorMaxValueChanges notify;
     notify.OwnershipEpoch = message.OwnershipEpoch;
     notify.Id = message.Id;
-    notify.Values = message.Values;
+    notify.Values = std::move(acceptedValues);
 
     const entt::entity cEntity = static_cast<entt::entity>(message.Id);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cEntity, acMessage.pPlayer))

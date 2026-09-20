@@ -463,5 +463,49 @@ server entity or ownership.
 - `41e65907` — defined the validated hit-observation proposal without enabling
   production hit or reward flow.
 
+## Phase J — Static malformed-input pass
+
+### Changes implemented
+
+- Added `ActorValueMutationPolicy` to reject actor-value indices outside the
+  server's 164-value domain and all non-finite values before mutation.
+- Replaced server actor-value and max-value `operator[]` writes with existing
+  entry lookup and assignment. Invalid or missing entries are dropped and are
+  not relayed to other clients.
+- Added the same actor-value index/finite checks on client notification
+  consumers before calling Skyrim actor-value APIs.
+- Bounded request and notification actor-value map deserialization to 256
+  entries, preventing a malformed count from driving unbounded insertion.
+- Rejected invalid casting-source values on server spell, interrupt, and
+  projectile relays and on corresponding client consumers.
+- Rejected non-finite magic effect magnitudes at the server boundary and before
+  client application.
+
+### Negative coverage
+
+- Added pure tests for valid/invalid actor-value indices, NaN, and infinities.
+- Existing health/projectile policy tests continue to cover zero epochs,
+  missing entities, wrong owners, stale owners, and non-finite mutation input.
+
+### Deliberately not implemented
+
+- No broad packet-parser rewrite or whole-repository fuzzing was attempted.
+- Movement/action history and inventory/faction payloads retain their existing
+  protocol-specific bounds or unresolved interaction semantics; they need a
+  separate protocol review rather than an ad hoc cross-cutting rewrite.
+- The known unrelated `MemoryLayout.cpp` aggregate-build issue was not touched.
+
+### Tests
+
+- `git diff --check` — passed.
+- `xmake -y TPTests` — passed.
+- `xmake run TPTests` — passed, 247 assertions in 28 test cases.
+- `xmake -y SkyrimTogetherServer` — passed.
+- `xmake -y SkyrimTogetherClient` — passed.
+
+### Commit
+
+Pending until the malformed-input changes are committed.
+
 The malformed-input pass, final verification, and draft pull request will be
 appended as those phases complete.
