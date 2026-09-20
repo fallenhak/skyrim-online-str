@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Persistence/CharacterRecord.h>
+#include <Persistence/CharacterRuntimeState.h>
 #include <Persistence/Database.h>
 
 #include <optional>
@@ -24,6 +25,9 @@ struct CharacterRepository final
     [[nodiscard]] std::optional<CharacterRecord> GetCharacterForOwner(CharacterId aCharacterId, std::string_view acOwnerProfileId) const;
     [[nodiscard]] std::vector<CharacterRecord> ListCharactersForOwner(std::string_view acOwnerProfileId) const;
     [[nodiscard]] bool UpdateCharacter(const CharacterRecord& acCharacter);
+    // Runtime save-back intentionally updates only location/current vitals. It must be used
+    // instead of UpdateCharacter for authenticated persistent-player gameplay state.
+    [[nodiscard]] bool UpdateCharacterRuntimeState(CharacterId aCharacterId, std::string_view acOwnerProfileId, const CharacterRuntimeState& acState);
     [[nodiscard]] bool DeleteCharacter(CharacterId aCharacterId, std::string_view acOwnerProfileId);
 
 private:

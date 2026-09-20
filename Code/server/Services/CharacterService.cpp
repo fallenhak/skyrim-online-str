@@ -684,7 +684,12 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
         actorValuesComponent.CurrentActorValues.ActorValuesList[kHealthActorValue] = persistentCharacter->Health;
         actorValuesComponent.CurrentActorValues.ActorValuesList[kMagickaActorValue] = persistentCharacter->Magicka;
         actorValuesComponent.CurrentActorValues.ActorValuesList[kStaminaActorValue] = persistentCharacter->Stamina;
-        m_world.emplace<PersistentCharacterComponent>(cEntity, static_cast<std::uint64_t>(persistentCharacter->Id));
+
+        auto& persistentComponent = m_world.emplace<PersistentCharacterComponent>(cEntity);
+        persistentComponent.CharacterId = persistentCharacter->Id;
+        // This owner was loaded through the owner-scoped session lookup; never copy it from
+        // client assignment data. The component is server-only and is not serialized.
+        persistentComponent.OwnerProfileId = persistentCharacter->OwnerProfileId;
     }
 
     spdlog::debug("FormId: {:x}:{:x} - NpcId: {:x}:{:x} assigned to {:x}", gameId.ModId, gameId.BaseId, baseId.ModId, baseId.BaseId, acMessage.pPlayer->GetConnectionId());

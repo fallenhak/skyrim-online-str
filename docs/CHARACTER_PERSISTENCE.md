@@ -9,16 +9,31 @@ The persistence dependency direction is:
 ```text
 Gameplay/session systems
         ↓
-PersistenceService
+CharacterSaveService
         ↓
 Persistence::CharacterRepository
         ↓
 Persistence::Database
         ↓
 SQLite
+
+PersistenceService owns the repository and database instances used by the world.
 ```
 
-`CharacterRecord` is a persistence-only model. It is deliberately separate from live ECS components, network messages, and `CharacterService` state. This milestone only initializes the service and repository; it does not connect persistence to login, player spawning, or automatic character creation.
+`CharacterRecord` is a persistence-only model. It is deliberately separate from live ECS components, network messages, and `CharacterService` state. `CharacterSaveService` is the gameplay boundary for V1 runtime save-back: it reads the live persistent player ECS entity and calls the narrow repository update; gameplay code does not use raw SQLite. The persistent ECS component carries the owner profile captured from the trusted, owner-scoped assignment record and is not serialized to clients.
+
+Runtime save-back writes only:
+
+- WorldSpace and Cell.
+- PositionX, PositionY, and PositionZ.
+- Current Health, Magicka, and Stamina.
+- `updated_at`.
+
+The autosave interval defaults to 30 seconds and is controlled by `Persistence:uAutosaveIntervalSeconds`. A value of `0` disables periodic saves; positive values below five seconds use a five-second effective interval. A final save is attempted from `PlayerLeaveEvent` while the persistent ECS entity still exists, before normal character cleanup. The disconnect path uses ECS location/vitals rather than the session or the `Player` cell, which may already have been cleared during teardown.
+
+Runtime save-back never modifies `Name`, `Race`, `Sex`, or `Level`, and it does not persist inventory/equipment, skills, perks, XP, appearance, or actor max/permanent values. Level remains owned by the existing player-level path; future progression persistence is intentionally outside this milestone.
+
+Invalid runtime state is rejected without a database write. Repository exceptions are caught at the save service boundary and logged; the live entity is left intact so a later autosave or disconnect attempt can retry. V1 reads the server ECS actor-value map; hardening actor-value authority against client-owned gameplay updates remains future work.
 
 ## Schema
 
@@ -38,4 +53,4 @@ The server setting `Persistence:sDatabasePath` controls the SQLite path. Its def
 
 ## Deliberately out of scope
 
-This milestone does not implement character selection UI, authentication, network messages, inventory/equipment/perks/skills/XP persistence, creature/quest/dungeon persistence, or loading persisted state into Skyrim.
+This milestone does not implement character selection UI, authentication, network messages, inventory/equipment/perks/skills/XP persistence, creature/quest/dungeon persistence, or future progression authority.

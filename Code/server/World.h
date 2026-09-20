@@ -6,6 +6,7 @@
 #include <Services/PresenceService.h>
 #include <Services/PartyService.h>
 #include <Services/AuthorityService.h>
+#include <Services/CharacterSaveService.h>
 #include <Persistence/PersistenceService.h>
 #include <Services/CharacterService.h>
 #include <Services/SessionService.h>
@@ -33,6 +34,8 @@ struct World : entt::registry
     const entt::dispatcher& GetDispatcher() const noexcept { return m_dispatcher; }
     CharacterService& GetCharacterService() noexcept { return ctx().at<CharacterService>(); }
     const CharacterService& GetCharacterService() const noexcept { return ctx().at<const CharacterService>(); }
+    CharacterSaveService& GetCharacterSaveService() noexcept { return ctx().at<CharacterSaveService>(); }
+    const CharacterSaveService& GetCharacterSaveService() const noexcept { return ctx().at<const CharacterSaveService>(); }
     PlayerService& GetPlayerService() noexcept { return ctx().at<PlayerService>(); }
     const PlayerService& GetPlayerService() const noexcept { return ctx().at<const PlayerService>(); }
     PresenceService& GetPresenceService() noexcept { return ctx().at<PresenceService>(); }

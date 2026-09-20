@@ -4,9 +4,10 @@
 #error Include Components.h instead
 #endif
 
-#include <cstdint>
+#include <Persistence/CharacterRecord.h>
 
 struct PersistentCharacterComponent final
 {
-    std::uint64_t CharacterId{};
+    Persistence::CharacterId CharacterId{};
+    Persistence::OwnerProfileId OwnerProfileId;
 };
