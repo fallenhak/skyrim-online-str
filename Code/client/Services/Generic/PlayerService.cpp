@@ -169,6 +169,9 @@ void PlayerService::OnPlayerLevelEvent(const PlayerLevelEvent& acEvent) const no
 
 void PlayerService::OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept
 {
+    if (!m_transport.IsConnected())
+        return;
+
     TESGlobal* pWorldEncountersEnabled = Cast<TESGlobal>(TESForm::GetById(0xB8EC1));
     pWorldEncountersEnabled->f = acEvent.HasLocalWorldAuthority ? 1.f : 0.f;
 }
