@@ -426,8 +426,8 @@ server entity or ownership.
 
 - `5c705369` — added the bounded deterministic contribution ledger and pure
   regression tests.
-- A final-review follow-up commit will add explicit target-isolation and
-  single-target cleanup coverage.
+- `8eac2aad` — added explicit target-isolation and single-target cleanup
+  coverage found during the final security review.
 
 ### Remaining risks
 
