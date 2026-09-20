@@ -41,12 +41,12 @@ void WeatherService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcep
     {
         // TODO: why is this loop here? Party should always have a leader.
         auto view = m_world.view<PlayerComponent>();
-        const auto& partyService = m_world.GetPartyService();
+        const auto& authorityService = m_world.GetAuthorityService();
 
         for (auto entity : view)
         {
             const auto& playerComponent = view.get<PlayerComponent>(entity);
-            if (playerComponent.Id == partyService.GetLeaderPlayerId())
+            if (playerComponent.Id == authorityService.GetWorldAuthorityPlayerId())
             {
                 ToggleGameWeatherSystem(false);
                 break;
@@ -99,11 +99,11 @@ void WeatherService::OnWaitingFor3DRemoved(entt::registry& aRegistry, entt::enti
     if (!pPlayerComponent)
         return;
 
-    const auto& partyService = m_world.GetPartyService();
-    if (!partyService.IsInParty() || partyService.IsLeader())
+    const auto& authorityService = m_world.GetAuthorityService();
+    if (!authorityService.HasWorldAuthorityGroup() || authorityService.HasLocalWorldAuthority())
         return;
 
-    if (partyService.GetLeaderPlayerId() == pPlayerComponent->Id)
+    if (authorityService.GetWorldAuthorityPlayerId() == pPlayerComponent->Id)
         ToggleGameWeatherSystem(false);
 }
 
@@ -111,11 +111,11 @@ void WeatherService::OnPlayerComponentRemoved(entt::registry& aRegistry, entt::e
 {
     const auto& playerComponent = m_world.get<PlayerComponent>(aEntity);
 
-    const auto& partyService = m_world.GetPartyService();
-    if (!partyService.IsInParty() || partyService.IsLeader())
+    const auto& authorityService = m_world.GetAuthorityService();
+    if (!authorityService.HasWorldAuthorityGroup() || authorityService.HasLocalWorldAuthority())
         return;
 
-    if (partyService.GetLeaderPlayerId() == playerComponent.Id)
+    if (authorityService.GetWorldAuthorityPlayerId() == playerComponent.Id)
         ToggleGameWeatherSystem(true);
 }
 
@@ -145,7 +145,7 @@ void WeatherService::RunWeatherUpdates(const double acDelta) noexcept
     TESWeather* pWeather = pSky->GetWeather();
     if (!pWeather)
     {
-        if (m_world.GetPartyService().IsLeader())
+        if (m_world.GetAuthorityService().HasLocalWorldAuthority())
             m_cachedWeatherId = 0;
         else
             SetCachedWeather();
@@ -161,7 +161,7 @@ void WeatherService::RunWeatherUpdates(const double acDelta) noexcept
     if (pWeather->formID == m_cachedWeatherId)
         return;
 
-    if (m_world.GetPartyService().IsLeader())
+    if (m_world.GetAuthorityService().HasLocalWorldAuthority())
     {
         m_cachedWeatherId = pWeather->formID;
 
