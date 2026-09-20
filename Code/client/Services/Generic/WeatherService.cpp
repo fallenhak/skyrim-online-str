@@ -2,8 +2,7 @@
 
 #include <Events/UpdateEvent.h>
 #include <Events/DisconnectedEvent.h>
-#include <Events/PartyJoinedEvent.h>
-#include <Events/PartyLeftEvent.h>
+#include <Events/AuthorityChangedEvent.h>
 
 #include <Messages/RequestWeatherChange.h>
 #include <Messages/NotifyWeatherChange.h>
@@ -18,8 +17,7 @@ WeatherService::WeatherService(World& aWorld, TransportService& aTransport, entt
 {
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&WeatherService::OnUpdate>(this);
     m_disconnectConnection = aDispatcher.sink<DisconnectedEvent>().connect<&WeatherService::OnDisconnected>(this);
-    m_partyJoinedConnection = aDispatcher.sink<PartyJoinedEvent>().connect<&WeatherService::OnPartyJoinedEvent>(this);
-    m_partyLeftConnection = aDispatcher.sink<PartyLeftEvent>().connect<&WeatherService::OnPartyLeftEvent>(this);
+    m_authorityChangedConnection = aDispatcher.sink<AuthorityChangedEvent>().connect<&WeatherService::OnAuthorityChangedEvent>(this);
     m_playerAddedConnection = m_world.on_destroy<WaitingFor3D>().connect<&WeatherService::OnWaitingFor3DRemoved>(this);
     m_playerRemovedConnection = m_world.on_destroy<PlayerComponent>().connect<&WeatherService::OnPlayerComponentRemoved>(this);
     m_weatherChangeConnection = aDispatcher.sink<NotifyWeatherChange>().connect<&WeatherService::OnWeatherChange>(this);
@@ -35,61 +33,60 @@ void WeatherService::OnDisconnected(const DisconnectedEvent& acEvent) noexcept
     ToggleGameWeatherSystem(true);
 }
 
-void WeatherService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept
+void WeatherService::OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept
 {
-    if (!acEvent.IsLeader)
+    if (!acEvent.HasWorldAuthorityGroup)
     {
-        // TODO: why is this loop here? Party should always have a leader.
-        auto view = m_world.view<PlayerComponent>();
-        const auto& authorityService = m_world.GetAuthorityService();
+        ToggleGameWeatherSystem(true);
+        return;
+    }
 
+    if (!acEvent.HasLocalWorldAuthority)
+    {
+        // Wait until the authority player's 3D is present before requesting its weather.
+        auto view = m_world.view<PlayerComponent>();
         for (auto entity : view)
         {
             const auto& playerComponent = view.get<PlayerComponent>(entity);
-            if (playerComponent.Id == authorityService.GetWorldAuthorityPlayerId())
+            if (playerComponent.Id == acEvent.WorldAuthorityPlayerId)
             {
                 ToggleGameWeatherSystem(false);
                 break;
             }
         }
+
+        return;
     }
-    else
+
+    Sky* pSky = Sky::Get();
+    if (!pSky)
+        return;
+
+    TESWeather* pWeather = pSky->GetWeather();
+    if (!pWeather)
     {
-        Sky* pSky = Sky::Get();
-        if (!pSky)
-            return;
-
-        TESWeather* pWeather = pSky->GetWeather();
-        if (!pWeather)
-        {
-            m_cachedWeatherId = 0;
-            return;
-        }
-
-        // Potentially sets cached weather to map weather.
-        // When the player closes the map, it'll send out the proper weather on the next update.
-        m_cachedWeatherId = pWeather->formID;
-
-        // This is the map weather, should not be synced.
-        if (pWeather->formID == 0xA6858)
-            return;
-
-        RequestWeatherChange request{};
-
-        auto& modSystem = m_world.GetModSystem();
-        if (!modSystem.GetServerModId(pWeather->formID, request.Id))
-        {
-            spdlog::error(__FUNCTION__ ": weather server ID not found, form id: {:X}", pWeather->formID);
-            return;
-        }
-
-        m_transport.Send(request);
+        m_cachedWeatherId = 0;
+        return;
     }
-}
 
-void WeatherService::OnPartyLeftEvent(const PartyLeftEvent& acEvent) noexcept
-{
-    ToggleGameWeatherSystem(true);
+    // Potentially sets cached weather to map weather.
+    // When the player closes the map, it'll send out the proper weather on the next update.
+    m_cachedWeatherId = pWeather->formID;
+
+    // This is the map weather, should not be synced.
+    if (pWeather->formID == 0xA6858)
+        return;
+
+    RequestWeatherChange request{};
+
+    auto& modSystem = m_world.GetModSystem();
+    if (!modSystem.GetServerModId(pWeather->formID, request.Id))
+    {
+        spdlog::error(__FUNCTION__ ": weather server ID not found, form id: {:X}", pWeather->formID);
+        return;
+    }
+
+    m_transport.Send(request);
 }
 
 // TODO: OnPlayerComponentAdded() instead? Does PlayerComponent exist already by then?
