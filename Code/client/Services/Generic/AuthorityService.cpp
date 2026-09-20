@@ -16,7 +16,9 @@ AuthorityService::AuthorityService(World& aWorld, entt::dispatcher& aDispatcher)
 
 bool AuthorityService::HasLocalActorAuthority() const noexcept
 {
-    return m_world.GetPartyService().IsLeader();
+    // Actor ownership is server-coordinated. Clients do not proactively steal
+    // already-owned actors based on party leadership.
+    return false;
 }
 
 bool AuthorityService::HasLocalWorldAuthority() const noexcept
