@@ -1,14 +1,13 @@
 #pragma once
 
 struct World;
-struct PartyStateChangedEvent;
+struct PresenceChangedEvent;
 
 /**
  * @brief Client-side view of local world authority.
  *
- * This initially mirrors STR's existing party-leader rule. Keeping that rule
- * behind a dedicated service lets actor ownership policy change later without
- * coupling CharacterService to social-party state.
+ * Actor ownership is server-coordinated, while world authority is selected from
+ * connected-player presence rather than party leadership.
  */
 struct AuthorityService
 {
@@ -19,15 +18,15 @@ struct AuthorityService
 
     [[nodiscard]] bool HasLocalActorAuthority() const noexcept;
     [[nodiscard]] bool HasLocalWorldAuthority() const noexcept;
-    [[nodiscard]] bool HasWorldAuthorityGroup() const noexcept;
+    [[nodiscard]] bool HasWorldAuthoritySource() const noexcept;
     [[nodiscard]] uint32_t GetWorldAuthorityPlayerId() const noexcept;
 
 private:
-    void OnPartyStateChanged(const PartyStateChangedEvent& acEvent) noexcept;
+    void OnPresenceChanged(const PresenceChangedEvent& acEvent) noexcept;
     void PublishAuthorityChanged() noexcept;
 
     World& m_world;
     entt::dispatcher& m_dispatcher;
 
-    entt::scoped_connection m_partyStateChangedConnection;
+    entt::scoped_connection m_presenceChangedConnection;
 };
