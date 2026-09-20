@@ -38,7 +38,7 @@ struct NotifyDialogue;
 struct SubtitleEvent;
 struct NotifySubtitle;
 struct NotifyActorTeleport;
-struct PartyJoinedEvent;
+struct AuthorityChangedEvent;
 
 struct Actor;
 struct World;
@@ -83,7 +83,7 @@ struct CharacterService
     void OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept;
     void OnNotifySubtitle(const NotifySubtitle& acMessage) noexcept;
     void OnNotifyActorTeleport(const NotifyActorTeleport& acMessage) noexcept;
-    void OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept;
+    void OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept;
 
     void ProcessNewEntity(entt::entity aEntity) const noexcept;
 
@@ -159,5 +159,5 @@ private:
     entt::scoped_connection m_subtitleEventConnection;
     entt::scoped_connection m_subtitleSyncConnection;
     entt::scoped_connection m_actorTeleportConnection;
-    entt::scoped_connection m_partyJoinedConnection;
+    entt::scoped_connection m_authorityChangedConnection;
 };
