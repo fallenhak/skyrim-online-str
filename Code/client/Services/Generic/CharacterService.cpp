@@ -35,7 +35,7 @@
 #include <Events/DialogueEvent.h>
 #include <Events/SubtitleEvent.h>
 #include <Events/MoveActorEvent.h>
-#include <Events/PartyJoinedEvent.h>
+#include <Events/AuthorityChangedEvent.h>
 
 #include <Structs/ActionEvent.h>
 #include <Messages/AssignCharacterRequest.h>
@@ -107,7 +107,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
 
     m_actorTeleportConnection = m_dispatcher.sink<NotifyActorTeleport>().connect<&CharacterService::OnNotifyActorTeleport>(this);
 
-    m_partyJoinedConnection = aDispatcher.sink<PartyJoinedEvent>().connect<&CharacterService::OnPartyJoinedEvent>(this);
+    m_authorityChangedConnection = aDispatcher.sink<AuthorityChangedEvent>().connect<&CharacterService::OnAuthorityChangedEvent>(this);
 }
 
 void CharacterService::DeleteRemoteEntityComponents(entt::entity aEntity) const noexcept
@@ -1150,10 +1150,10 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
     spdlog::info("Successfully teleported actor, form id: {:X}, world space: {:X}, cell: {:X}, position: ({}, {}, {})", pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
 }
 
-void CharacterService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept
+void CharacterService::OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept
 {
-    // Takes ownership of all actors
-    if (acEvent.IsLeader)
+    // Reprocess actors when this client becomes eligible to drive actor authority.
+    if (acEvent.HasLocalActorAuthority)
     {
         auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
         Vector<entt::entity> entities(view.begin(), view.end());
