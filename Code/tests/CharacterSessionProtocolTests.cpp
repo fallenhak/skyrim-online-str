@@ -9,6 +9,7 @@
 #include <catch2/catch.hpp>
 
 #include <Messages/ClientMessageFactory.h>
+#include <Messages/NotifyCharacterLoadSnapshot.h>
 #include <Messages/NotifyCharacterList.h>
 #include <Messages/NotifyCharacterSelectionResult.h>
 #include <Messages/RequestCharacterList.h>
@@ -16,6 +17,41 @@
 #include <Messages/ServerMessageFactory.h>
 
 #include <limits>
+
+template <typename T>
+concept HasOwnerProfileId = requires(T aSnapshot) {
+    aSnapshot.OwnerProfileId;
+};
+
+static_assert(!HasOwnerProfileId<CharacterLoadSnapshot>);
+
+TEST_CASE("Character load snapshot round trips all server-authoritative fields", "[encoding.character_load]")
+{
+    CharacterLoadSnapshot sent{};
+    sent.CharacterId = std::numeric_limits<std::uint64_t>::max();
+    sent.Name = "Persistent Dragonborn";
+    sent.Race = GameId(0x01020304, 0x05060708);
+    sent.Sex = 1;
+    sent.Level = 42;
+    sent.WorldSpaceId = GameId(0x11121314, 0x15161718);
+    sent.CellId = GameId(0x21222324, 0x25262728);
+    sent.PositionX = -123.5f;
+    sent.PositionY = 456.25f;
+    sent.PositionZ = 789.75f;
+    sent.Health = 321.5f;
+    sent.Magicka = 222.25f;
+    sent.Stamina = 111.75f;
+
+    TiltedPhoques::Buffer buffer(1024);
+    TiltedPhoques::Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    CharacterLoadSnapshot received{};
+    TiltedPhoques::Buffer::Reader reader(&buffer);
+    received.Deserialize(reader);
+
+    REQUIRE(received == sent);
+}
 
 TEST_CASE("Character session protocol messages round trip", "[encoding.character_session]")
 {
@@ -75,5 +111,28 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(resultMessage);
         auto parsedResult = TiltedPhoques::CastUnique<NotifyCharacterSelectionResult>(std::move(resultMessage));
         REQUIRE(*parsedResult == result);
+
+        NotifyCharacterLoadSnapshot snapshotMessage{};
+        snapshotMessage.Snapshot.CharacterId = 0x7FFFFFFFFFFFFFFF;
+        snapshotMessage.Snapshot.Name = "Snapshot";
+        snapshotMessage.Snapshot.Race = GameId(0x01, 0x00013746);
+        snapshotMessage.Snapshot.WorldSpaceId = GameId(0x02, 0x0000003C);
+        snapshotMessage.Snapshot.CellId = GameId(0x03, 0x0000004D);
+        snapshotMessage.Snapshot.PositionX = 10.5f;
+        snapshotMessage.Snapshot.PositionY = -20.25f;
+        snapshotMessage.Snapshot.PositionZ = 30.75f;
+        snapshotMessage.Snapshot.Health = 100.0f;
+        snapshotMessage.Snapshot.Magicka = 80.0f;
+        snapshotMessage.Snapshot.Stamina = 60.0f;
+
+        TiltedPhoques::Buffer snapshotBuffer(1024);
+        TiltedPhoques::Buffer::Writer snapshotWriter(&snapshotBuffer);
+        snapshotMessage.Serialize(snapshotWriter);
+
+        TiltedPhoques::Buffer::Reader snapshotReader(&snapshotBuffer);
+        auto snapshotNetworkMessage = serverFactory.Extract(snapshotReader);
+        REQUIRE(snapshotNetworkMessage);
+        auto parsedSnapshot = TiltedPhoques::CastUnique<NotifyCharacterLoadSnapshot>(std::move(snapshotNetworkMessage));
+        REQUIRE(*parsedSnapshot == snapshotMessage);
     }
 }

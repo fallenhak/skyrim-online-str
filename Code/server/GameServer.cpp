@@ -21,6 +21,7 @@
 #include <Messages/NotifySettingsChange.h>
 #include <Messages/NotifyCharacterList.h>
 #include <Messages/NotifyCharacterSelectionResult.h>
+#include <Messages/NotifyCharacterLoadSnapshot.h>
 #include <Messages/RequestCharacterList.h>
 #include <Messages/SelectCharacterRequest.h>
 #include <console/ConsoleRegistry.h>
@@ -273,6 +274,11 @@ void GameServer::BindMessageHandlers()
 
         m_messageHandlers[T::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
         {
+            // Authentication, character selection, and other pre-world protocol handlers are
+            // installed explicitly below. Everything generated here is ordinary gameplay.
+            if (!m_pWorld->GetSessionService().CanProcessGameplay(aConnectionId))
+                return;
+
             auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
 
             if (!pPlayer)
@@ -328,6 +334,26 @@ void GameServer::BindMessageHandlers()
 
         NotifyCharacterSelectionResult response{};
         response.Status = m_pWorld->GetSessionService().SelectCharacter(aConnectionId, pRealMessage->CharacterId);
+        if (response.Status == CharacterSelectionStatus::kSuccess)
+        {
+            const auto snapshot = m_pWorld->GetSessionService().PrepareCharacterLoadSnapshot(aConnectionId);
+            if (!snapshot.has_value())
+            {
+                // Keep the external failure generic and do not report selection success when
+                // the selected record disappeared before its snapshot could be prepared.
+                response.Status = CharacterSelectionStatus::kNotFoundOrNotOwned;
+                pPlayer->Send(response);
+                return;
+            }
+
+            pPlayer->Send(response);
+
+            NotifyCharacterLoadSnapshot snapshotMessage{};
+            snapshotMessage.Snapshot = *snapshot;
+            pPlayer->Send(snapshotMessage);
+            return;
+        }
+
         pPlayer->Send(response);
     };
 

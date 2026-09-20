@@ -277,6 +277,9 @@ void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
 
 void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
 {
+    if (!m_world.GetCharacterSessionService().IsGameplayActive())
+        return;
+
     RunSpawnUpdates();
     RunLocalUpdates();
     RunFactionsUpdates();
@@ -288,6 +291,9 @@ void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
 
 void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const noexcept
 {
+    if (!m_world.GetCharacterSessionService().IsGameplayActive())
+        return;
+
     // Go through all the forms that were previously detected
     auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
     Vector<entt::entity> entities(view.begin(), view.end());
@@ -1192,7 +1198,7 @@ void CharacterService::MoveActor(const Actor* apActor, const GameId& acWorldSpac
 
 void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
 {
-    if (!m_transport.IsOnline())
+    if (!m_transport.IsOnline() || !m_world.GetCharacterSessionService().IsGameplayActive())
         return;
 
     auto& formIdComponent = m_world.get<FormIdComponent>(aEntity);

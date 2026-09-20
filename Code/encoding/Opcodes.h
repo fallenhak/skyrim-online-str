@@ -116,5 +116,6 @@ enum ServerOpcode : unsigned char
     kNotifySetTimeResult,
     kNotifyCharacterList,
     kNotifyCharacterSelectionResult,
+    kNotifyCharacterLoadSnapshot,
     kServerOpcodeMax
 };

@@ -50,6 +50,12 @@ bool SessionService::BindIdentity(const ConnectionId_t aConnectionId, const std:
     return true;
 }
 
+bool SessionService::CanProcessGameplay(const ConnectionId_t aConnectionId) const noexcept
+{
+    const auto* pSession = Get(aConnectionId);
+    return pSession && pSession->State == SessionState::kInWorld;
+}
+
 void SessionService::Remove(const ConnectionId_t aConnectionId) noexcept
 {
     m_sessions.erase(aConnectionId);
@@ -92,7 +98,7 @@ CharacterSelectionStatus SessionService::SelectCharacter(const ConnectionId_t aC
     if (pSession->State != SessionState::kAwaitingCharacterSelection)
         return CharacterSelectionStatus::kInvalidState;
 
-    if (aCharacterId > static_cast<std::uint64_t>(std::numeric_limits<Persistence::CharacterId>::max()))
+    if (aCharacterId == 0 || aCharacterId > static_cast<std::uint64_t>(std::numeric_limits<Persistence::CharacterId>::max()))
         return CharacterSelectionStatus::kNotFoundOrNotOwned;
 
     const auto character = m_characterRepository.GetCharacterForOwner(static_cast<Persistence::CharacterId>(aCharacterId), *pSession->OwnerProfileId);
@@ -102,4 +108,37 @@ CharacterSelectionStatus SessionService::SelectCharacter(const ConnectionId_t aC
     pSession->SelectedCharacterId = character->Id;
     pSession->State = SessionState::kCharacterSelected;
     return CharacterSelectionStatus::kSuccess;
+}
+
+std::optional<CharacterLoadSnapshot> SessionService::PrepareCharacterLoadSnapshot(const ConnectionId_t aConnectionId)
+{
+    auto* pSession = Get(aConnectionId);
+    if (!pSession || !pSession->OwnerProfileId.has_value() || !pSession->SelectedCharacterId.has_value() || pSession->State != SessionState::kCharacterSelected)
+        return std::nullopt;
+
+    const auto character = m_characterRepository.GetCharacterForOwner(*pSession->SelectedCharacterId, *pSession->OwnerProfileId);
+    if (!character.has_value() || character->Id <= 0)
+    {
+        pSession->SelectedCharacterId.reset();
+        pSession->State = SessionState::kAwaitingCharacterSelection;
+        return std::nullopt;
+    }
+
+    CharacterLoadSnapshot snapshot{};
+    snapshot.CharacterId = static_cast<std::uint64_t>(character->Id);
+    snapshot.Name = character->Name;
+    snapshot.Race = character->Race;
+    snapshot.Sex = character->Sex;
+    snapshot.Level = character->Level;
+    snapshot.WorldSpaceId = character->WorldSpace;
+    snapshot.CellId = character->Cell;
+    snapshot.PositionX = character->PositionX;
+    snapshot.PositionY = character->PositionY;
+    snapshot.PositionZ = character->PositionZ;
+    snapshot.Health = character->Health;
+    snapshot.Magicka = character->Magicka;
+    snapshot.Stamina = character->Stamina;
+
+    pSession->State = SessionState::kAwaitingClientReady;
+    return snapshot;
 }

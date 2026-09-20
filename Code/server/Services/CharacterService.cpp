@@ -185,6 +185,9 @@ void CharacterService::OnCharacterInteriorCellChange(const CharacterInteriorCell
 
 void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacterRequest>& acMessage) const noexcept
 {
+    if (!m_world.GetSessionService().CanProcessGameplay(acMessage.pPlayer->GetConnectionId()))
+        return;
+
     auto& message = acMessage.Packet;
     const auto& refId = message.ReferenceId;
 
