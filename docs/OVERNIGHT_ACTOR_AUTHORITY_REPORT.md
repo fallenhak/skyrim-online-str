@@ -420,13 +420,14 @@ server entity or ownership.
 
 ### Tests
 
-- `git diff --check` — passed before the implementation build.
-- `xmake -y TPTests` — pending after the ledger implementation.
-- `xmake run TPTests` — pending after the ledger implementation.
+- `git diff --check` — passed.
+- `xmake -y TPTests` — passed.
+- `xmake run TPTests` — passed, 241 assertions in 27 test cases.
 
 ### Commit
 
-Pending until the ledger implementation is verified and committed.
+- `5c705369` — added the bounded deterministic contribution ledger and pure
+  regression tests.
 
 ### Remaining risks
 
