@@ -18,8 +18,6 @@ WeatherService::WeatherService(World& aWorld, TransportService& aTransport, entt
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&WeatherService::OnUpdate>(this);
     m_disconnectConnection = aDispatcher.sink<DisconnectedEvent>().connect<&WeatherService::OnDisconnected>(this);
     m_authorityChangedConnection = aDispatcher.sink<AuthorityChangedEvent>().connect<&WeatherService::OnAuthorityChangedEvent>(this);
-    m_playerAddedConnection = m_world.on_destroy<WaitingFor3D>().connect<&WeatherService::OnWaitingFor3DRemoved>(this);
-    m_playerRemovedConnection = m_world.on_destroy<PlayerComponent>().connect<&WeatherService::OnPlayerComponentRemoved>(this);
     m_weatherChangeConnection = aDispatcher.sink<NotifyWeatherChange>().connect<&WeatherService::OnWeatherChange>(this);
 }
 
@@ -35,7 +33,7 @@ void WeatherService::OnDisconnected(const DisconnectedEvent& acEvent) noexcept
 
 void WeatherService::OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept
 {
-    if (!acEvent.HasWorldAuthorityGroup)
+    if (!acEvent.HasWorldAuthoritySource)
     {
         ToggleGameWeatherSystem(true);
         return;
@@ -43,18 +41,7 @@ void WeatherService::OnAuthorityChangedEvent(const AuthorityChangedEvent& acEven
 
     if (!acEvent.HasLocalWorldAuthority)
     {
-        // Wait until the authority player's 3D is present before requesting its weather.
-        auto view = m_world.view<PlayerComponent>();
-        for (auto entity : view)
-        {
-            const auto& playerComponent = view.get<PlayerComponent>(entity);
-            if (playerComponent.Id == acEvent.WorldAuthorityPlayerId)
-            {
-                ToggleGameWeatherSystem(false);
-                break;
-            }
-        }
-
+        ToggleGameWeatherSystem(false);
         return;
     }
 
@@ -87,33 +74,6 @@ void WeatherService::OnAuthorityChangedEvent(const AuthorityChangedEvent& acEven
     }
 
     m_transport.Send(request);
-}
-
-// TODO: OnPlayerComponentAdded() instead? Does PlayerComponent exist already by then?
-void WeatherService::OnWaitingFor3DRemoved(entt::registry& aRegistry, entt::entity aEntity) noexcept
-{
-    const auto* pPlayerComponent = m_world.try_get<PlayerComponent>(aEntity);
-    if (!pPlayerComponent)
-        return;
-
-    const auto& authorityService = m_world.GetAuthorityService();
-    if (!authorityService.HasWorldAuthorityGroup() || authorityService.HasLocalWorldAuthority())
-        return;
-
-    if (authorityService.GetWorldAuthorityPlayerId() == pPlayerComponent->Id)
-        ToggleGameWeatherSystem(false);
-}
-
-void WeatherService::OnPlayerComponentRemoved(entt::registry& aRegistry, entt::entity aEntity) noexcept
-{
-    const auto& playerComponent = m_world.get<PlayerComponent>(aEntity);
-
-    const auto& authorityService = m_world.GetAuthorityService();
-    if (!authorityService.HasWorldAuthorityGroup() || authorityService.HasLocalWorldAuthority())
-        return;
-
-    if (authorityService.GetWorldAuthorityPlayerId() == playerComponent.Id)
-        ToggleGameWeatherSystem(true);
 }
 
 void WeatherService::OnWeatherChange(const NotifyWeatherChange& acMessage) noexcept
