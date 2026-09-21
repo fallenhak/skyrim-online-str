@@ -160,8 +160,22 @@ Complete one substantial phase and exit cleanly. A fresh Luna/max context will c
     Write-Host "[$WorkerName] log: $LogFile"
     New-Item -ItemType File -Force -Path $LogFile | Out-Null
 
-    & $CodexExe @CodexArgs 2>&1 | Tee-Object -FilePath $LogFile -Append
-    $CodexExit = $LASTEXITCODE
+    # Windows PowerShell can surface native stderr as ErrorRecord objects.
+    # Do not let ErrorActionPreference=Stop terminate the worker before we can
+    # inspect LASTEXITCODE and enter the retry path.
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $CodexExe @CodexArgs 2>&1 | Tee-Object -FilePath $LogFile -Append
+        $CodexExit = $LASTEXITCODE
+    }
+    catch {
+        $_ | Out-String | Tee-Object -FilePath $LogFile -Append | Write-Warning
+        $CodexExit = if ($LASTEXITCODE) { $LASTEXITCODE } else { 1 }
+    }
+    finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
     Write-Host "[$WorkerName] Codex process returned exit code $CodexExit"
 
     if ($CodexExit -ne 0) {
@@ -234,7 +248,18 @@ Leave git status clean, then exit.
         "-c", $ReasoningConfig,
         $CleanupPrompt
     )
-    & $CodexExe @CleanupArgs 2>&1 | Tee-Object -FilePath (Join-Path $LogRoot "final-cleanup.log")
+    $CleanupLog = Join-Path $LogRoot "final-cleanup.log"
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $CodexExe @CleanupArgs 2>&1 | Tee-Object -FilePath $CleanupLog -Append
+    }
+    catch {
+        $_ | Out-String | Tee-Object -FilePath $CleanupLog -Append | Write-Warning
+    }
+    finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
 }
 
 if (-not (Get-DirtyState)) {
