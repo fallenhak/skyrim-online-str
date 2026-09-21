@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "control_branch": "orchestration/control-plane",
+  "current_milestone": "M01",
+  "scheduler_policy": {
+    "no_auto_merge": true,
+    "max_concurrent_workers": 2,
+    "rate_limit_behavior": "sleep_and_resume",
+    "exact_ci_required": [
+      "Build linux",
+      "Build windows"
+    ],
+    "dependency_fail_closed": true,
+    "cross_lane_changes_require_review": true,
+    "milestone_acceptance_requires_human_runtime_evidence": true
+  },
+  "milestones": [
+    {
+      "id": "M01",
+      "title": "Core World",
+      "status": "ACTIVE",
+      "objective": "A player connects, selects a server-owned character, enters a humanoid-NPC-free persistent world, encounters synchronized trusted creatures, clears renewable encounters, and can reconnect coherently.",
+      "workstreams": [
+        {
+          "id": "M01-COMBAT",
+          "lane": "combat",
+          "mode": "EXISTING_PLAN",
+          "start_phase": "C03",
+          "completion": "PLAN_QUEUE_REVIEWED"
+        },
+        {
+          "id": "M01-AUTHORITY",
+          "lane": "authority",
+          "mode": "EXISTING_PLAN",
+          "start_phase": "A04",
+          "completion": "PLAN_QUEUE_REVIEWED"
+        },
+        {
+          "id": "M01-POPULATION",
+          "lane": "population",
+          "mode": "EXISTING_PLAN",
+          "start_phase": "L03",
+          "completion": "PLAN_QUEUE_REVIEWED"
+        },
+        {
+          "id": "M01-UI",
+          "lane": "ui",
+          "mode": "EXISTING_PLAN",
+          "start_phase": "U02",
+          "completion": "PLAN_QUEUE_REVIEWED"
+        },
+        {
+          "id": "M01-WORLD",
+          "lane": "world",
+          "mode": "ROADMAP_TASKS",
+          "status": "BLOCKED_DEPENDENCY",
+          "branch": null,
+          "blocked_by": [
+            "M01-COMBAT",
+            "M01-POPULATION"
+          ],
+          "external_gates": [
+            "reviewed integration branch containing required combat lifecycle and population-classification foundations"
+          ],
+          "tasks": [
+            {
+              "id": "W01",
+              "title": "Define stable logical spawn identity and renewable encounter group model.",
+              "risk": "medium",
+              "requires_sol_review": true,
+              "depends_on": []
+            },
+            {
+              "id": "W02",
+              "title": "Define server-owned dungeon/encounter population state and alive/dead membership.",
+              "risk": "medium",
+              "requires_sol_review": false,
+              "depends_on": [
+                "W01"
+              ]
+            },
+            {
+              "id": "W03",
+              "title": "Define safe cleared-state detection without trusting client kill claims.",
+              "risk": "high",
+              "requires_sol_review": true,
+              "depends_on": [
+                "W02"
+              ]
+            },
+            {
+              "id": "W04",
+              "title": "Implement configurable reset eligibility and cooldown policy.",
+              "risk": "medium",
+              "requires_sol_review": false,
+              "depends_on": [
+                "W03"
+              ]
+            },
+            {
+              "id": "W05",
+              "title": "Prevent reset while active players occupy the encounter/cell scope.",
+              "risk": "high",
+              "requires_sol_review": true,
+              "depends_on": [
+                "W04"
+              ]
+            },
+            {
+              "id": "W06",
+              "title": "Spawn fresh actor lifecycle/incarnation records on reset; old packets must be stale.",
+              "risk": "high",
+              "requires_sol_review": true,
+              "depends_on": [
+                "W05"
+              ]
+            },
+            {
+              "id": "W07",
+              "title": "Prevent duplicate spawns across concurrent players, ownership transfer, reconnect, and server restart.",
+              "risk": "high",
+              "requires_sol_review": true,
+              "depends_on": [
+                "W06"
+              ]
+            },
+            {
+              "id": "W08",
+              "title": "Persist only the minimum renewable encounter state required across server restart.",
+              "risk": "high",
+              "requires_sol_review": true,
+              "depends_on": [
+                "W07"
+              ]
+            },
+            {
+              "id": "W09",
+              "title": "Add deterministic reset/respawn stress tests and malformed-state tests.",
+              "risk": "medium",
+              "requires_sol_review": false,
+              "depends_on": [
+                "W08"
+              ]
+            },
+            {
+              "id": "W10",
+              "title": "Document runtime integration test plan for two-player dungeon clear, reset, re-entry, and stale-packet rejection.",
+              "risk": "low",
+              "requires_sol_review": false,
+              "depends_on": [
+                "W09"
+              ]
+            }
+          ]
+        }
+      ],
+      "acceptance": [
+        "Character Select is the player entry flow.",
+        "Selected Character is server-owned and restored on reconnect.",
+        "Ordinary humanoid NPC population is suppressed.",
+        "Trusted creatures remain and synchronize.",
+        "Creature lifecycle/death authority is coherent.",
+        "A renewable dungeon/encounter can reset with fresh incarnations.",
+        "Two-client Windows runtime acceptance evidence is reviewed."
+      ]
+    },
+    {
+      "id": "M02",
+      "title": "Character Gameplay",
+      "status": "PLANNED",
+      "executable": false,
+      "goals": [
+        "Character Creation",
+        "validated server XP/progression",
+        "server-authoritative rewards",
+        "death/respawn rules",
+        "inventory/equipment persistence"
+      ]
+    },
+    {
+      "id": "M03",
+      "title": "Persistent World",
+      "status": "PLANNED",
+      "executable": false,
+      "goals": [
+        "trading",
+        "economy primitives",
+        "persistent containers/objects",
+        "world ownership where appropriate"
+      ]
+    },
+    {
+      "id": "M04",
+      "title": "RP and Social Systems",
+      "status": "PLANNED",
+      "executable": false,
+      "goals": [
+        "organizations/guilds",
+        "factions",
+        "admin/GM tools",
+        "RP metadata",
+        "chat/social interactions"
+      ]
+    },
+    {
+      "id": "M05",
+      "title": "Production Hardening",
+      "status": "PLANNED",
+      "executable": false,
+      "goals": [
+        "PvP policy",
+        "abuse/security pass",
+        "reconnect/crash recovery",
+        "load/performance testing",
+        "modlist compatibility",
+        "deployment/update flow"
+      ]
+    }
+  ]
+}
