@@ -149,6 +149,7 @@ Complete one substantial phase and exit cleanly. A fresh Luna/max context will c
     $ReasoningConfig = 'model_reasoning_effort="' + $Effort + '"'
     $CodexArgs = @(
         "exec",
+        "--ignore-user-config",
         "--sandbox", "workspace-write",
         "--model", $Model,
         "-c", 'approval_policy="never"',
@@ -156,7 +157,7 @@ Complete one substantial phase and exit cleanly. A fresh Luna/max context will c
         $RunPrompt
     )
 
-    Write-Host "[$WorkerName] launching Codex now..."
+    Write-Host "[$WorkerName] launching Codex now (ignore-user-config, workspace-write, Luna/max)..."
     Write-Host "[$WorkerName] log: $LogFile"
     New-Item -ItemType File -Force -Path $LogFile | Out-Null
 
@@ -242,6 +243,7 @@ Leave git status clean, then exit.
     $ReasoningConfig = 'model_reasoning_effort="' + $Effort + '"'
     $CleanupArgs = @(
         "exec",
+        "--ignore-user-config",
         "--sandbox", "workspace-write",
         "--model", $Model,
         "-c", 'approval_policy="never"',
