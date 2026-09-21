@@ -1,37 +1,61 @@
-# Verification results
+# V2 verification results
 
-Captured: `2026-09-21T14:27:43+00:00`
+Captured on the VDS on 2026-09-21 after installation. All commands were run
+without starting the orchestrator or healthcheck timer.
 
-These are bounded results from the installed VDS commands. Raw runtime output is not included.
+## Supervisor unit tests
 
-## `skyrim-dev healthcheck`
+Command:
 
-- PASS resource guard
-- PASS git/worktree health
-- PASS state persistence: /var/lib/skyrim-dev/state/state.json
+```text
+cd /srv/services/skyrim-dev/orchestrator
+runuser -u skyrimdev -- env PYTHONPATH=/srv/services/skyrim-dev/orchestrator PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_supervisor
+```
+
+Result: 19 tests passed.
 
 ## `skyrim-dev self-test`
 
-- PASS Codex CLI installed
-- PASS Codex ChatGPT authentication
-- PASS GitHub CLI authentication
-- PASS GitHub push permission
-- PASS primary repository and four worktrees
-- PASS disk and memory guard
-- PASS combat worktree clean
-- PASS combat safe push dry-run
-- PASS authority worktree clean
-- PASS authority safe push dry-run
-- PASS population worktree clean
-- PASS population safe push dry-run
-- PASS ui worktree clean
-- PASS ui safe push dry-run
-- PASS GitHub Actions polling
-- PASS state persistence write
-- SELF_TEST_OK
+```text
+PASS Codex CLI installed
+PASS Codex ChatGPT authentication
+PASS GitHub CLI authentication
+PASS GitHub push permission
+PASS primary repository and four worktrees
+PASS disk and memory guard
+PASS worker GitHub credential isolation
+PASS required CI workflow configuration
+PASS empty worker GitHub config directory
+PASS Codex usage-limit classifier safety
+PASS product context files
+PASS combat worktree clean
+PASS combat safe push dry-run
+PASS authority worktree clean
+PASS authority safe push dry-run
+PASS population worktree clean
+PASS population safe push dry-run
+PASS ui worktree clean
+PASS ui safe push dry-run
+PASS GitHub Actions polling
+PASS state persistence write
+SELF_TEST_OK
+```
 
-## systemd unit verification
+## `skyrim-dev healthcheck`
 
-- `systemd-analyze verify` passed for all three installed units.
+```text
+PASS resource guard
+PASS git/worktree health
+PASS state persistence: /var/lib/skyrim-dev/state/state.json
+PASS product context
+```
 
-Autonomous development was not started; the orchestrator service and timer remained inactive/disabled during verification.
+## Safety state at capture
+
+```text
+orchestrator: inactive, disabled
+healthcheck timer: inactive, disabled
+global mode: PAUSED
+development workers launched: no
+development branch heads changed: no
+```

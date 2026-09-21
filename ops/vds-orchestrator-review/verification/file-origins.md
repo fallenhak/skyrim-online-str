@@ -1,11 +1,17 @@
-# Review file origins
+# V2 file origins
 
-- `source/orchestrator/supervisor.py` <- `/srv/services/skyrim-dev/orchestrator/supervisor.py`
-- `source/config/supervisor.json` <- `/srv/services/skyrim-dev/config/supervisor.json`
-- `source/management/skyrim-dev` <- `/usr/local/bin/skyrim-dev`
-- `source/systemd/skyrim-dev-orchestrator.service` <- `/etc/systemd/system/skyrim-dev-orchestrator.service`
-- `source/systemd/skyrim-dev-healthcheck.service` <- `/etc/systemd/system/skyrim-dev-healthcheck.service`
-- `source/systemd/skyrim-dev-healthcheck.timer` <- `/etc/systemd/system/skyrim-dev-healthcheck.timer`
-- `source/logrotate/skyrim-dev` <- `/etc/logrotate.d/skyrim-dev`
-- `state/persistent-lane-state.json` <- redacted projection of `/var/lib/skyrim-dev/state/state.json`
-- `README.md`, `verification/*` <- review documentation generated from the installed files and bounded checks
+- `source/orchestrator/supervisor.py`: V1 installed supervisor reviewed at
+  architect snapshot commit `7aa07f042fe21da3e0ac87cca6870d95f0f11ebe`, then
+  hardened in this V2 pass.
+- `source/orchestrator/roadmap.py`: new V2 standard-library adapter for the
+  future milestone/dependency scheduler.
+- `source/orchestrator/test_supervisor.py`: new V2 supervisor unit tests.
+- `source/config/supervisor.json`: V1 installed configuration extended with V2
+  workflow, evidence, bounds, product, worker-isolation, and retry settings.
+- `source/management/skyrim-dev`: V1 management wrapper extended with explicit
+  review lifecycle commands.
+- `source/product/*.md`: new canonical product-context files requested for V2.
+- `source/systemd/*`: existing paused/disabled unit definitions republished;
+  no unit was enabled or started for autonomous development.
+- `state/persistent-lane-state.json`: redacted projection of the installed V2
+  state, preserving the four protected development heads.

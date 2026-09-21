@@ -9,10 +9,8 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import fcntl
 import json
 import os
-import pwd
 import re
 import signal
 import subprocess
@@ -21,6 +19,17 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows-only syntax/test support
+    fcntl = None  # type: ignore[assignment]
+try:
+    import pwd
+except ImportError:  # pragma: no cover - Windows-only syntax/test support
+    pwd = None  # type: ignore[assignment]
+
+from roadmap import current_lane_task
 
 SERVICE_ROOT = Path("/srv/services/skyrim-dev")
 CONFIG_PATH = SERVICE_ROOT / "config" / "supervisor.json"
@@ -45,6 +54,161 @@ SECRET_RE = re.compile(
 )
 PHASE_RE = re.compile(r"^([A-Z][0-9]+)\s+(.+?)\s*$")
 RESULT_RE = re.compile(r"WORKER_RESULT:\s*(COMPLETE|NEEDS_SOL_REVIEW|BLOCKED)")
+CODEX_USAGE_RE = re.compile(
+    r"(?i)(?:usage\s+limit|rate\s+limit|too\s+many\s+requests|quota\s+exhausted|"
+    r"capacity\s+exhausted|try\s+again\s+later)"
+)
+CODEX_CONTEXT_RE = re.compile(r"(?i)(?:codex|chatgpt|openai|usage\s+allowance|token\s+budget|reset)")
+GITHUB_LIMIT_RE = re.compile(r"(?i)(?:github|github\.com|gh\s+(?:api|run|issue))")
+UNMERGED_XY = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
+GENERATED_DIRS = {"node_modules", "build", "dist", "out", ".xmake", "obj"}
+
+
+def parse_porcelain_v1_z(output: bytes | str) -> list[dict[str, str | None]]:
+    """Parse git status --porcelain=v1 -z without losing rename/deletion data."""
+    raw = output.encode("utf-8", errors="replace") if isinstance(output, str) else output
+    tokens = raw.split(b"\0")
+    entries: list[dict[str, str | None]] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        if not token:
+            continue
+        text = token.decode("utf-8", errors="surrogateescape")
+        if len(text) < 4 or text[2] != " ":
+            entries.append({"xy": "??", "path": text, "orig_path": None, "kind": "unknown"})
+            continue
+        xy = text[:2]
+        path = text[3:]
+        orig_path: str | None = None
+        if xy[0] in "RC" or xy[1] in "RC":
+            if index < len(tokens) and tokens[index]:
+                orig_path = tokens[index].decode("utf-8", errors="surrogateescape")
+                index += 1
+        if xy == "??":
+            kind = "untracked"
+        elif xy in UNMERGED_XY or "U" in xy:
+            kind = "unmerged"
+        elif "R" in xy:
+            kind = "rename"
+        elif "D" in xy:
+            kind = "deletion"
+        elif "A" in xy:
+            kind = "addition"
+        else:
+            kind = "modified"
+        entries.append({"xy": xy, "path": path, "orig_path": orig_path, "kind": kind})
+    return entries
+
+
+def status_paths(entries: list[dict[str, str | None]]) -> list[str]:
+    paths: set[str] = set()
+    for entry in entries:
+        for key in ("path", "orig_path"):
+            value = entry.get(key)
+            if value:
+                paths.add(str(value))
+    return sorted(paths)
+
+
+def aggregate_required_workflows(
+    runs: list[dict[str, Any]], required_workflows: list[str], sha: str
+) -> dict[str, Any]:
+    """Reduce exact-SHA Actions runs to one newest attempt per required workflow."""
+    by_name: dict[str, list[dict[str, Any]]] = {name: [] for name in required_workflows}
+    for run in runs:
+        if run.get("headSha") != sha:
+            continue
+        name = str(run.get("workflowName") or "")
+        if name in by_name:
+            by_name[name].append(run)
+
+    def newest(run: dict[str, Any]) -> tuple[str, str, int, int]:
+        attempt = run.get("runAttempt", run.get("attempt", run.get("run_attempt", 0)))
+        try:
+            attempt_number = int(attempt or 0)
+        except (TypeError, ValueError):
+            attempt_number = 0
+        try:
+            database_id = int(run.get("databaseId") or 0)
+        except (TypeError, ValueError):
+            database_id = 0
+        return (
+            str(run.get("updatedAt") or ""),
+            str(run.get("createdAt") or ""),
+            attempt_number,
+            database_id,
+        )
+
+    selected: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for workflow in required_workflows:
+        candidates = by_name[workflow]
+        if not candidates:
+            missing.append(workflow)
+            continue
+        run = dict(max(candidates, key=newest))
+        selected.append({
+            "workflow": workflow,
+            "run_id": run.get("databaseId"),
+            "status": run.get("status"),
+            "conclusion": run.get("conclusion"),
+            "sha": run.get("headSha"),
+            "url": run.get("url"),
+            "created_at": run.get("createdAt"),
+            "updated_at": run.get("updatedAt"),
+            "attempt": run.get("runAttempt", run.get("attempt", run.get("run_attempt"))),
+        })
+    failures = [
+        item for item in selected
+        if str(item.get("status") or "").lower() == "completed"
+        and str(item.get("conclusion") or "").lower() != "success"
+    ]
+    running = [
+        item for item in selected
+        if str(item.get("status") or "").lower() != "completed"
+    ]
+    if failures:
+        result_status = "FAIL"
+    elif missing or running:
+        result_status = "WAIT"
+    else:
+        result_status = "PASS"
+    return {
+        "status": result_status,
+        "sha": sha,
+        "required": selected,
+        "missing": missing,
+        "running": running,
+        "failures": failures,
+    }
+
+
+def classify_codex_usage_limit(return_code: int, output: str) -> bool:
+    """Conservative classifier for Codex/ChatGPT allowance exhaustion."""
+    text = ANSI_RE.sub("", output or "")
+    if not text or not CODEX_USAGE_RE.search(text):
+        return False
+    if GITHUB_LIMIT_RE.search(text) and not re.search(r"(?i)(codex|chatgpt|openai)", text):
+        return False
+    if not CODEX_CONTEXT_RE.search(text):
+        return False
+    return return_code != 0
+
+
+def next_codex_backoff(previous: int, base: int = 900, maximum: int = 3600) -> int:
+    if previous <= 0:
+        return base
+    return min(maximum, previous * 2)
+
+
+def checkpoint_due(success_since_review: int) -> bool:
+    return success_since_review >= 3
+
+
+def generated_path(path: str) -> bool:
+    return any(part.lower() in GENERATED_DIRS for part in path.replace("\\", "/").split("/"))
 
 
 def utc_now() -> str:
@@ -105,11 +269,21 @@ class Supervisor:
 
     def _new_state(self) -> dict[str, Any]:
         return {
-            "version": 1,
+            "version": 2,
             "created_at": utc_now(),
             "updated_at": utc_now(),
             "global_mode": "PAUSED",
             "mode_reason": "installation default; explicit start is required",
+            "safety_pause": False,
+            "codex_availability": {
+                "status": "AVAILABLE",
+                "detected_at": None,
+                "next_retry_at": None,
+                "backoff_seconds": 0,
+                "retry_count": 0,
+                "probe_started_at": None,
+                "reason": "",
+            },
             "lanes": {},
             "events": [],
         }
@@ -130,10 +304,33 @@ class Supervisor:
             return state
 
     def _prepare_state(self) -> None:
-        self.state.setdefault("version", 1)
+        try:
+            self.state["version"] = max(int(self.state.get("version", 1)), 2)
+        except (TypeError, ValueError):
+            self.state["version"] = 2
         self.state.setdefault("created_at", utc_now())
         self.state.setdefault("global_mode", "PAUSED")
         self.state.setdefault("mode_reason", "installation default")
+        self.state.setdefault("safety_pause", False)
+        self.state.setdefault("codex_availability", {
+            "status": "AVAILABLE",
+            "detected_at": None,
+            "next_retry_at": None,
+            "backoff_seconds": 0,
+            "retry_count": 0,
+            "probe_started_at": None,
+            "reason": "",
+        })
+        if not isinstance(self.state.get("codex_availability"), dict):
+            self.state["codex_availability"] = {}
+        availability = self.state["codex_availability"]
+        availability.setdefault("status", "AVAILABLE")
+        availability.setdefault("detected_at", None)
+        availability.setdefault("next_retry_at", None)
+        availability.setdefault("backoff_seconds", 0)
+        availability.setdefault("retry_count", 0)
+        availability.setdefault("probe_started_at", None)
+        availability.setdefault("reason", "")
         self.state.setdefault("lanes", {})
         self.state.setdefault("events", [])
         for lane_name in LANE_ORDER:
@@ -150,6 +347,13 @@ class Supervisor:
                 "last_commit": None,
                 "last_error": "",
                 "ci": {"status": "NOT_RUN", "sha": None, "run_id": None, "url": None},
+                "review": {
+                    "type": None,
+                    "reviewed_phase": None,
+                    "commit_sha": None,
+                    "next_phase": None,
+                    "created_at": None,
+                },
                 "history": [],
                 "success_since_review": 0,
                 "phase_failure_count": 0,
@@ -158,6 +362,7 @@ class Supervisor:
                 "ci_poll_failures": 0,
                 "review_packet": None,
                 "review_reasons": [],
+                "worker_attempt": 0,
             })
             lane.update({
                 "branch": spec["branch"],
@@ -167,6 +372,22 @@ class Supervisor:
             })
             lane.setdefault("history", [])
             lane.setdefault("review_reasons", [])
+            lane.setdefault("review", {
+                "type": None,
+                "reviewed_phase": None,
+                "commit_sha": None,
+                "next_phase": None,
+                "created_at": None,
+            })
+            if not isinstance(lane.get("review"), dict):
+                lane["review"] = {
+                    "type": None,
+                    "reviewed_phase": None,
+                    "commit_sha": None,
+                    "next_phase": None,
+                    "created_at": None,
+                }
+            lane.setdefault("worker_attempt", 0)
             self._refresh_plan(lane_name, lane)
             if lane.get("state") == "CODING":
                 lane["worker_pid"] = None
@@ -257,6 +478,42 @@ class Supervisor:
         index = int(self.state["lanes"][lane_name].get("phase_index", 0))
         return phases[index] if index < len(phases) else None
 
+    def roadmap_task(self, lane_name: str) -> Any:
+        phase = self.phase(lane_name)
+        if phase is None:
+            return None
+        return current_lane_task(
+            lane_name,
+            phase["id"],
+            phase["title"],
+            self.plan_for(lane_name).get("boundaries", []),
+        )
+
+    def product_context(self, lane_name: str) -> str:
+        """Return a small, phase-relevant context section for a worker prompt."""
+        product_root = Path(self.config.get("product_root", str(SERVICE_ROOT / "product")))
+        canonical = (
+            product_root / "PRODUCT_VISION.md",
+            product_root / "WORLD_RULES.md",
+            product_root / "MILESTONE_01_CORE_WORLD.md",
+        )
+        available = all(path.exists() for path in canonical)
+        relevance = {
+            "combat": "Lifecycle/incarnation work matters because renewable dungeon respawns must be fresh lifecycles and stale packets must not affect them.",
+            "authority": "Authority work matters because the server owns identity, lifecycle, persistence, attribution, and trust decisions; PvP/self-damage is not PvE evidence.",
+            "population": "Population work matters because humanoids are suppressed, trusted creatures remain, and unknown actor classification must not be guessed into Creature.",
+            "ui": "Character UI work matters because players enter through server Character Select and a server-owned character, not an authoritative local save.",
+        }
+        product_state = "canonical product files available" if available else "canonical product files unavailable; use these bounded rules"
+        return "\n".join([
+            "PRODUCT CONTEXT (bounded; canonical files are installed under " + str(product_root) + "):",
+            "- Vision: transform Skyrim Together Reborn into a persistent multiplayer RP/MMO platform; keep its synchronization foundations while replacing the single-player world/character model with server-owned persistent multiplayer systems.",
+            "- Immutable rules: Character, AccountId, CharacterId, lifecycle, persistence, and trust decisions are server-owned; local saves are bootstrap/shell state; never invent server-side Skyrim AI; security/trust correctness beats feature velocity.",
+            "- Milestone: MILESTONE_01_CORE_WORLD — authenticate, select a server-owned character, enter a world without ordinary humanoid NPC population, coexist with trusted creatures, complete renewable encounters, and reconnect with the character. Queue completion alone is not acceptance; multi-client runtime evidence is required.",
+            "- Lane relevance: " + relevance.get(lane_name, "Preserve the immutable world rules while completing this lane phase."),
+            "- Product files: " + product_state + ".",
+        ])
+
     def env(self) -> dict[str, str]:
         environment = os.environ.copy()
         environment.update({
@@ -270,7 +527,26 @@ class Supervisor:
         })
         for key in (
             "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN",
-            "GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK",
+            "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
+            "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK", "SSH_AGENT_PID",
+        ):
+            environment.pop(key, None)
+        return environment
+
+    def worker_env(self) -> dict[str, str]:
+        """Build the least-privileged environment needed by a Codex worker.
+
+        Codex authentication remains available through CODEX_HOME, but GitHub
+        CLI credentials are hidden behind a dedicated empty config directory.
+        The worker never receives GitHub token variables or an SSH agent.
+        """
+        environment = self.env()
+        environment["GH_CONFIG_DIR"] = str(
+            self.config.get("worker_gh_config_dir", "/var/lib/skyrim-dev/worker-gh-config")
+        )
+        for key in (
+            "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
+            "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK", "SSH_AGENT_PID",
         ):
             environment.pop(key, None)
         return environment
@@ -281,12 +557,19 @@ class Supervisor:
         try:
             result = subprocess.run(
                 args, cwd=cwd, env=self.env(), text=True,
+                encoding="utf-8", errors="replace",
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=timeout, check=False,
             )
             return result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired as exc:
-            return 124, exc.stdout or "", (exc.stderr or "") + "\ncommand timed out"
+            stdout = exc.stdout or ""
+            stderr = exc.stderr or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode("utf-8", errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            return 124, str(stdout), str(stderr) + "\ncommand timed out"
 
     def git_head(self, worktree: str) -> str | None:
         code, out, _ = self.command(
@@ -294,21 +577,50 @@ class Supervisor:
         )
         return out.strip() if code == 0 else None
 
+    def git_status_details(self, worktree: str) -> tuple[bool, list[dict[str, str | None]], str]:
+        code, out, err = self.command(
+            ["git", "-C", worktree, "status", "--porcelain=v1", "-z",
+             "--untracked-files=all"], timeout=60,
+        )
+        if code != 0:
+            return False, [], redact(err or out or "git status failed")
+        return True, parse_porcelain_v1_z(out), ""
+
     def git_status_files(self, worktree: str) -> list[str]:
-        files: set[str] = set()
+        okay, entries, _ = self.git_status_details(worktree)
+        return status_paths(entries) if okay else []
+
+    def git_dirty(self, worktree: str) -> bool:
+        okay, entries, _ = self.git_status_details(worktree)
+        return (not okay) or bool(entries)
+
+    def git_status_is_conflicted(self, worktree: str) -> bool:
+        okay, entries, _ = self.git_status_details(worktree)
+        return (not okay) or any(entry.get("kind") == "unmerged" for entry in entries)
+
+    def git_branch(self, worktree: str) -> str | None:
         code, out, _ = self.command(
-            ["git", "-C", worktree, "diff", "--name-only",
-             "--diff-filter=ACDMRTUXB"], timeout=60
+            ["git", "-C", worktree, "symbolic-ref", "--short", "HEAD"], timeout=30
         )
-        if code == 0:
-            files.update(line.strip() for line in out.splitlines() if line.strip())
-        code, out, _ = self.command(
-            ["git", "-C", worktree, "ls-files", "--others", "--exclude-standard"],
-            timeout=60,
-        )
-        if code == 0:
-            files.update(line.strip() for line in out.splitlines() if line.strip())
-        return sorted(files)
+        return out.strip() if code == 0 else None
+
+    def verify_worker_worktree(self, lane_name: str, recovery: bool) -> tuple[bool, str]:
+        lane = self.state["lanes"][lane_name]
+        worktree = lane["worktree"]
+        expected = lane["branch"]
+        actual = self.git_branch(worktree)
+        if actual != expected:
+            return False, f"worktree branch is {actual or 'unknown'}; expected {expected}"
+        okay, entries, error = self.git_status_details(worktree)
+        if not okay:
+            return False, error
+        if any(entry.get("kind") == "unknown" for entry in entries):
+            return False, "Git status contained an unrecognized record"
+        if any(entry.get("kind") == "unmerged" for entry in entries):
+            return False, "worktree has merge/conflict entries"
+        if entries and not recovery:
+            return False, "normal worker requires a clean worktree"
+        return True, ""
 
     def git_dirty(self, worktree: str) -> bool:
         return bool(self.git_status_files(worktree))
@@ -341,32 +653,69 @@ class Supervisor:
             "desired_mode": mode, "reason": reason, "updated_at": utc_now()
         }, 0o640)
 
+    def _stop_active_workers(self, reason: str) -> None:
+        for lane_name in list(self.processes):
+            self.terminate_worker(lane_name, reason)
+
+    def _pause_lanes(self) -> None:
+        for lane in self.state["lanes"].values():
+            if lane.get("state") not in TERMINAL_STATES:
+                if lane.get("state") != "PAUSED":
+                    lane["paused_from_state"] = lane.get("state")
+                lane["state"] = "PAUSED"
+                lane["worker_pid"] = None
+
     def refresh_control(self) -> None:
         control = read_json(CONTROL_PATH, {})
         desired = control.get("desired_mode")
         if desired not in {"RUNNING", "PAUSED"}:
             desired = self.state.get("global_mode", "PAUSED")
+        if desired == "RUNNING" and self.state.get("safety_pause"):
+            resource_ok, resource_reason = self.resource_guard()
+            git_ok, git_reason = self.git_health() if resource_ok else (False, "resource guard still unsafe")
+            if not resource_ok or not git_ok:
+                reason = resource_reason or git_reason
+                self._write_control("PAUSED", f"safety condition remains: {reason}")
+                if self.state.get("global_mode") != "PAUSED":
+                    self.state["global_mode"] = "PAUSED"
+                self._pause_lanes()
+                return
+            self.state["safety_pause"] = False
         if desired == self.state.get("global_mode"):
+            if desired == "PAUSED":
+                self._stop_active_workers("global pause; dirty diff preserved")
+                self._pause_lanes()
             return
         self.state["global_mode"] = desired
         self.state["mode_reason"] = control.get("reason", "control change")
-        for lane in self.state["lanes"].values():
-            if desired == "PAUSED":
-                if lane.get("worker_pid") is None and lane.get("state") not in TERMINAL_STATES:
-                    lane["state"] = "PAUSED"
-            elif lane.get("state") == "PAUSED":
-                lane["state"] = "RECOVERING" if self.git_dirty(lane["worktree"]) else "READY"
+        if desired == "PAUSED":
+            self._stop_active_workers("operator pause; dirty diff preserved")
+            self._pause_lanes()
+        else:
+            for lane in self.state["lanes"].values():
+                if lane.get("state") == "PAUSED":
+                    previous = lane.pop("paused_from_state", None)
+                    if previous in {"WAITING_FOR_CI", "LOCAL_VALIDATION", "COMMITTING", "PUSHING", "NEXT_PHASE"}:
+                        lane["state"] = previous
+                    elif previous == "RECOVERING":
+                        lane["state"] = "RECOVERING"
+                    else:
+                        lane["state"] = "RECOVERING" if self.git_dirty(lane["worktree"]) else "READY"
         self.event(f"global mode changed to {desired}: {self.state['mode_reason']}")
 
     def pause_for_safety(self, reason: str) -> None:
-        if self.state.get("global_mode") == "PAUSED" and self.state.get("mode_reason") == reason:
+        if (
+            self.state.get("global_mode") == "PAUSED"
+            and self.state.get("mode_reason") == reason
+            and self.state.get("safety_pause")
+        ):
             return
         self.state["global_mode"] = "PAUSED"
         self.state["mode_reason"] = reason
+        self.state["safety_pause"] = True
         self._write_control("PAUSED", reason)
-        for lane in self.state["lanes"].values():
-            if lane.get("worker_pid") is None and lane.get("state") not in TERMINAL_STATES:
-                lane["state"] = "PAUSED"
+        self._stop_active_workers(f"automatic safety pause: {reason}")
+        self._pause_lanes()
         self.event(f"automatic safety pause: {reason}")
 
     def git_health(self) -> tuple[bool, str]:
@@ -383,6 +732,10 @@ class Supervisor:
             )
             if code != 0:
                 return False, f"{lane_name} worktree cannot be verified"
+            branch = self.git_branch(worktree)
+            expected = self.config["lanes"][lane_name]["branch"]
+            if branch != expected:
+                return False, f"{lane_name} worktree branch is {branch or 'unknown'}; expected {expected}"
         return True, ""
 
     def periodic_guards(self) -> bool:
@@ -406,6 +759,7 @@ class Supervisor:
         phase = self.phase(lane_name)
         if phase is None:
             return ""
+        task = self.roadmap_task(lane_name)
         boundaries = "\n".join(
             f"- {item}" for item in self.plan_for(lane_name).get("boundaries", [])
         )
@@ -422,7 +776,10 @@ Lane branch: {lane["branch"]}
 Worktree: {lane["worktree"]}
 Authoritative plan: {lane["plan"]}
 Phase: {phase["id"]} - {phase["title"]}
+Roadmap task: milestone={task.milestone if task else 'MILESTONE_01_CORE_WORLD'}, task_id={task.task_id if task else phase['id']}, risk={task.risk if task else 'lane-local'}
 {recovery_text}
+{self.product_context(lane_name)}
+
 Perform exactly this one phase and then stop. Read PLAN.md and current source first.
 Respect its ownership boundary and hard boundaries:
 {boundaries}
@@ -455,7 +812,7 @@ required evidence or tooling is unavailable.
     def _drain_worker(self, lane_name: str, stream: Any, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with path.open("a", encoding="utf-8") as handle:
+            with path.open("w", encoding="utf-8") as handle:
                 for line in stream:
                     handle.write(redact(line))
                     handle.flush()
@@ -464,21 +821,53 @@ required evidence or tooling is unavailable.
         except OSError as exc:
             self.log(f"worker log error: {exc}", lane_name)
 
+    def _prune_worker_logs(self, lane_name: str) -> None:
+        keep = int(self.config.get("max_worker_logs_per_lane", 20))
+        paths = sorted(
+            LOG_ROOT.glob(f"{lane_name}-*-attempt-*.log"),
+            key=lambda path: path.stat().st_mtime if path.exists() else 0,
+            reverse=True,
+        )
+        for path in paths[keep:]:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+    def _new_worker_log(self, lane_name: str, phase_id: str, attempt: int) -> Path:
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        safe_phase = re.sub(r"[^A-Za-z0-9_.-]+", "-", phase_id)
+        return LOG_ROOT / f"{lane_name}-{safe_phase}-attempt-{attempt}-{stamp}.log"
+
     def start_worker(self, lane_name: str, recovery: bool = False) -> bool:
         if lane_name in self.processes:
             return False
+        availability = self.state.get("codex_availability", {})
+        if availability.get("status") == "RATE_LIMITED":
+            retry_at = parse_time(availability.get("next_retry_at"))
+            if retry_at and time.time() < retry_at:
+                return False
+            if availability.get("probe_started_at"):
+                return False
         lane = self.state["lanes"][lane_name]
         phase = self.phase(lane_name)
         if phase is None:
             self.review(lane_name, ["lane queue is complete; final review required"])
             return False
-        if not recovery and self.git_dirty(lane["worktree"]):
-            lane["state"] = "RECOVERING"
-            lane["last_error"] = "unexpected dirty worktree before phase; recovery required"
-            lane["recovery_attempts"] = min(1, int(lane.get("recovery_attempts", 0)) + 1)
-            self.event("refusing normal worker on dirty worktree", lane_name)
+        okay, reason = self.verify_worker_worktree(lane_name, recovery)
+        if not okay:
+            if recovery or "branch" in reason or "conflict" in reason or "unrecognized" in reason:
+                self.review(lane_name, [reason])
+            else:
+                lane["state"] = "RECOVERING"
+                lane["last_error"] = reason
+                lane["recovery_attempts"] = min(1, int(lane.get("recovery_attempts", 0)) + 1)
+                self.event("refusing normal worker; bounded recovery required", lane_name)
             return False
-        log_path = LOG_ROOT / f"{lane_name}-worker.log"
+        attempt = int(lane.get("worker_attempt", 0)) + 1
+        lane["worker_attempt"] = attempt
+        log_path = self._new_worker_log(lane_name, phase["id"], attempt)
+        self._prune_worker_logs(lane_name)
         args = [
             "codex", "exec",
             "--model", "gpt-5.6-luna",
@@ -492,7 +881,7 @@ required evidence or tooling is unavailable.
         ]
         try:
             process = subprocess.Popen(
-                args, cwd=lane["worktree"], env=self.env(), text=True,
+                args, cwd=lane["worktree"], env=self.worker_env(), text=True,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1,
             )
         except OSError as exc:
@@ -505,6 +894,8 @@ required evidence or tooling is unavailable.
             self.event(lane["last_error"], lane_name)
             return False
         self.processes[lane_name] = process
+        if availability.get("status") == "RATE_LIMITED":
+            availability["probe_started_at"] = utc_now()
         lane.update({
             "state": "CODING",
             "phase_id": phase["id"],
@@ -514,6 +905,7 @@ required evidence or tooling is unavailable.
             "worker_started_at": utc_now(),
             "last_progress_at": utc_now(),
             "worker_recovery": recovery,
+            "worker_attempt": attempt,
             "last_error": "",
         })
         thread = threading.Thread(
@@ -523,7 +915,7 @@ required evidence or tooling is unavailable.
         self.output_threads[lane_name] = thread
         thread.start()
         self.event(
-            f"started {'recovery ' if recovery else ''}worker pid={process.pid} phase={phase['id']}",
+            f"started {'recovery ' if recovery else ''}worker pid={process.pid} phase={phase['id']} attempt={attempt} log={log_path}",
             lane_name,
         )
         return True
@@ -560,6 +952,53 @@ required evidence or tooling is unavailable.
         else:
             self.review(lane_name, [f"worker failure after bounded recovery: {reason}"])
 
+    def handle_codex_rate_limited(self, lane_name: str, output: str) -> None:
+        availability = self.state.setdefault("codex_availability", {})
+        previous = int(availability.get("backoff_seconds") or 0)
+        backoff = next_codex_backoff(
+            previous,
+            int(self.config.get("codex_retry_base_seconds", 900)),
+            int(self.config.get("codex_retry_max_seconds", 3600)),
+        )
+        retry_count = int(availability.get("retry_count") or 0) + 1
+        detected = time.time()
+        retry_at = detected + backoff
+        availability.update({
+            "status": "RATE_LIMITED",
+            "detected_at": utc_now(),
+            "next_retry_at": dt.datetime.fromtimestamp(
+                retry_at, dt.timezone.utc
+            ).isoformat(timespec="seconds"),
+            "backoff_seconds": backoff,
+            "retry_count": retry_count,
+            "probe_started_at": None,
+            "reason": redact("Codex usage allowance/rate limit detected: " + tail_text(
+                Path(self.state["lanes"][lane_name].get("worker_log") or ""), 1000
+            )),
+        })
+        lane = self.state["lanes"][lane_name]
+        lane["last_error"] = "Codex availability is rate limited; dirty diff preserved"
+        lane["state"] = "RECOVERING" if self.git_dirty(lane["worktree"]) else "READY"
+        self.event(
+            f"Codex RATE_LIMITED; no new workers until {availability['next_retry_at']} "
+            f"(backoff {backoff}s)", lane_name,
+        )
+
+    def mark_codex_available(self) -> None:
+        availability = self.state.setdefault("codex_availability", {})
+        if availability.get("status") != "RATE_LIMITED":
+            return
+        availability.update({
+            "status": "AVAILABLE",
+            "detected_at": None,
+            "next_retry_at": None,
+            "backoff_seconds": 0,
+            "retry_count": 0,
+            "probe_started_at": None,
+            "reason": "Codex worker became available",
+        })
+        self.event("Codex availability restored; normal scheduling may resume")
+
     def poll_workers(self) -> None:
         now = time.time()
         for lane_name, process in list(self.processes.items()):
@@ -580,13 +1019,27 @@ required evidence or tooling is unavailable.
                 thread.join(timeout=5)
             self.processes.pop(lane_name, None)
             result = self.worker_result(lane_name)
+            worker_output = tail_text(Path(lane.get("worker_log") or ""), 40000)
             lane["worker_pid"] = None
             lane["worker_finished_at"] = utc_now()
             lane["last_progress_at"] = utc_now()
+            if classify_codex_usage_limit(return_code, worker_output):
+                self.handle_codex_rate_limited(lane_name, worker_output)
+                continue
+            self.mark_codex_available()
             if return_code == 0 and result == "COMPLETE":
-                lane["state"] = "LOCAL_VALIDATION"
+                lane["state"] = (
+                    "LOCAL_VALIDATION"
+                    if self.state.get("global_mode") == "RUNNING"
+                    else "PAUSED"
+                )
                 lane["last_error"] = ""
-                self.event("worker completed; entering local validation", lane_name)
+                self.event(
+                    "worker completed; entering local validation"
+                    if lane["state"] == "LOCAL_VALIDATION"
+                    else "worker completed while paused; diff preserved",
+                    lane_name,
+                )
             elif result == "NEEDS_SOL_REVIEW":
                 self.review(lane_name, ["worker explicitly requested human review"])
             elif result == "BLOCKED":
@@ -597,17 +1050,49 @@ required evidence or tooling is unavailable.
                     f"worker exit={return_code}; marker={result or 'missing'}",
                 )
 
-    def changed_diff(self, lane_name: str) -> tuple[list[str], str, str]:
+    def changed_diff(self, lane_name: str) -> tuple[list[str], str, str, dict[str, int]]:
         worktree = self.state["lanes"][lane_name]["worktree"]
-        files = self.git_status_files(worktree)
-        _, diff, _ = self.command(
-            ["git", "-C", worktree, "diff", "--no-ext-diff", "--unified=0"],
-            timeout=120,
-        )
-        _, stat, _ = self.command(
-            ["git", "-C", worktree, "diff", "--stat"], timeout=60
-        )
-        return files, diff[:2_000_000], stat.strip()[:12000]
+        okay, entries, status_error = self.git_status_details(worktree)
+        files = status_paths(entries) if okay else []
+        diff_parts: list[str] = []
+        stat_parts: list[str] = []
+        tracked_diff_bytes = 0
+        for label, extra in (("unstaged", []), ("staged", ["--cached"])):
+            code, diff, err = self.command(
+                ["git", "-C", worktree, "diff", "--no-ext-diff", "--binary",
+                 "--unified=0", *extra], timeout=120,
+            )
+            if code == 0:
+                tracked_diff_bytes += len(diff.encode("utf-8", errors="replace"))
+                if diff:
+                    diff_parts.append(f"### {label}\n{diff}")
+            elif err:
+                diff_parts.append(f"### {label} diff error\n{redact(err)}")
+            stat_code, stat, stat_err = self.command(
+                ["git", "-C", worktree, "diff", "--stat", *extra], timeout=60
+            )
+            if stat_code == 0 and stat.strip():
+                stat_parts.append(f"{label}:\n{stat.strip()}")
+            elif stat_err:
+                stat_parts.append(f"{label}: {redact(stat_err)}")
+        untracked_bytes = 0
+        for entry in entries:
+            if entry.get("kind") != "untracked" or not entry.get("path"):
+                continue
+            path = Path(worktree) / str(entry["path"])
+            try:
+                untracked_bytes += path.stat().st_size if path.is_file() else 0
+            except OSError:
+                pass
+        metrics = {
+            "changed_files": len(files),
+            "tracked_diff_bytes": tracked_diff_bytes,
+            "untracked_bytes": untracked_bytes,
+            "total_diff_bytes": tracked_diff_bytes + untracked_bytes,
+        }
+        if status_error:
+            diff_parts.append(f"### status error\n{status_error}")
+        return files, "\n\n".join(diff_parts)[:2_000_000], "\n\n".join(stat_parts)[:12000], metrics
 
     def forbidden_change_reasons(self, lane_name: str, files: list[str]) -> list[str]:
         spec = self.config["lanes"][lane_name]
@@ -617,8 +1102,6 @@ required evidence or tooling is unavailable.
             "auth.json", "hosts.yml", ".env", "id_rsa", "id_ed25519",
             "credentials", "token", "secret",
         )
-        generated_parts = ("/node_modules/", "/build/", "/Build/", "/.xmake/",
-                           "/obj/", "/out/", "/dist/")
         for path in files:
             normalized = path.replace("\\", "/")
             lower = normalized.lower()
@@ -628,7 +1111,7 @@ required evidence or tooling is unavailable.
                 reasons.append(f"cross-lane or forbidden path changed: {normalized}")
             if any(name in lower for name in protected_names):
                 reasons.append(f"credential-like path changed: {normalized}")
-            if any(part.lower() in lower for part in generated_parts):
+            if generated_path(normalized):
                 reasons.append(f"generated/build artifact path changed: {normalized}")
             absolute = Path(self.state["lanes"][lane_name]["worktree"]) / normalized
             try:
@@ -638,34 +1121,134 @@ required evidence or tooling is unavailable.
                 pass
         return sorted(set(reasons))
 
+    def focused_validation_commands(self, lane_name: str, phase_id: str) -> list[list[str]]:
+        configured = self.config.get("focused_validation_commands", {})
+        lane_config = configured.get(lane_name, {}) if isinstance(configured, dict) else {}
+        commands = lane_config.get(phase_id, []) if isinstance(lane_config, dict) else []
+        if not isinstance(commands, list):
+            return []
+        result: list[list[str]] = []
+        for command in commands:
+            if isinstance(command, list) and command and all(isinstance(item, str) for item in command):
+                result.append(command)
+        return result
+
+    def run_focused_validation(self, lane_name: str, phase_id: str) -> dict[str, Any]:
+        commands = self.focused_validation_commands(lane_name, phase_id)
+        if not commands:
+            return {
+                "status": "NOT_CONFIGURED",
+                "commands": [],
+                "message": "focused tests: not independently verified by supervisor",
+            }
+        results: list[dict[str, Any]] = []
+        passed = True
+        for command in commands:
+            code, out, err = self.command(
+                command,
+                cwd=self.state["lanes"][lane_name]["worktree"],
+                timeout=int(self.config.get("focused_validation_timeout_seconds", 900)),
+            )
+            passed = passed and code == 0
+            results.append({
+                "command": command,
+                "exit_code": code,
+                "output_tail": redact((out + "\n" + err)[-4000:]),
+            })
+        return {
+            "status": "PASS" if passed else "FAIL",
+            "commands": results,
+            "message": "focused tests observed by supervisor",
+        }
+
     def local_validate(self, lane_name: str) -> bool:
         lane = self.state["lanes"][lane_name]
         worktree = lane["worktree"]
-        code, branch, _ = self.command(
-            ["git", "-C", worktree, "symbolic-ref", "--short", "HEAD"], timeout=30
-        )
-        if code != 0 or branch.strip() != lane["branch"]:
+        branch = self.git_branch(worktree)
+        if branch != lane["branch"]:
             self.review(lane_name, [f"worktree branch changed; expected {lane['branch']}"])
             return False
-        files, diff, stat = self.changed_diff(lane_name)
+        status_ok, entries, status_error = self.git_status_details(worktree)
+        files, diff, stat, metrics = self.changed_diff(lane_name)
         reasons = self.forbidden_change_reasons(lane_name, files)
-        check_code, _, _ = self.command(
+        structural_checks = [
+            "expected lane branch",
+            "porcelain Git status understood",
+            "unmerged/conflict status absent",
+            "unstaged and staged diff checks",
+        ]
+        if not status_ok:
+            reasons.append(status_error or "git status failed")
+        if any(entry.get("kind") == "unmerged" for entry in entries):
+            reasons.append("Git merge/conflict state is not safe to review automatically")
+        unstaged_check, _, unstaged_err = self.command(
             ["git", "-C", worktree, "diff", "--check"], timeout=120
         )
-        if check_code != 0:
-            reasons.append("git diff --check failed")
+        staged_check, _, staged_err = self.command(
+            ["git", "-C", worktree, "diff", "--cached", "--check"], timeout=120
+        )
+        if unstaged_check != 0 or staged_check != 0:
+            reasons.append("staged or unstaged git diff --check failed")
+        if metrics["changed_files"] > int(self.config.get("max_changed_files", 40)):
+            reasons.append(
+                f"changed file count {metrics['changed_files']} exceeds configured limit "
+                f"{self.config.get('max_changed_files', 40)}"
+            )
+        if metrics["total_diff_bytes"] > int(self.config.get("max_total_diff_bytes", 524288)):
+            reasons.append(
+                f"total diff size {metrics['total_diff_bytes']} bytes exceeds configured limit "
+                f"{self.config.get('max_total_diff_bytes', 524288)}"
+            )
+        phase_id = str(lane.get("phase_id") or "")
+        phase_config = self.config.get("phase_completion", {}).get(phase_id, {})
+        allow_no_change = bool(
+            isinstance(phase_config, dict) and phase_config.get("completion_mode") == "evidence-only"
+        )
+        if not files and not allow_no_change:
+            reasons.append("worker reported phase complete but produced no reviewable changes")
+        structural_failed = bool(reasons)
+        focused = self.run_focused_validation(lane_name, phase_id) if not reasons else {
+            "status": "NOT_RUN",
+            "commands": [],
+            "message": "focused tests: not run because structural validation failed",
+        }
+        if focused.get("status") == "FAIL":
+            reasons.append("configured focused validation failed")
         lane["validation"] = {
             "at": utc_now(),
             "status": "PASS" if not reasons else "FAIL",
-            "tests": ["git diff --check"],
+            "structural": {
+                "status": "PASS" if not structural_failed else "FAIL",
+                "checks": structural_checks,
+                "unstaged_diff_check": unstaged_check == 0,
+                "staged_diff_check": staged_check == 0,
+                "unstaged_diff_error": redact(unstaged_err),
+                "staged_diff_error": redact(staged_err),
+            },
+            "focused_tests": focused,
+            "tests": [
+                item.get("command") for item in focused.get("commands", [])
+                if isinstance(item, dict) and item.get("command")
+            ],
             "changed_files": files,
             "diffstat": stat,
             "diff_text": diff,
+            "diff_metrics": metrics,
             "worker_output_tail": tail_text(Path(lane.get("worker_log") or ""), 8000),
         }
         if reasons:
             lane["last_error"] = "; ".join(reasons)
-            if int(lane.get("recovery_attempts", 0)) < 1 and self.state.get("global_mode") == "RUNNING":
+            hard_review = any(
+                "no reviewable changes" in reason
+                or "exceeds configured limit" in reason
+                or "merge/conflict" in reason
+                or "forbidden" in reason
+                or "generated/build" in reason
+                for reason in reasons
+            )
+            if hard_review:
+                self.review(lane_name, reasons)
+            elif int(lane.get("recovery_attempts", 0)) < 1 and self.state.get("global_mode") == "RUNNING":
                 lane["recovery_attempts"] = 1
                 lane["state"] = "RECOVERING"
                 self.event("local validation failed; one recovery allowed", lane_name)
@@ -680,18 +1263,23 @@ required evidence or tooling is unavailable.
     def commit_phase(self, lane_name: str) -> bool:
         lane = self.state["lanes"][lane_name]
         worktree = lane["worktree"]
+        if self.state.get("global_mode") != "RUNNING":
+            lane["state"] = "PAUSED"
+            self.event("commit prevented while global mode is PAUSED", lane_name)
+            return False
         files = lane.get("validation", {}).get("changed_files", [])
         if not files:
-            lane["last_commit"] = self.git_head(worktree)
-            lane["history"].append({
-                "phase": lane.get("phase_id"), "title": lane.get("phase_title"),
-                "commit": None, "changed_files": [], "diffstat": "no source changes",
-                "tests": lane.get("validation", {}).get("tests", []),
-                "at": utc_now(), "ci": {"status": "NO_CHANGES"},
-            })
-            lane["state"] = "NEXT_PHASE"
-            self.event("phase produced no changes; no commit required", lane_name)
-            return True
+            self.review(
+                lane_name,
+                ["worker reported phase complete but produced no reviewable changes"],
+            )
+            return False
+        current_files = self.git_status_files(worktree)
+        if sorted(current_files) != sorted(files):
+            self.review(lane_name, [
+                "worktree changed after validation; validated explicit file set no longer matches",
+            ])
+            return False
         code, out, err = self.command(
             ["git", "-C", worktree, "add", "--"] + files,
             cwd=worktree, timeout=120,
@@ -731,12 +1319,24 @@ required evidence or tooling is unavailable.
         lane["push_attempts"] = 0
         lane["ci_poll_failures"] = 0
         lane["ci"] = {"status": "NOT_STARTED", "sha": commit, "run_id": None, "url": None}
+        if self.git_dirty(worktree):
+            self.review(lane_name, [
+                "worktree remained dirty after outer-supervisor commit; automatic push is forbidden",
+            ])
+            return False
         lane["state"] = "PUSHING"
         self.event(f"outer supervisor committed {commit}", lane_name)
         return True
 
     def push_phase(self, lane_name: str) -> None:
         lane = self.state["lanes"][lane_name]
+        if self.state.get("global_mode") != "RUNNING":
+            lane["state"] = "PAUSED"
+            self.event("push prevented while global mode is PAUSED", lane_name)
+            return
+        if self.git_dirty(lane["worktree"]):
+            self.review(lane_name, ["push blocked because worktree is not clean"])
+            return
         lane["push_attempts"] = int(lane.get("push_attempts", 0)) + 1
         code, out, err = self.command([
             "git", "-C", lane["worktree"],
@@ -759,7 +1359,7 @@ required evidence or tooling is unavailable.
     def ci_run_list(self, sha: str) -> tuple[int, list[dict[str, Any]], str]:
         code, out, err = self.command([
             "gh", "run", "list", "--repo", self.config["repo"],
-            "--commit", sha, "--limit", "20",
+            "--commit", sha, "--limit", "100",
             "--json", "databaseId,status,conclusion,headSha,workflowName,url,createdAt,updatedAt",
         ], timeout=120)
         if code != 0:
@@ -789,52 +1389,76 @@ required evidence or tooling is unavailable.
             if lane["ci_poll_failures"] >= int(self.config.get("max_ci_poll_failures", 3)):
                 self.review(lane_name, ["GitHub API/CI polling failed repeatedly", error])
             return
-        matching = [run for run in runs if run.get("headSha") == sha]
-        matching.sort(key=lambda item: item.get("createdAt", ""), reverse=True)
-        if not matching:
-            started = parse_time(lane.get("ci_started_at"))
-            if started and time.time() - started > int(self.config.get("ci_queue_timeout_seconds", 600)):
-                self.review(lane_name, ["no GitHub Actions run appeared within bounded wait"])
-            return
-        run = matching[0]
+        required = [
+            str(item) for item in self.config.get("required_workflows", [])
+            if str(item).strip()
+        ]
+        aggregate = aggregate_required_workflows(runs, required, sha)
         lane["ci"] = {
-            "status": run.get("status"), "conclusion": run.get("conclusion"),
-            "sha": sha, "run_id": run.get("databaseId"),
-            "url": run.get("url"), "workflow": run.get("workflowName"),
+            "status": aggregate["status"],
+            "conclusion": "success" if aggregate["status"] == "PASS" else None,
+            "sha": sha,
+            "run_id": None,
+            "url": None,
+            "required_workflows": aggregate["required"],
+            "missing_workflows": aggregate["missing"],
+            "running_workflows": aggregate["running"],
+            "failure_workflows": aggregate["failures"],
+            "observed_at": utc_now(),
         }
-        if run.get("status") != "completed":
+        if aggregate["status"] == "WAIT":
             started = parse_time(lane.get("ci_started_at"))
-            if started and time.time() - started > int(self.config.get("ci_timeout_seconds", 1800)):
-                self.review(lane_name, ["GitHub Actions run timed out"])
+            elapsed = time.time() - started if started else 0
+            if aggregate["missing"] and elapsed > int(self.config.get("ci_queue_timeout_seconds", 600)):
+                self.review(lane_name, [
+                    "one or more required GitHub Actions workflows did not appear within bounded wait",
+                    "missing workflows: " + ", ".join(aggregate["missing"]),
+                ])
+            elif elapsed > int(self.config.get("ci_timeout_seconds", 1800)):
+                self.review(lane_name, [
+                    "required GitHub Actions workflows did not all complete within bounded wait",
+                ])
             return
-        conclusion = str(run.get("conclusion") or "").lower()
-        if conclusion == "success":
+        if aggregate["status"] == "PASS":
             if lane.get("history"):
                 lane["history"][-1]["ci"] = lane["ci"]
-            self.event("GitHub Actions passed", lane_name)
+            self.event(
+                "all required GitHub Actions workflows passed: "
+                + ", ".join(required), lane_name,
+            )
             self.complete_phase(lane_name)
             return
-        excerpt = self.fetch_ci_failure(int(run["databaseId"]))
+        excerpts: list[str] = []
+        for failure in aggregate["failures"]:
+            run_id = failure.get("run_id")
+            if run_id is not None:
+                excerpts.append(
+                    f"{failure.get('workflow')}:\n{self.fetch_ci_failure(int(run_id))}"
+                )
+        excerpt = "\n\n".join(excerpts)[-12000:]
         lane["ci"]["failure_excerpt"] = excerpt
         if lane.get("history"):
             lane["history"][-1]["ci"] = lane["ci"]
         lane["phase_failure_count"] = int(lane.get("phase_failure_count", 0)) + 1
-        lane["last_error"] = f"CI conclusion={conclusion or 'unknown'}"
+        failed_names = ", ".join(
+            str(item.get("workflow")) for item in aggregate["failures"]
+        )
+        lane["last_error"] = f"required CI workflow failure: {failed_names}"
         if lane["phase_failure_count"] >= 2:
-            self.review(lane_name, ["same phase failed CI twice", excerpt])
+            self.review(lane_name, ["same phase failed required CI twice", excerpt])
         else:
             lane["state"] = "RECOVERING"
             lane["recovery_attempts"] = 1
-            self.event("CI failed; one fresh recovery worker allowed", lane_name)
+            self.event("required CI failed; one fresh recovery worker allowed", lane_name)
 
-    def review_reasons(self, lane_name: str) -> list[str]:
+    def review_reasons(self, lane_name: str, include_checkpoint: bool = False) -> list[str]:
         lane = self.state["lanes"][lane_name]
         validation = lane.get("validation", {})
         files = validation.get("changed_files", [])
         diff = validation.get("diff_text", "")
         lowered = (diff + " " + " ".join(files)).lower()
         reasons: list[str] = []
-        if int(lane.get("success_since_review", 0)) >= 3:
+        if include_checkpoint and checkpoint_due(int(lane.get("success_since_review", 0))):
             reasons.append("three successful phases completed since the last Sol review")
         if any(re.search(r"(schema|migration|database|persistent)", path, re.I) for path in files):
             reasons.append("persistent database/schema or migration surface changed")
@@ -851,12 +1475,32 @@ required evidence or tooling is unavailable.
             reasons.append("possible trust-boundary relaxation requires review")
         return sorted(set(reasons))
 
+    def planned_next_phase(self, lane_name: str, index: int | None = None) -> dict[str, str] | None:
+        phases = self.plan_for(lane_name).get("phases", [])
+        if index is None:
+            index = int(self.state["lanes"][lane_name].get("phase_index", 0))
+        return phases[index] if 0 <= index < len(phases) else None
+
     def complete_phase(self, lane_name: str) -> None:
         lane = self.state["lanes"][lane_name]
-        reasons = self.review_reasons(lane_name)
+        completed_phase = {
+            "id": lane.get("phase_id"),
+            "title": lane.get("phase_title"),
+        }
         lane["success_since_review"] = int(lane.get("success_since_review", 0)) + 1
-        if reasons:
-            self.review(lane_name, reasons)
+        reasons = self.review_reasons(lane_name)
+        if checkpoint_due(int(lane.get("success_since_review", 0))):
+            reasons.append("three successful phases completed since the last Sol review")
+        next_phase = self.planned_next_phase(lane_name, int(lane.get("phase_index", 0)) + 1)
+        if reasons and next_phase is not None:
+            self.review(
+                lane_name,
+                reasons,
+                review_type="POST_PHASE_CHECKPOINT",
+                reviewed_phase=completed_phase,
+                commit_sha=lane.get("last_commit"),
+                next_phase=next_phase,
+            )
             return
         lane["phase_index"] = int(lane.get("phase_index", 0)) + 1
         lane.update({
@@ -867,7 +1511,14 @@ required evidence or tooling is unavailable.
         })
         self._refresh_plan(lane_name, lane)
         if lane.get("phase_id") is None:
-            self.review(lane_name, ["authoritative lane queue completed; final review required"])
+            self.review(
+                lane_name,
+                ["authoritative lane queue completed; final milestone/queue review required"],
+                review_type="FINAL_MILESTONE_OR_QUEUE_REVIEW",
+                reviewed_phase=completed_phase,
+                commit_sha=lane.get("last_commit"),
+                next_phase=None,
+            )
         elif self.state.get("global_mode") == "RUNNING":
             lane["state"] = "READY"
             self.event(f"phase complete; next phase {lane['phase_id']}", lane_name)
@@ -875,16 +1526,132 @@ required evidence or tooling is unavailable.
             lane["state"] = "PAUSED"
             self.event("phase complete; remaining work paused", lane_name)
 
-    def review(self, lane_name: str, reasons: list[str]) -> None:
+    def review(
+        self,
+        lane_name: str,
+        reasons: list[str],
+        review_type: str | None = None,
+        reviewed_phase: dict[str, Any] | None = None,
+        commit_sha: str | None = None,
+        next_phase: dict[str, Any] | None = None,
+    ) -> None:
         lane = self.state["lanes"][lane_name]
         clean = sorted(set(redact(reason) for reason in reasons if reason))
         lane["review_reasons"] = clean or ["human review requested"]
+        if review_type is None:
+            if any("final milestone" in reason or "queue completed" in reason for reason in lane["review_reasons"]):
+                review_type = "FINAL_MILESTONE_OR_QUEUE_REVIEW"
+            else:
+                review_type = "CURRENT_PHASE_REVIEW"
+        current_phase = reviewed_phase or {
+            "id": lane.get("phase_id"),
+            "title": lane.get("phase_title"),
+        }
+        if next_phase is None and review_type == "CURRENT_PHASE_REVIEW":
+            next_phase = {
+                "id": lane.get("phase_id"),
+                "title": lane.get("phase_title"),
+                "action": "retry_current_phase",
+            }
+        lane["review"] = {
+            "type": review_type,
+            "reviewed_phase": current_phase,
+            "commit_sha": commit_sha if commit_sha is not None else lane.get("last_commit"),
+            "next_phase": next_phase,
+            "created_at": utc_now(),
+            "decision": None,
+        }
         lane["state"] = "NEEDS_SOL_REVIEW"
         lane["worker_pid"] = None
         packet = self.make_review_packet(lane_name, lane["review_reasons"])
         lane["review_packet"] = str(packet)
         self.post_issue_update(lane_name, lane["review_reasons"])
         self.event("lane stopped for Sol review", lane_name)
+
+    def approve_review(self, lane_name: str) -> int:
+        lane = self.state["lanes"].get(lane_name)
+        if lane is None:
+            print(f"unknown lane: {lane_name}", file=sys.stderr)
+            return 2
+        if lane.get("state") != "NEEDS_SOL_REVIEW":
+            print(f"{lane_name} is not awaiting Sol review", file=sys.stderr)
+            return 1
+        review = lane.get("review", {})
+        review_type = review.get("type")
+        if review_type == "CURRENT_PHASE_REVIEW":
+            print(
+                f"refusing approve for {lane_name}: current phase is not complete; use retry {lane_name}",
+                file=sys.stderr,
+            )
+            return 1
+        if review_type == "FINAL_MILESTONE_OR_QUEUE_REVIEW":
+            review["decision"] = "APPROVED_NO_AUTOMATIC_NEXT_WORK"
+            review["decided_at"] = utc_now()
+            lane["state"] = "BLOCKED"
+            self.event("final/queue review approved; no automatic next work exists", lane_name)
+            return 0
+        if review_type != "POST_PHASE_CHECKPOINT":
+            print(f"refusing approve for {lane_name}: unknown review type {review_type}", file=sys.stderr)
+            return 1
+        reviewed_phase = review.get("reviewed_phase") or {}
+        if reviewed_phase.get("id") != lane.get("phase_id"):
+            print(f"refusing approve for {lane_name}: review phase no longer matches", file=sys.stderr)
+            return 1
+        lane["phase_index"] = int(lane.get("phase_index", 0)) + 1
+        lane["success_since_review"] = 0
+        lane["phase_failure_count"] = 0
+        lane["recovery_attempts"] = 0
+        lane["review_reasons"] = []
+        review["decision"] = "APPROVED_ADVANCE_ONCE"
+        review["decided_at"] = utc_now()
+        self._refresh_plan(lane_name, lane)
+        if lane.get("phase_id") is None:
+            lane["state"] = "BLOCKED"
+        elif self.state.get("global_mode") == "RUNNING":
+            lane["state"] = "READY"
+        else:
+            lane["state"] = "PAUSED"
+        self.event(
+            f"POST_PHASE_CHECKPOINT approved; advanced once to {lane.get('phase_id') or 'queue complete'}",
+            lane_name,
+        )
+        return 0
+
+    def retry_review(self, lane_name: str) -> int:
+        lane = self.state["lanes"].get(lane_name)
+        if lane is None:
+            print(f"unknown lane: {lane_name}", file=sys.stderr)
+            return 2
+        if lane.get("state") != "NEEDS_SOL_REVIEW":
+            print(f"{lane_name} is not awaiting Sol review", file=sys.stderr)
+            return 1
+        review = lane.get("review", {})
+        if review.get("type") != "CURRENT_PHASE_REVIEW":
+            print(f"retry is only valid for CURRENT_PHASE_REVIEW ({lane_name})", file=sys.stderr)
+            return 1
+        review["decision"] = "RETRY_CURRENT_PHASE"
+        review["decided_at"] = utc_now()
+        lane["review_reasons"] = []
+        lane["review_packet"] = None
+        lane["recovery_attempts"] = 0
+        lane["last_error"] = "operator requested explicit retry of current phase"
+        if self.state.get("global_mode") == "RUNNING":
+            lane["state"] = "RECOVERING" if self.git_dirty(lane["worktree"]) else "READY"
+        else:
+            lane["state"] = "PAUSED"
+        self.event("operator authorized retry of current phase", lane_name)
+        return 0
+
+    def block_lane(self, lane_name: str) -> int:
+        lane = self.state["lanes"].get(lane_name)
+        if lane is None:
+            print(f"unknown lane: {lane_name}", file=sys.stderr)
+            return 2
+        lane["state"] = "BLOCKED"
+        lane.setdefault("review", {})["decision"] = "BLOCKED_BY_OPERATOR"
+        lane["review"]["decided_at"] = utc_now()
+        self.event("lane blocked by operator", lane_name)
+        return 0
 
     def make_review_packet(self, lane_name: str, reasons: list[str]) -> Path:
         lane = self.state["lanes"][lane_name]
@@ -900,20 +1667,35 @@ required evidence or tooling is unavailable.
         changed = "\n".join(
             f"- {item}" for item in lane.get("validation", {}).get("changed_files", [])
         ) or "- none recorded"
-        tests = "\n".join(
-            f"- {item}" for item in lane.get("validation", {}).get("tests", [])
-        ) or "- none recorded"
+        validation = lane.get("validation", {})
+        structural = validation.get("structural", {})
+        focused = validation.get("focused_tests", {})
+        structural_text = "\n".join([
+            f"- structural status: {structural.get('status', 'not recorded')}",
+            f"- unstaged diff check observed: {structural.get('unstaged_diff_check', 'not recorded')}",
+            f"- staged diff check observed: {structural.get('staged_diff_check', 'not recorded')}",
+        ])
+        if focused.get("commands"):
+            focused_text = "\n".join(
+                f"- {item.get('command')} -> exit {item.get('exit_code')}"
+                for item in focused.get("commands", [])
+            )
+        else:
+            focused_text = f"- {focused.get('message', 'focused tests: not independently verified by supervisor')}"
         ci = lane.get("ci", {})
+        required_ci = ci.get("required_workflows", [])
+        ci_text = "\n".join(
+            f"- {item.get('workflow')}: run={item.get('run_id') or 'none'} "
+            f"status={item.get('status') or 'unknown'} "
+            f"conclusion={item.get('conclusion') or 'unknown'} "
+            f"sha={item.get('sha') or 'unknown'} url={item.get('url') or 'none'}"
+            for item in required_ci
+        ) or "- no required workflow result recorded"
         boundaries = "\n".join(
             f"- {item}" for item in self.plan_for(lane_name).get("boundaries", [])
         ) or "- see authoritative PLAN.md"
-        next_phase = self.phase(lane_name)
-        if lane.get("history") and lane["history"][-1].get("phase") == phase:
-            last_ci = lane["history"][-1].get("ci", {})
-            if last_ci.get("status") == "NO_CHANGES" or last_ci.get("conclusion") == "success":
-                phases = self.plan_for(lane_name).get("phases", [])
-                next_index = int(lane.get("phase_index", 0)) + 1
-                next_phase = phases[next_index] if next_index < len(phases) else None
+        review_info = lane.get("review", {})
+        next_phase = review_info.get("next_phase")
         worker_tail = lane.get("validation", {}).get(
             "worker_output_tail", tail_text(Path(lane.get("worker_log") or ""), 8000)
         )
@@ -927,6 +1709,13 @@ Issue: #{lane['issue']}
 Supervisor mode: {self.state.get('global_mode')}
 Current state: NEEDS_SOL_REVIEW
 
+## Explicit review metadata
+
+- review type: {review_info.get('type') or 'unknown'}
+- reviewed phase: {json.dumps(review_info.get('reviewed_phase'), sort_keys=True)}
+- commit SHA: {review_info.get('commit_sha') or 'none'}
+- next phase/action: {json.dumps(next_phase, sort_keys=True) if next_phase else 'none'}
+
 ## Phases completed
 
 {completed}
@@ -939,9 +1728,13 @@ Diff summary:
 
 {lane.get('validation', {}).get('diffstat', 'not available')}
 
+## Structural validation observed
+
+{structural_text}
+
 ## Focused tests actually run
 
-{tests}
+{focused_text}
 
 Worker report tail (bounded):
 
@@ -955,6 +1748,10 @@ Worker report tail (bounded):
 - conclusion: {ci.get('conclusion', 'unknown')}
 - commit: {ci.get('sha', 'unknown')}
 - run: {ci.get('url') or 'not available'}
+
+Required workflow aggregation (exact commit SHA):
+
+{ci_text}
 
 ## Security and trust decisions
 
@@ -972,7 +1769,7 @@ subject to the lane plan and evidence-backed review.
 
 ## Next planned phase
 
-{next_phase['id'] + ' - ' + next_phase['title'] if next_phase else 'none; queue is complete'}
+{next_phase.get('id') + ' - ' + next_phase.get('title', '') if isinstance(next_phase, dict) and next_phase.get('id') else 'none; queue is complete or retry current phase'}
 
 Autonomous work is stopped for this lane. Resume only after human review and an explicit
 operator decision.
@@ -1008,10 +1805,17 @@ operator decision.
             self.log(lane["last_error"], lane_name)
 
     def advance_lane(self, lane_name: str) -> None:
+        # Re-read operator control immediately before any state transition that
+        # could reach validation, commit, push, CI completion, or next phase.
+        self.refresh_control()
         lane = self.state["lanes"][lane_name]
         if lane_name in self.processes:
             return
         state = lane.get("state")
+        if self.state.get("global_mode") != "RUNNING":
+            if state in {"LOCAL_VALIDATION", "COMMITTING", "PUSHING", "NEXT_PHASE", "RECOVERING", "READY"}:
+                lane["state"] = "PAUSED"
+            return
         if state == "LOCAL_VALIDATION":
             self.local_validate(lane_name)
         elif state == "COMMITTING":
@@ -1030,6 +1834,23 @@ operator decision.
         if self.state.get("global_mode") != "RUNNING":
             return
         limit = int(self.config.get("max_concurrent_workers", 2))
+        availability = self.state.get("codex_availability", {})
+        if availability.get("status") == "RATE_LIMITED":
+            retry_at = parse_time(availability.get("next_retry_at"))
+            if retry_at and time.time() < retry_at:
+                return
+            if len(self.processes) >= limit:
+                return
+            for lane_name in LANE_ORDER:
+                state = self.state["lanes"][lane_name].get("state")
+                if state in RUNNABLE_STATES:
+                    # A single retry probe is allowed after the persisted backoff.
+                    self.start_worker(
+                        lane_name,
+                        recovery=state == "RECOVERING",
+                    )
+                    return
+            return
         for lane_name in LANE_ORDER:
             if len(self.processes) >= limit:
                 break
@@ -1070,6 +1891,12 @@ operator decision.
 
     def status(self) -> int:
         print(f"GLOBAL: {self.state.get('global_mode')} ({self.state.get('mode_reason', '')})")
+        availability = self.state.get("codex_availability", {})
+        print(
+            f"CODEX: {availability.get('status', 'UNKNOWN')} "
+            f"next retry: {availability.get('next_retry_at') or 'none'} "
+            f"backoff: {availability.get('backoff_seconds', 0)}s"
+        )
         code, out, err = self.command(["systemctl", "is-active", UNIT_NAME], timeout=20)
         print(f"SERVICE: {out.strip() or err.strip() or 'unknown'}")
         for lane_name in LANE_ORDER:
@@ -1087,10 +1914,37 @@ operator decision.
                 f"CI: {ci.get('status', 'unknown')} "
                 f"{ci.get('conclusion') or ''} {ci.get('url') or ''}".rstrip()
             )
+            for workflow in ci.get("required_workflows", []):
+                print(
+                    f"  CI workflow {workflow.get('workflow')}: "
+                    f"run={workflow.get('run_id') or 'none'} "
+                    f"status={workflow.get('status') or 'unknown'} "
+                    f"conclusion={workflow.get('conclusion') or 'unknown'}"
+                )
             print(f"last error: {lane.get('last_error') or 'none'}")
+            review = lane.get("review", {})
+            if review.get("type"):
+                print(
+                    f"review: {review.get('type')} phase={review.get('reviewed_phase')} "
+                    f"next={review.get('next_phase') or 'none'}"
+                )
             if lane.get("review_packet"):
                 print(f"review packet: {lane['review_packet']}")
             print()
+        return 0
+
+    def review_status(self) -> int:
+        print(f"GLOBAL: {self.state.get('global_mode')}")
+        for lane_name in LANE_ORDER:
+            lane = self.state["lanes"][lane_name]
+            review = lane.get("review", {})
+            print(f"{lane_name}: state={lane.get('state')} review_type={review.get('type') or 'none'}")
+            if review.get("type"):
+                print(f"  reviewed_phase: {json.dumps(review.get('reviewed_phase'), sort_keys=True)}")
+                print(f"  commit_sha: {review.get('commit_sha') or 'none'}")
+                print(f"  next_phase: {json.dumps(review.get('next_phase'), sort_keys=True) if review.get('next_phase') else 'none'}")
+                print(f"  reasons: {'; '.join(lane.get('review_reasons', [])) or 'none'}")
+                print(f"  decision: {review.get('decision') or 'pending'}")
         return 0
 
     def healthcheck(self) -> int:
@@ -1105,6 +1959,16 @@ operator decision.
         print("PASS resource guard")
         print("PASS git/worktree health")
         print(f"PASS state persistence: {STATE_PATH}")
+        product_root = Path(self.config.get("product_root", str(SERVICE_ROOT / "product")))
+        missing_product = [
+            name for name in (
+                "PRODUCT_VISION.md", "WORLD_RULES.md", "MILESTONE_01_CORE_WORLD.md"
+            ) if not (product_root / name).is_file()
+        ]
+        if missing_product:
+            print("FAIL product context: " + ", ".join(missing_product))
+            return 1
+        print("PASS product context")
         return 0
 
     def self_test(self) -> int:
@@ -1132,6 +1996,38 @@ operator decision.
         check("primary repository and four worktrees", git_ok)
         okay, _ = self.resource_guard()
         check("disk and memory guard", okay)
+        worker_environment = self.worker_env()
+        check(
+            "worker GitHub credential isolation",
+            worker_environment.get("GH_CONFIG_DIR") == self.config.get("worker_gh_config_dir")
+            and not any(key in worker_environment for key in (
+                "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
+                "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK",
+            )),
+        )
+        required_workflows = self.config.get("required_workflows", [])
+        check(
+            "required CI workflow configuration",
+            required_workflows == ["Build linux", "Build windows"],
+        )
+        worker_config_dir = Path(str(self.config.get("worker_gh_config_dir", "")))
+        check(
+            "empty worker GitHub config directory",
+            worker_config_dir.is_dir()
+            and not any(worker_config_dir.iterdir()),
+        )
+        check(
+            "Codex usage-limit classifier safety",
+            classify_codex_usage_limit(1, "Codex: usage limit reached; resets in 15 minutes")
+            and not classify_codex_usage_limit(1, "GitHub API rate limit exceeded"),
+        )
+        product_root = Path(self.config.get("product_root", str(SERVICE_ROOT / "product")))
+        check(
+            "product context files",
+            all((product_root / name).is_file() for name in (
+                "PRODUCT_VISION.md", "WORLD_RULES.md", "MILESTONE_01_CORE_WORLD.md"
+            )),
+        )
         for lane_name in LANE_ORDER:
             lane = self.state["lanes"][lane_name]
             check(f"{lane_name} worktree clean", not self.git_dirty(lane["worktree"]))
@@ -1166,11 +2062,12 @@ def write_control(mode: str, reason: str) -> int:
     atomic_write_json(CONTROL_PATH, {
         "desired_mode": mode, "reason": reason, "updated_at": utc_now()
     }, 0o640)
-    try:
-        account = pwd.getpwnam("skyrimdev")
-        os.chown(CONTROL_PATH, account.pw_uid, account.pw_gid)
-    except (KeyError, OSError):
-        pass
+    if pwd is not None:
+        try:
+            account = pwd.getpwnam("skyrimdev")
+            os.chown(CONTROL_PATH, account.pw_uid, account.pw_gid)
+        except (KeyError, OSError):
+            pass
     return 0
 
 
@@ -1179,8 +2076,12 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run")
     sub.add_parser("status")
+    sub.add_parser("review-status")
     sub.add_parser("healthcheck")
     sub.add_parser("self-test")
+    for command_name in ("approve", "retry", "block"):
+        command_parser = sub.add_parser(command_name)
+        command_parser.add_argument("lane", choices=LANE_ORDER)
     control = sub.add_parser("control")
     control.add_argument("mode", choices=("start", "resume", "pause", "stop"))
     args = parser.parse_args()
@@ -1197,18 +2098,33 @@ def main() -> int:
     supervisor = Supervisor()
     if args.command == "status":
         return supervisor.status()
+    if args.command == "review-status":
+        return supervisor.review_status()
     if args.command == "healthcheck":
         return supervisor.healthcheck()
     if args.command == "self-test":
         return supervisor.self_test()
+    if args.command == "approve":
+        result = supervisor.approve_review(args.lane)
+        supervisor.save_state()
+        return result
+    if args.command == "retry":
+        result = supervisor.retry_review(args.lane)
+        supervisor.save_state()
+        return result
+    if args.command == "block":
+        result = supervisor.block_lane(args.lane)
+        supervisor.save_state()
+        return result
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     with LOCK_PATH.open("w", encoding="utf-8") as lock_handle:
-        try:
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            print("another supervisor instance is already running", file=sys.stderr)
-            return 2
+        if fcntl is not None:
+            try:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print("another supervisor instance is already running", file=sys.stderr)
+                return 2
 
         def stop_handler(signum: int, frame: Any) -> None:
             supervisor.stop_requested = True

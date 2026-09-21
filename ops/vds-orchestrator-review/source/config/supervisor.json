@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "repo": "fallenhak/skyrim-online-str",
   "repo_url": "https://github.com/fallenhak/skyrim-online-str.git",
   "repo_root": "/srv/projects/skyrim-online-str/repo",
@@ -19,6 +19,18 @@
   "max_push_attempts": 3,
   "max_ci_poll_failures": 3,
   "max_log_bytes": 5242880,
+  "max_worker_logs_per_lane": 20,
+  "max_changed_files": 40,
+  "max_total_diff_bytes": 524288,
+  "required_workflows": [
+    "Build linux",
+    "Build windows"
+  ],
+  "focused_validation_commands": {},
+  "product_root": "/srv/services/skyrim-dev/product",
+  "worker_gh_config_dir": "/var/lib/skyrim-dev/worker-gh-config",
+  "codex_retry_base_seconds": 900,
+  "codex_retry_max_seconds": 3600,
   "post_issue_updates": true,
   "lanes": {
     "combat": {

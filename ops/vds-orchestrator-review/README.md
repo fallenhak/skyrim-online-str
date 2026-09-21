@@ -1,75 +1,135 @@
-# VDS orchestrator review snapshot
+# Skyrim Supervisor Hardening V2 review snapshot
 
-This directory is a secret-free snapshot of the files currently installed on the Ubuntu VDS for the Skyrim development-lane supervisor. It is for architect review only. It does not enable the supervisor, start a worker, alter a development branch, or merge anything.
+This is the secret-free architect-review snapshot of the V2 supervisor installed
+on the Ubuntu VDS. It was captured on 2026-09-21 after installation and
+verification. Autonomous development remains disabled: the orchestrator unit
+and healthcheck timer are both inactive and disabled, global mode is `PAUSED`,
+and no worker was launched during this pass.
 
-Captured: `2026-09-21T14:26:49+00:00`  Repository: `fallenhak/skyrim-online-str`  Review branch: `infra/vds-orchestrator-review`
+## Installed layout
 
-## Installed paths and ownership
-
-- Python supervisor: `/srv/services/skyrim-dev/orchestrator/supervisor.py`
-- JSON configuration: `/srv/services/skyrim-dev/config/supervisor.json`
+- Supervisor: `/srv/services/skyrim-dev/orchestrator/supervisor.py`
+- Future task adapter: `/srv/services/skyrim-dev/orchestrator/roadmap.py`
+- Unit tests: `/srv/services/skyrim-dev/orchestrator/test_supervisor.py`
+- Configuration: `/srv/services/skyrim-dev/config/supervisor.json`
 - Management command: `/usr/local/bin/skyrim-dev`
+- Product context: `/srv/services/skyrim-dev/product/`
 - Persistent state: `/var/lib/skyrim-dev/state/state.json`
-- Operator control file: `/var/lib/skyrim-dev/state/control.json`
-- Human-review packets: `/var/lib/skyrim-dev/review-packets/`
-- Runtime logs: `/var/log/skyrim-dev/`
-- systemd units: `/etc/systemd/system/skyrim-dev-orchestrator.service`, `/etc/systemd/system/skyrim-dev-healthcheck.service`, `/etc/systemd/system/skyrim-dev-healthcheck.timer`
-- Log rotation: `/etc/logrotate.d/skyrim-dev`
+- Review packets: `/var/lib/skyrim-dev/review-packets/`
+- Worker logs: `/var/log/skyrim-dev/`
+- Empty worker GitHub config: `/var/lib/skyrim-dev/worker-gh-config/`
 
-The orchestrator and healthcheck units run as `skyrimdev:skyrimdev`, with `NoNewPrivileges=yes`, `PrivateTmp=yes`, and a restricted PATH. The management command runs read-only status/health/self-test operations as `skyrimdev`; start/resume and stop require root because they control systemd. The service account has no sudo membership.
+The review branch contains the corresponding source under `source/`, a redacted
+state projection under `state/`, and verification evidence under `verification/`.
 
-The installed orchestrator directory contained exactly one local Python module: `supervisor.py`. Its standard-library imports are self-contained; there were no additional installed project Python modules or templates to copy. The review tree intentionally excludes `/home/skyrimdev/.codex/auth.json`, `/home/skyrimdev/.config/gh/hosts.yml`, all SSH directories/keys, credential-bearing environment files, cookies, command history, conversation logs, and runtime logs.
+## V2 safety behavior
 
-## How one phase is chosen
+### CI aggregation
 
-For each lane, the supervisor parses the authoritative `PLAN.md` queue into ordered phase records and selects the record at the persisted zero-based `phase_index`. The four lanes are scheduled in deterministic order: combat, authority, population, ui. The persisted architect checkpoint in this snapshot is:
+The configured required workflows are `Build linux` and `Build windows`. CI is
+queried for the exact pushed commit SHA, grouped by workflow name, and reduced
+to the newest relevant attempt per workflow. The lane waits for every required
+workflow to appear and complete. A phase becomes CI-green only when every
+required workflow concludes `success`; any required failure fails the phase.
+The per-workflow run ID, SHA, status, conclusion, URL, and bounded failure
+excerpt are persisted and included in review packets. Appearance and overall
+completion waits remain bounded.
 
-- combat: `C03`
-- authority: `A04`
-- population: `L03`
-- ui: `U02`
+### Review lifecycle
 
-All four lanes are currently `PAUSED`; no worker PID is active. The snapshot preserves the last commit recorded for each lane and does not claim any new development work was performed by this bootstrap.
+Review metadata is explicit and persistent:
 
-## How one worker is invoked
+- `POST_PHASE_CHECKPOINT`: the current phase completed and passed all required
+  CI. `skyrim-dev approve <lane>` advances exactly once to the recorded next
+  phase and resets `success_since_review`; it never reruns the completed phase.
+- `CURRENT_PHASE_REVIEW`: the current phase is not safely complete. `approve`
+  refuses; `skyrim-dev retry <lane>` is required to retry/continue that phase.
+- `FINAL_MILESTONE_OR_QUEUE_REVIEW`: no automatic next work exists. Approval
+  records a safe terminal decision and leaves the lane `BLOCKED`.
 
-When explicitly started, the outer supervisor allows at most two workers concurrently. A worker is invoked with the installed Codex CLI using the equivalent command shape:
+`skyrim-dev review-status`, `approve`, `retry`, and `block` are explicit
+operator interfaces. The third successful phase is counted before checkpoint
+evaluation, so exactly three successes trigger the checkpoint.
 
-```text
-codex exec --model gpt-5.6-luna --config model_reasoning_effort="max" --config approval_policy="never" --sandbox workspace-write --cd <lane-worktree> --ephemeral --color never <one-phase prompt>
-```
+### Git and worker safety
 
-The prompt requires exactly one phase, prohibits edits to plans, service files, credentials, Git metadata, or unrelated lanes, and prohibits `git add`, `commit`, `push`, reset, clean, merge, rebase, checkout, and switch. The supervisor removes API-key, Codex-token, GitHub-token, and SSH-agent variables from the child environment. Worker output is bounded and secret-redacted before it is logged.
+Git state is read with `git status --porcelain=v1 -z --untracked-files=all` and
+parses staged, unstaged, untracked, deleted, renamed, and unmerged entries.
+Both staged and unstaged tracked diffs are reviewed. Before every worker, the
+expected branch and status are verified; normal workers require a clean
+worktree, while only a bounded recovery worker may inspect a dirty worktree.
+The outer supervisor stages only the validated explicit file list, never
+`git add -A`, and verifies cleanliness after its commit. Root-level and nested
+generated paths (`build`, `node_modules`, `dist`, `out`, `.xmake`, and `obj`)
+are rejected. Changed-file and total-diff-byte bounds default to 40 files and
+512 KiB. A `COMPLETE` result with no reviewable source/test/documentation
+changes goes to `NEEDS_SOL_REVIEW`.
 
-## How the outer supervisor commits and pushes
+Worker logs are unique per invocation, for example
+`combat-C03-attempt-1-<timestamp>.log`. The active path is persisted and
+`WORKER_RESULT` is parsed only from that path. Retention is bounded to 20 logs
+per lane.
 
-After the worker exits with `WORKER_RESULT: COMPLETE`, the supervisor verifies the expected lane branch, collects the diff, rejects protected/cross-lane/credential-like/generated paths, runs `git diff --check`, and then performs the Git add and commit itself. It pushes only the configured lane branch with a normal non-force push. A no-change phase advances without creating an empty commit.
+### Pause and Codex availability
 
-## How CI is polled
+Operator pause and automatic resource/Git-health safety pause stop active
+workers, preserve dirty diffs, and prevent all new commit, push, or phase
+advancement mutations. The chosen behavior is terminate-and-freeze; workers do
+not finish into Git mutation after pause. Safety pause resumption requires the
+resource/Git condition to clear.
 
-After a push, the supervisor uses `gh run list --commit <exact-sha>` and accepts only a matching `headSha`. It waits up to 10 minutes for a run to appear and up to 30 minutes for completion. Failed output is bounded to the last 400 lines. Repeated polling failure (three attempts) or a CI timeout stops the lane for human review.
+Codex/ChatGPT allowance exhaustion is classified separately from engineering
+failure using conservative provider-context patterns. It does not consume
+phase recovery or CI failure budgets. Persistent global state records
+`AVAILABLE`/`RATE_LIMITED`, detection time, bounded backoff, retry time, and
+reason. The first retry is 15 minutes, then 30, then at most 60 minutes; only
+one pending worker is probed at a retry time. A successful probe restores normal
+scheduling automatically. `skyrim-dev status` exposes this state as `CODEX:`.
 
-## Recovery rules
+### Validation evidence
 
-A worker is stopped after 90 minutes total or 20 minutes without output progress. One bounded recovery worker may retry the same phase without discarding/resetting a dirty diff. A second worker failure, a second CI failure for the same phase, unsafe local validation, a changed lane branch, missing plan, or repeated API failure leads to `NEEDS_SOL_REVIEW`. Resource guards automatically pause before work when root filesystem free space is below 8 GiB or available memory is below either 1 GiB or 10%; a periodic Git/worktree health check also pauses on failure. A process lock prevents a second supervisor instance.
+Structural checks, configured focused tests, and GitHub CI are recorded as
+separate evidence. No focused command is invented: when none is configured the
+state and review packet say `focused tests: not independently verified by
+supervisor`. A command is reported passed only when the supervisor observed its
+exit result.
 
-## Sol checkpoint rules
+## Product awareness
 
-The supervisor stops for review after three successful phases since the last review, or when a change touches persistent schema/migration/database surfaces, `AccountId`/`CharacterId` authority, XP/experience/reward/loot vocabulary, protocol/encoding paths, a configured forbidden lane boundary, or a possible trust-boundary relaxation. It writes a bounded review packet and, when configured, comments on the mapped GitHub issue. It never resumes a review-stopped lane without an explicit operator decision.
+The installed product files define the persistent multiplayer RP/MMO vision,
+server-owned Character/AccountId/CharacterId authority, humanoid suppression,
+trusted creature population, lifecycle/incarnation rules, renewable encounters,
+and the first playable core-world milestone. Worker prompts receive a bounded
+vision/rules/milestone section plus lane-specific relevance, the current phase,
+hard boundaries, and a roadmap task record. The current C/A/L/U queues remain
+unchanged; `roadmap.py` is only an adapter for a future milestone/dependency
+scheduler.
 
-## Reboot behavior
+## Security boundary
 
-The unit is currently **inactive and disabled**, so this snapshot does not create 24/7 operation and no reboot will start it automatically. If an operator later enables and starts the unit, systemd uses `Restart=on-failure`; on supervisor startup, a persisted `CODING` lane is converted to `RECOVERING` only when global mode is `RUNNING`, otherwise it is safely changed to `PAUSED`, preserving the diff for review. The control/state files are atomically written under `/var/lib/skyrim-dev/state/`.
+Worker child processes receive no `GH_TOKEN`, `GITHUB_TOKEN`, enterprise token,
+or `SSH_AUTH_SOCK`. `GH_CONFIG_DIR` is redirected to the empty,
+service-owned `/var/lib/skyrim-dev/worker-gh-config`; the outer supervisor keeps
+the real GitHub CLI configuration for its trusted push/CI operations. The
+installed Codex CLI sandbox behavior was inspected on version `0.155.1`.
 
-## Concurrency
+Residual risk: workers still run as the same `skyrimdev` Unix account and can
+read any files that account can read, including Codex authentication needed for
+worker operation. A filesystem/user separation was not improvised because it
+would require a materially more complex privilege and authentication
+architecture; this remains for architect review.
 
-`max_concurrent_workers` is `2`. Scheduling walks the fixed lane order and starts only `READY` or bounded `RECOVERING` lanes. Each worker is confined to its own configured worktree; the trusted outer supervisor owns validation, commit, push, CI polling, and phase advancement.
+## Verification
 
-## Captured branch heads
+- 19 supervisor unit tests passed under `skyrimdev`.
+- `skyrim-dev self-test` passed, including Codex/GitHub authentication checks,
+  safe push dry-runs, four clean worktrees, product context, credential
+  isolation, and GitHub Actions polling.
+- `skyrim-dev healthcheck` passed resource, Git/worktree, state-persistence,
+  and product-context checks.
+- No development worker was started, no development branch was pushed, and no
+  development branch head changed.
 
-- authority: `caf7dcc31ca4b6d0912f31b151408ba24c13938c`
-- combat: `905cf71c55200509702fb299aaa953ae46dcb374`
-- population: `52c97ba4d5da993e6ef2fa4bdf398f13c22b456a`
-- ui: `a473531ad16a82cecc8a4cdecc460934ba7efcfa`
-
-The full redacted state projection is [state/persistent-lane-state.json](state/persistent-lane-state.json). The source-to-installed-path mapping and function map are in [verification/source-map.md](verification/source-map.md). This review snapshot was captured while autonomous development remained disabled.
+See [CHANGELOG.md](CHANGELOG.md), [verification/self-test-results.md](verification/self-test-results.md),
+[verification/security-scan.md](verification/security-scan.md), and
+[state/persistent-lane-state.json](state/persistent-lane-state.json).

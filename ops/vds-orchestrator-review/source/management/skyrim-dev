@@ -6,7 +6,7 @@ UNIT=skyrim-dev-orchestrator.service
 ENVV="HOME=/home/skyrimdev CODEX_HOME=/home/skyrimdev/.codex GH_CONFIG_DIR=/home/skyrimdev/.config/gh PATH=/usr/local/bin:/usr/bin:/bin"
 
 usage() {
-    printf '%s\n' 'usage: skyrim-dev {status|start|pause|resume|stop|logs|healthcheck|self-test}'
+    printf '%s\n' 'usage: skyrim-dev {status|start|pause|resume|stop|logs|healthcheck|self-test|review-status|approve|retry|block} [lane]'
 }
 
 run_service() {
@@ -55,9 +55,18 @@ case "$command_name" in
     self-test)
         run_service self-test
         ;;
+    review-status)
+        run_service review-status
+        ;;
+    approve|retry|block)
+        if [ "$#" -ne 2 ]; then
+            usage >&2
+            exit 2
+        fi
+        run_service "$command_name" "$2"
+        ;;
     *)
         usage >&2
         exit 2
         ;;
 esac
-
