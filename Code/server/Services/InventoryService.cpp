@@ -3,6 +3,7 @@
 #include <Components.h>
 #include <World.h>
 #include <GameServer.h>
+#include <Services/InventoryInteractionPolicy.h>
 
 #include <Messages/NotifyObjectInventoryChanges.h>
 #include <Messages/RequestInventoryChanges.h>
@@ -29,6 +30,12 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
 {
     auto& message = acMessage.Packet;
 
+    if (!InventoryInteractionPolicy::HasValidItemPayload(message.Item))
+    {
+        spdlog::debug("Rejected malformed inventory change from player {:X} for entity {:X}", acMessage.pPlayer->GetId(), message.ServerId);
+        return;
+    }
+
     auto view = m_world.view<InventoryComponent>();
 
     const auto it = view.find(static_cast<entt::entity>(message.ServerId));
@@ -36,52 +43,48 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     if (it == view.end())
         return;
 
-    bool isRemoteNpcInteraction = false;
-
     const auto* pOwnerComponent = m_world.try_get<OwnerComponent>(*it);
-    if (pOwnerComponent)
-    {
-        const auto* pOwner = pOwnerComponent->GetOwner();
-        if (pOwnerComponent->OwnershipEpoch != message.OwnershipEpoch)
-        {
-            const uint32_t ownerId = pOwner ? pOwner->GetId() : 0;
-            spdlog::debug(
-                "Rejected inventory change from player {:X} for actor {:X} at stale epoch {}; current owner is {:X} at epoch {}",
-                acMessage.pPlayer->GetId(), message.ServerId, message.OwnershipEpoch, ownerId, pOwnerComponent->OwnershipEpoch);
-            return;
-        }
+    const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(*it);
+    const auto* pCellComponent = m_world.try_get<CellIdComponent>(*it);
+    const auto* pPersistentCharacterComponent = m_world.try_get<PersistentCharacterComponent>(*it);
+    const bool isObject = m_world.all_of<ObjectComponent>(*it);
+    const bool hasOwner = pOwnerComponent && pOwnerComponent->GetOwner();
+    const bool isCurrentOwner = pOwnerComponent && pOwnerComponent->IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch);
+    const bool ownershipEpochMatches = pOwnerComponent
+        ? message.OwnershipEpoch != 0 && pOwnerComponent->OwnershipEpoch == message.OwnershipEpoch
+        : message.OwnershipEpoch == 0;
+    const bool isInRange = hasOwner && pCharacterComponent && pCellComponent && acMessage.pPlayer->GetCellComponent().IsInRange(*pCellComponent, pCharacterComponent->IsDragon());
 
-        if (pOwner != acMessage.pPlayer)
-        {
-            const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(*it);
-            const auto* pCellComponent = m_world.try_get<CellIdComponent>(*it);
-            // A non-owner may still change an NPC's inventory through normal gameplay interactions
-            // such as pickpocketing or looting. The epoch and range checks keep the interaction tied
-            // to the currently visible incarnation of that NPC.
-            isRemoteNpcInteraction = pOwner && pCharacterComponent && pCellComponent && !pCharacterComponent->IsPlayer()
-                && acMessage.pPlayer->GetCellComponent().IsInRange(*pCellComponent, pCharacterComponent->IsDragon());
-
-            if (!isRemoteNpcInteraction)
-            {
-                const uint32_t ownerId = pOwner ? pOwner->GetId() : 0;
-                spdlog::debug(
-                    "Rejected inventory change from player {:X} for actor {:X} because it is owned by player {:X}", acMessage.pPlayer->GetId(), message.ServerId, ownerId);
-                return;
-            }
-        }
-    }
-    else if (message.OwnershipEpoch != 0)
+    if (!InventoryInteractionPolicy::IsAuthorized(
+            hasOwner,
+            isCurrentOwner,
+            ownershipEpochMatches,
+            isObject,
+            pCharacterComponent != nullptr,
+            pCharacterComponent && pCharacterComponent->IsPlayer(),
+            pPersistentCharacterComponent != nullptr,
+            isInRange))
     {
-        spdlog::warn(
-            "Rejected inventory change from player {:X} because object {:X} unexpectedly carried ownership epoch {}",
-            acMessage.pPlayer->GetId(), message.ServerId, message.OwnershipEpoch);
+        const uint32_t ownerId = pOwnerComponent && pOwnerComponent->GetOwner() ? pOwnerComponent->GetOwner()->GetId() : 0;
+        spdlog::debug(
+            "Rejected inventory change from player {:X} for entity {:X}; owner {:X}, epoch {} (current {}), object {}, character {}, persistent {}, in range {}",
+            acMessage.pPlayer->GetId(), message.ServerId, ownerId, message.OwnershipEpoch, pOwnerComponent ? pOwnerComponent->OwnershipEpoch : 0,
+            isObject, pCharacterComponent != nullptr, pPersistentCharacterComponent != nullptr, isInRange);
         return;
     }
 
+    const bool isRemoteNpcInteraction = hasOwner && !isCurrentOwner;
+
     auto& inventoryComponent = view.get<InventoryComponent>(*it);
+    if (!InventoryInteractionPolicy::CanApplyItem(inventoryComponent.Content, message.Item))
+    {
+        spdlog::debug("Rejected inventory change from player {:X} for entity {:X}: item cannot be applied to the current inventory", acMessage.pPlayer->GetId(), message.ServerId);
+        return;
+    }
+
     inventoryComponent.Content.AddOrRemoveEntry(message.Item);
 
-    if (!message.UpdateClients && !isRemoteNpcInteraction)
+    if (!InventoryInteractionPolicy::ShouldNotifyClients(message.UpdateClients, isRemoteNpcInteraction))
         return;
 
     NotifyInventoryChanges notify;
@@ -89,7 +92,7 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     notify.OwnershipEpoch = message.OwnershipEpoch;
     notify.Item = message.Item;
 
-    notify.Drop = bEnableItemDrops && !isRemoteNpcInteraction ? message.Drop : false;
+    notify.Drop = InventoryInteractionPolicy::ShouldRelayDrop(message.Drop, bEnableItemDrops, isRemoteNpcInteraction);
 
     const entt::entity cOrigin = static_cast<entt::entity>(message.ServerId);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cOrigin, acMessage.GetSender()))

@@ -53,7 +53,7 @@ boundary. A client-side send restriction is not treated as authority.
 | `InterruptCastRequest` / `MagicService` | Remote cast interruption | caster ID | no check | missing | generated InWorld gate | E/D | Bind to caster authority/incarnation | No |
 | `AddTargetRequest` / `MagicService` | Applies remote magic effect presentation | target + optional caster IDs | optional caster authority | missing | generated InWorld gate; magnitude not finite-checked | C/E | Define environmental/non-owner effects, then validate caster and finite payloads | No |
 | `RemoveSpellRequest` / `MagicService` | Removes spell on remote actor | target ID | no check | missing | generated InWorld gate | E/D | Bind removal to a validated caster/interaction or document as legacy relay | No |
-| `RequestInventoryChanges` / `InventoryService` | Actor/object inventory contents | server entity ID | owner for actor; non-owner NPC interaction allowed | epoch checked | non-owner NPC requires in-range and non-player character; object path lacks interaction proof | A/C/E | Preserve loot/pickpocket semantics; harden object and persistent-player cases | No |
+| `RequestInventoryChanges` / `InventoryService` | Actor/object inventory contents | server entity ID | owner for actor; non-owner NPC interaction allowed | epoch checked | non-owner NPC requires in-range, non-player, non-persistent character; malformed item payloads are rejected; ownerless path requires an object entity, but object interaction proof is still absent | A/C/E | Preserve loot/pickpocket semantics; continue object interaction review | A02/A03 |
 | `RequestEquipmentChanges` / `InventoryService` | Actor equipment | server entity ID | owner for owned entity; object/no-owner edge exists | epoch checked when owner exists | generated InWorld gate; no range | A/E | Ensure non-character inventory entities cannot enter equipment path | No |
 | `ActivateRequest` / `ObjectService` | Activation relay | object ID, cell, activator ID | no actor owner requirement | none | cell-based fan-out; interaction semantics are legacy client-observed | C/D | Define server-side object interaction authority before tightening | No |
 | `LockChangeRequest` / `ObjectService` | Server object lock state and relay | object form ID + cell | no explicit owner | none | cell fan-out; no sender range check | C/E | Add object interaction authorization with object ownership/range | No |
@@ -85,9 +85,22 @@ boundary. A client-side send restriction is not treated as authority.
    reacquires the actor. This is a concrete stale-incarnation risk for movement,
    factions, and weapon state.
 5. Inventory intentionally allows in-range non-owner NPC interaction. This is
-   not equivalent to authority over a persistent player actor. The path needs a
-   separate interaction policy; a blanket owner check would break legitimate
-   gameplay.
+   not equivalent to authority over a persistent player actor. `InventoryService`
+   now uses a separate policy that rejects persistent players from the NPC
+   exception and rejects ownerless non-object entities; object interaction
+   range/proof remains a separate follow-up. Empty/zero-count, minimum signed
+   count, non-finite item payloads, missing-item removals, over-removals, and
+   stack-overflowing counts are rejected before mutation, while `Drop` and
+   `UpdateClients` remain post-authorization notification controls. A blanket
+   owner check would still break legitimate gameplay. The focused policy tests
+   are included in the `TPTests` xmake target. The default test command is
+   blocked before compilation because xmake cannot open the user-level
+   detection cache at
+   `C:\Users\kerim\AppData\Local\.xmake\cache\detect`. Retrying with the
+   repository-local xmake global directory detects the installed MSVC
+   toolchain, but xmake cannot update its dependency repository because the
+   environment cannot acquire the required schannel credentials
+   (`SEC_E_NO_CREDENTIALS`), so the test binary cannot be built or run here.
 
 ## Deliberately not fixed in the audit-only phase
 
