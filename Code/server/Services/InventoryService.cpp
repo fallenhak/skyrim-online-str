@@ -155,10 +155,19 @@ void InventoryService::OnWeaponDrawnRequest(const PacketEvent<DrawWeaponRequest>
     auto characterView = m_world.view<CharacterComponent, OwnerComponent>();
     const auto it = characterView.find(static_cast<entt::entity>(message.Id));
 
-    if (it != std::end(characterView) && characterView.get<OwnerComponent>(*it).GetOwner() == acMessage.pPlayer)
+    if (it == std::end(characterView))
+        return;
+
+    auto& ownerComponent = characterView.get<OwnerComponent>(*it);
+    if (!ownerComponent.IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
     {
-        auto& characterComponent = characterView.get<CharacterComponent>(*it);
-        characterComponent.SetWeaponDrawn(message.IsWeaponDrawn);
-        spdlog::debug("Updating weapon drawn state {:x}:{}", message.Id, message.IsWeaponDrawn);
+        spdlog::debug(
+            "Rejected weapon drawn update from player {:X} for actor {:X}; requested epoch {} does not match current epoch {}",
+            acMessage.pPlayer->GetId(), message.Id, message.OwnershipEpoch, ownerComponent.OwnershipEpoch);
+        return;
     }
+
+    auto& characterComponent = characterView.get<CharacterComponent>(*it);
+    characterComponent.SetWeaponDrawn(message.IsWeaponDrawn);
+    spdlog::debug("Updating weapon drawn state {:x}:{} at epoch {}", message.Id, message.IsWeaponDrawn, message.OwnershipEpoch);
 }

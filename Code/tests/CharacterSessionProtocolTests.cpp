@@ -26,6 +26,7 @@
 #include <Messages/NotifyProjectileLaunch.h>
 #include <Messages/NotifyRespawn.h>
 #include <Messages/NotifySpellCast.h>
+#include <Messages/DrawWeaponRequest.h>
 #include <Messages/ProjectileLaunchRequest.h>
 #include <Messages/RequestRespawn.h>
 #include <Messages/SelectCharacterRequest.h>
@@ -125,6 +126,20 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(healthMessage);
         auto parsedHealthRequest = TiltedPhoques::CastUnique<RequestHealthChangeBroadcast>(std::move(healthMessage));
         REQUIRE(*parsedHealthRequest == healthRequest);
+
+        DrawWeaponRequest drawWeaponRequest{};
+        drawWeaponRequest.Id = 0x2345;
+        drawWeaponRequest.OwnershipEpoch = 67;
+        drawWeaponRequest.IsWeaponDrawn = true;
+        TiltedPhoques::Buffer drawWeaponBuffer(256);
+        TiltedPhoques::Buffer::Writer drawWeaponWriter(&drawWeaponBuffer);
+        drawWeaponRequest.Serialize(drawWeaponWriter);
+
+        TiltedPhoques::Buffer::Reader drawWeaponReader(&drawWeaponBuffer);
+        auto drawWeaponMessage = clientFactory.Extract(drawWeaponReader);
+        REQUIRE(drawWeaponMessage);
+        auto parsedDrawWeaponRequest = TiltedPhoques::CastUnique<DrawWeaponRequest>(std::move(drawWeaponMessage));
+        REQUIRE(*parsedDrawWeaponRequest == drawWeaponRequest);
 
         ProjectileLaunchRequest projectileRequest{};
         projectileRequest.ShooterID = 0x1234;
