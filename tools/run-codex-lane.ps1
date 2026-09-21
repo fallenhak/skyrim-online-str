@@ -160,24 +160,47 @@ If your runtime header says sandbox: read-only, do not pretend implementation is
 
     Write-Host "[$WorkerName] launching Codex now (workspace-write, Luna/max)..."
     Write-Host "[$WorkerName] log: $LogFile"
-    New-Item -ItemType File -Force -Path $LogFile | Out-Null
 
-    # Windows PowerShell can surface native stderr as ErrorRecord objects.
-    # Do not let ErrorActionPreference=Stop terminate the worker before we can
-    # inspect LASTEXITCODE and enter the retry path.
-    $PreviousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        & $CodexExe @CodexArgs 2>&1 | Tee-Object -FilePath $LogFile -Append
-        $CodexExit = $LASTEXITCODE
+    $PromptFile = Join-Path $LogRoot ("prompt-{0:D3}.txt" -f $Round)
+    $StdoutFile = Join-Path $LogRoot ("stdout-{0:D3}.log" -f $Round)
+    $StderrFile = Join-Path $LogRoot ("stderr-{0:D3}.log" -f $Round)
+    Set-Content -LiteralPath $PromptFile -Value $RunPrompt -Encoding UTF8
+
+    $CodexProcessArgs = @(
+        "exec",
+        "--sandbox", "workspace-write",
+        "--model", $Model,
+        "-c", 'approval_policy="never"',
+        "-c", $ReasoningConfig,
+        "-"
+    )
+
+    $proc = Start-Process -FilePath $CodexExe `
+        -ArgumentList $CodexProcessArgs `
+        -RedirectStandardInput $PromptFile `
+        -RedirectStandardOutput $StdoutFile `
+        -RedirectStandardError $StderrFile `
+        -NoNewWindow `
+        -PassThru
+
+    Write-Host "[$WorkerName] Codex PID $($proc.Id) started."
+    Write-Host "[$WorkerName] stdout: $StdoutFile"
+    Write-Host "[$WorkerName] stderr/status: $StderrFile"
+
+    while (-not $proc.HasExited) {
+        $proc.Refresh()
+        Start-Sleep -Seconds 15
     }
-    catch {
-        $_ | Out-String | Tee-Object -FilePath $LogFile -Append | Write-Warning
-        $CodexExit = if ($LASTEXITCODE) { $LASTEXITCODE } else { 1 }
+
+    $CodexExit = $proc.ExitCode
+
+    if (Test-Path $StderrFile) {
+        Get-Content $StderrFile | Add-Content -LiteralPath $LogFile
     }
-    finally {
-        $ErrorActionPreference = $PreviousErrorActionPreference
+    if (Test-Path $StdoutFile) {
+        Get-Content $StdoutFile | Add-Content -LiteralPath $LogFile
     }
+
     Write-Host "[$WorkerName] Codex process returned exit code $CodexExit"
 
     if ($CodexExit -ne 0) {
@@ -251,16 +274,34 @@ Leave git status clean, then exit.
         $CleanupPrompt
     )
     $CleanupLog = Join-Path $LogRoot "final-cleanup.log"
-    $PreviousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        & $CodexExe @CleanupArgs 2>&1 | Tee-Object -FilePath $CleanupLog -Append
+    $CleanupPromptFile = Join-Path $LogRoot "final-cleanup-prompt.txt"
+    $CleanupStdout = Join-Path $LogRoot "final-cleanup-stdout.log"
+    $CleanupStderr = Join-Path $LogRoot "final-cleanup-stderr.log"
+    Set-Content -LiteralPath $CleanupPromptFile -Value $CleanupPrompt -Encoding UTF8
+
+    $CleanupProcessArgs = @(
+        "exec",
+        "--sandbox", "workspace-write",
+        "--model", $Model,
+        "-c", 'approval_policy="never"',
+        "-c", $ReasoningConfig,
+        "-"
+    )
+
+    $cleanupProc = Start-Process -FilePath $CodexExe `
+        -ArgumentList $CleanupProcessArgs `
+        -RedirectStandardInput $CleanupPromptFile `
+        -RedirectStandardOutput $CleanupStdout `
+        -RedirectStandardError $CleanupStderr `
+        -NoNewWindow `
+        -PassThru `
+        -Wait
+
+    if (Test-Path $CleanupStderr) {
+        Get-Content $CleanupStderr | Add-Content -LiteralPath $CleanupLog
     }
-    catch {
-        $_ | Out-String | Tee-Object -FilePath $CleanupLog -Append | Write-Warning
-    }
-    finally {
-        $ErrorActionPreference = $PreviousErrorActionPreference
+    if (Test-Path $CleanupStdout) {
+        Get-Content $CleanupStdout | Add-Content -LiteralPath $CleanupLog
     }
 }
 
