@@ -1,8 +1,9 @@
-# Secret and credential scan
+# Secret and credential scan — V2.1
 
-The V2 review snapshot was scanned before publication. The scan scope was the
-review tree only; authentication files, GitHub hosts/configuration, SSH keys,
-runtime logs, and conversation/session files were not copied into it.
+The V2.1 review snapshot was scanned after the supervisor/test/doc updates and
+before publication. The scan scope was the review tree only; authentication
+files, GitHub hosts/configuration, SSH keys, runtime logs, and
+conversation/session files were not copied into it.
 
 Checks performed:
 
@@ -14,9 +15,12 @@ Checks performed:
   `/var/lib/skyrim-dev/worker-gh-config`, not `/home/skyrimdev/.config/gh`;
 - verified the redacted state projection contains no event history, worker log
   content, or authentication/configuration material.
+- verified recovery prompt evidence is bounded and passed through the existing
+  redaction helper, and that binary/oversize untracked content is represented
+  only by metadata.
 
-Result: no credential value or private-key material was found in the review
-snapshot. The same-account filesystem residual risk is documented in
+Result: no credential value or private-key material was found in the V2.1
+review snapshot. The same-account filesystem residual risk is documented in
 [residual-risks.md](residual-risks.md).
 
 The broad marker scan reported `supervisor.py` only because the source contains

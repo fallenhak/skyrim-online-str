@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-09-21T15:27:13+00:00",
+  "captured_at": "2026-09-21T16:10:05+00:00",
   "version": 2,
   "global_mode": "PAUSED",
   "mode_reason": "installation default; explicit start is required",
@@ -74,7 +74,7 @@
   "orchestrator_unit": {"active": "inactive", "enabled": "disabled"},
   "healthcheck_timer": {"active": "inactive", "enabled": "disabled"},
   "service_user": "skyrimdev",
-  "snapshot_type": "redacted persistent lane-state projection",
+  "snapshot_type": "redacted persistent lane-state projection (V2.1)",
   "source_state": "/var/lib/skyrim-dev/state/state.json",
   "omitted_from_projection": [
     "event history",

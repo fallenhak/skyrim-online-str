@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -78,6 +79,34 @@ def make_git_repo() -> Path:
         "commit", "-qm", "initial",
     ], check=True)
     return root
+
+
+def configure_combat_lane(harness: Harness, root: Path, state: str = "LOCAL_VALIDATION") -> dict:
+    harness.config["lanes"]["combat"]["branch"] = "main"
+    harness.config["lanes"]["combat"]["worktree"] = str(root)
+    lane = {
+        "state": state,
+        "branch": "main",
+        "worktree": str(root),
+        "plan": "PLAN.md",
+        "phase_index": 0,
+        "phase_id": "C01",
+        "phase_title": "phase",
+        "review": {},
+        "review_reasons": [],
+        "worker_log": None,
+        "history": [],
+        "validation": {},
+        "ci": {},
+        "last_commit": None,
+        "success_since_review": 0,
+        "phase_failure_count": 0,
+        "recovery_attempts": 0,
+        "push_attempts": 0,
+        "ci_poll_failures": 0,
+    }
+    harness.state["lanes"]["combat"] = lane
+    return lane
 
 
 class SupervisorLogicTests(unittest.TestCase):
@@ -235,6 +264,225 @@ class SupervisorLogicTests(unittest.TestCase):
         self.assertIn("rename", kinds)
         self.assertIn("untracked", kinds)
         self.assertIn("modified", kinds)
+
+    def test_git_status_failure_is_dirty_and_status_files_is_not_clean(self) -> None:
+        h = Harness()
+        h.git_status_details = lambda _worktree: (False, [], "git status failed")
+        self.assertTrue(h.git_dirty("/missing/worktree"))
+        self.assertIsNone(h.git_status_files("/missing/worktree"))
+
+    def test_pre_worker_status_failure_is_rejected(self) -> None:
+        root = make_git_repo()
+        h = Harness()
+        lane = configure_combat_lane(h, root, "READY")
+        h.git_status_details = lambda _worktree: (False, [], "git status unavailable")
+        okay, reason = h.verify_worker_worktree("combat", recovery=False)
+        self.assertFalse(okay)
+        self.assertIn("status unavailable", reason)
+        self.assertEqual(lane["state"], "READY")
+
+    def test_post_commit_status_failure_prohibits_automatic_push(self) -> None:
+        root = make_git_repo()
+        (root / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        h = Harness()
+        lane = configure_combat_lane(h, root, "COMMITTING")
+        lane["validation"] = {"changed_files": ["tracked.txt"], "tests": []}
+        calls = 0
+        real_status = h.git_status_details
+
+        def fail_after_commit(worktree: str):
+            nonlocal calls
+            calls += 1
+            if calls >= 2:
+                return False, [], "status unavailable after commit"
+            return real_status(worktree)
+
+        h.git_status_details = fail_after_commit
+        self.assertFalse(h.commit_phase("combat"))
+        self.assertEqual(lane["state"], "NEEDS_SOL_REVIEW")
+        self.assertTrue(any("automatic push is forbidden" in reason for reason in h.review_calls[-1][1]))
+
+    def test_pre_push_status_failure_prohibits_push(self) -> None:
+        root = make_git_repo()
+        h = Harness()
+        lane = configure_combat_lane(h, root, "PUSHING")
+        lane["last_commit"] = "initial"
+        h.git_status_details = lambda _worktree: (False, [], "status unavailable before push")
+        pushed = []
+
+        def record_command(args, *argspec, **kwargs):
+            if "push" in args:
+                pushed.append(args)
+            return (0, "", "")
+
+        h.command = record_command
+        h.push_phase("combat")
+        self.assertEqual(pushed, [])
+        self.assertEqual(lane["state"], "NEEDS_SOL_REVIEW")
+        self.assertIn("not clean", h.review_calls[-1][1][0])
+
+    def test_startup_reconciles_stale_rate_limit_probe_without_spending_recovery(self) -> None:
+        h = Harness()
+        h.state["codex_availability"] = {
+            "status": "RATE_LIMITED",
+            "next_retry_at": "1970-01-01T00:00:00+00:00",
+            "backoff_seconds": 1800,
+            "retry_count": 4,
+            "probe_started_at": "2026-09-21T15:00:00+00:00",
+            "reason": "Codex usage limit reached",
+        }
+        h.state["lanes"]["combat"] = {
+            "state": "READY", "worker_pid": 731, "recovery_attempts": 0,
+        }
+        h.processes = {}
+        before = time.time()
+        h._reconcile_startup_runtime()
+        availability = h.state["codex_availability"]
+        self.assertEqual(availability["status"], "RATE_LIMITED")
+        self.assertIsNone(availability["probe_started_at"])
+        self.assertEqual(availability["backoff_seconds"], 1800)
+        self.assertEqual(availability["retry_count"], 4)
+        self.assertGreater(supervisor.parse_time(availability["next_retry_at"]), before)
+        self.assertIsNone(h.state["lanes"]["combat"]["worker_pid"])
+        self.assertEqual(h.state["lanes"]["combat"]["recovery_attempts"], 0)
+
+    def test_startup_preserves_future_rate_limit_retry(self) -> None:
+        future = supervisor.dt.datetime.fromtimestamp(
+            time.time() + 3600, supervisor.dt.timezone.utc
+        ).isoformat(timespec="seconds")
+        h = Harness()
+        h.state["codex_availability"] = {
+            "status": "RATE_LIMITED",
+            "next_retry_at": future,
+            "backoff_seconds": 900,
+            "retry_count": 2,
+            "probe_started_at": "2026-09-21T15:00:00+00:00",
+        }
+        h.state["lanes"]["combat"] = {"state": "READY", "recovery_attempts": 0}
+        h.processes = {}
+        h._reconcile_startup_runtime()
+        calls = []
+        h.start_worker = lambda lane_name, recovery=False: calls.append((lane_name, recovery)) or True
+        h.schedule()
+        self.assertEqual(calls, [])
+        self.assertEqual(h.state["codex_availability"]["next_retry_at"], future)
+
+    def test_retry_current_phase_clean_running_is_recovering(self) -> None:
+        root = make_git_repo()
+        h = Harness()
+        lane = configure_combat_lane(h, root, "NEEDS_SOL_REVIEW")
+        lane.update({
+            "last_error": "second CI failure",
+            "review_reasons": ["same phase failed required CI twice"],
+            "review": {"type": "CURRENT_PHASE_REVIEW"},
+        })
+        h.state["global_mode"] = "RUNNING"
+        self.assertEqual(h.retry_review("combat"), 0)
+        self.assertEqual(lane["state"], "RECOVERING")
+        self.assertEqual(lane["recovery_context"]["last_error"], "second CI failure")
+
+    def test_retry_current_phase_paused_restores_recovering_on_resume(self) -> None:
+        root = make_git_repo()
+        h = Harness()
+        lane = configure_combat_lane(h, root, "NEEDS_SOL_REVIEW")
+        lane.update({
+            "last_error": "worker tool failure",
+            "review_reasons": ["worker failed"],
+            "review": {"type": "CURRENT_PHASE_REVIEW"},
+        })
+        h.state["global_mode"] = "PAUSED"
+        self.assertEqual(h.retry_review("combat"), 0)
+        self.assertEqual(lane["state"], "PAUSED")
+        self.assertEqual(lane["paused_from_state"], "RECOVERING")
+        with patch.object(supervisor, "read_json", return_value={
+            "desired_mode": "RUNNING", "reason": "operator resumed",
+        }):
+            h.refresh_control()
+        self.assertEqual(h.state["global_mode"], "RUNNING")
+        self.assertEqual(lane["state"], "RECOVERING")
+
+    def test_recovery_prompt_contains_bounded_saved_failure_context(self) -> None:
+        root = make_git_repo()
+        log = root / "worker.log"
+        log.write_text(
+            "worker observed compiler failure; secret=super-secret\n",
+            encoding="utf-8",
+        )
+        h = Harness()
+        lane = configure_combat_lane(h, root, "RECOVERING")
+        lane.update({
+            "phase_id": "C01", "phase_title": "phase",
+            "last_error": "required CI workflow failure: Build linux",
+            "ci": {"failure_excerpt": "error: CharacterId authority check failed"},
+            "worker_log": str(log),
+        })
+        h.plan_for = lambda _lane: {"phases": [{"id": "C01", "title": "phase"}], "boundaries": []}
+        h.roadmap_task = lambda _lane: None
+        recovery = h.worker_prompt("combat", recovery=True)
+        self.assertIn("RECOVERY CONTEXT", recovery)
+        self.assertIn("required CI workflow failure: Build linux", recovery)
+        self.assertIn("CharacterId authority check failed", recovery)
+        self.assertIn("worker observed compiler failure", recovery)
+        self.assertNotIn("super-secret", recovery)
+        self.assertIn("same failed phase", recovery)
+        normal = h.worker_prompt("combat", recovery=False)
+        self.assertNotIn("RECOVERY CONTEXT", normal)
+        self.assertNotIn("Build linux", normal)
+        self.assertNotIn("CharacterId authority check failed", normal)
+
+    def test_untracked_source_content_is_in_diff_and_triggers_sol_review(self) -> None:
+        root = make_git_repo()
+        (root / "new_server.cpp").write_text(
+            "bool accepts(CharacterId id) { return id != 0; }\n",
+            encoding="utf-8",
+        )
+        h = Harness()
+        lane = configure_combat_lane(h, root, "WAITING_FOR_CI")
+        files, diff, _stat, metrics = h.changed_diff("combat")
+        self.assertIn("new_server.cpp", files)
+        self.assertIn("CharacterId", diff)
+        self.assertGreater(metrics["untracked_review_bytes"], 0)
+        lane["validation"] = {"changed_files": files, "diff_text": diff}
+        h.plan_for = lambda _lane: {
+            "phases": [
+                {"id": "C01", "title": "phase"},
+                {"id": "C02", "title": "next"},
+            ],
+            "boundaries": [],
+        }
+        h.complete_phase("combat")
+        self.assertEqual(h.review_calls[-1][2]["review_type"], "POST_PHASE_CHECKPOINT")
+        self.assertTrue(any("CharacterId" in reason for reason in h.review_calls[-1][1]))
+
+    def test_small_untracked_source_is_included_as_new_file_diff(self) -> None:
+        root = make_git_repo()
+        (root / "new_source.py").write_text("def answer():\n    return 42\n", encoding="utf-8")
+        h = Harness()
+        configure_combat_lane(h, root)
+        files, diff, stat, metrics = h.changed_diff("combat")
+        self.assertEqual(files, ["new_source.py"])
+        self.assertIn("--- /dev/null", diff)
+        self.assertIn("+++ b/new_source.py", diff)
+        self.assertIn("+    return 42", diff)
+        self.assertIn("new_source.py", stat)
+        self.assertGreaterEqual(metrics["total_diff_bytes"], len("def answer():\n    return 42\n"))
+
+    def test_binary_and_oversize_untracked_files_are_omitted_and_blocked(self) -> None:
+        root = make_git_repo()
+        (root / "new_asset.bin").write_bytes(b"A" * 9000 + b"\x00binary-secret-content")
+        (root / "oversize_source.cpp").write_bytes(
+            b"A" * (supervisor.MAX_UNTRACKED_REVIEW_FILE_BYTES + 1)
+        )
+        h = Harness()
+        lane = configure_combat_lane(h, root)
+        files, diff, _stat, metrics = h.changed_diff("combat")
+        self.assertEqual(set(files), {"new_asset.bin", "oversize_source.cpp"})
+        self.assertNotIn("binary-secret-content", diff)
+        self.assertNotIn("A" * 1000, diff)
+        self.assertGreaterEqual(len(metrics["untracked_review_issues"]), 2)
+        self.assertFalse(h.local_validate("combat"))
+        self.assertEqual(lane["state"], "NEEDS_SOL_REVIEW")
+        self.assertTrue(any("untracked" in reason for reason in h.review_calls[-1][1]))
 
     def test_stale_worker_marker_is_not_reused(self) -> None:
         h = Harness()

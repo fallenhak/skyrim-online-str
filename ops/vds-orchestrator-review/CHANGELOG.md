@@ -1,5 +1,25 @@
 # Supervisor Hardening V2 changelog
 
+## V2.1 — 2026-09-21
+
+- Removed the duplicate `git_dirty()` definition and made Git-status failure
+  dirty/unsafe everywhere; `git_status_files()` now reports unreadable status
+  explicitly so commit and push gates cannot fail open.
+- Reconciled stale persisted Codex rate-limit probes on supervisor restart,
+  preserving the existing bounded backoff and retry count without spending lane
+  recovery budget or causing an immediate retry storm.
+- Made every `CURRENT_PHASE_REVIEW` retry enter `RECOVERING`, including clean
+  worktrees and paused/resume flows, while preserving same-phase correction
+  semantics.
+- Added bounded, redacted recovery context containing the prior failure, CI
+  failure excerpt, and relevant worker evidence; normal prompts remain free of
+  stale recovery data and workers are not asked to query GitHub.
+- Included reasonable-size textual untracked files as bounded new-file diffs in
+  risk analysis and review packets. Binary, unreadable, symlink-escaping, and
+  oversize files are metadata-only and require safe review.
+- Added 12 deterministic V2.1 regression tests, bringing the supervisor suite
+  to 31 passing tests.
+
 ## 2026-09-21
 
 - Fixed multi-workflow CI aggregation: exact commit-SHA filtering, per-workflow grouping, newest-attempt selection, all-required-workflow waiting, bounded queue/completion timeouts, persisted per-workflow evidence, and failure propagation.

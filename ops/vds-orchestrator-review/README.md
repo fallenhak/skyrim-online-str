@@ -1,6 +1,6 @@
-# Skyrim Supervisor Hardening V2 review snapshot
+# Skyrim Supervisor Hardening V2.1 review snapshot
 
-This is the secret-free architect-review snapshot of the V2 supervisor installed
+This is the secret-free architect-review snapshot of the V2.1 supervisor installed
 on the Ubuntu VDS. It was captured on 2026-09-21 after installation and
 verification. Autonomous development remains disabled: the orchestrator unit
 and healthcheck timer are both inactive and disabled, global mode is `PAUSED`,
@@ -22,7 +22,7 @@ and no worker was launched during this pass.
 The review branch contains the corresponding source under `source/`, a redacted
 state projection under `state/`, and verification evidence under `verification/`.
 
-## V2 safety behavior
+## V2/V2.1 safety behavior
 
 ### CI aggregation
 
@@ -50,6 +50,30 @@ Review metadata is explicit and persistent:
 `skyrim-dev review-status`, `approve`, `retry`, and `block` are explicit
 operator interfaces. The third successful phase is counted before checkpoint
 evaluation, so exactly three successes trigger the checkpoint.
+
+For `CURRENT_PHASE_REVIEW`, `retry` always enters `RECOVERING` while the global
+mode is `RUNNING`. While globally paused it records
+`paused_from_state=RECOVERING`, then restores `RECOVERING` on resume even when
+the worktree is already clean. The recovery worker is told explicitly that it
+is correcting the same failed phase.
+
+### V2.1 Git fail-closed and review bounds
+
+There is one `git_dirty()` implementation, and unreadable Git status is always
+dirty/unsafe. `git_status_files()` returns an explicit failure (`None`) instead
+of silently producing an empty clean file list; pre-worker, post-commit, and
+pre-push paths therefore stop for human review when status cannot be read.
+
+Reasonable-size textual untracked files are rendered as bounded new-file diffs
+and included in risk analysis. Binary, unreadable, symlink-escaping, and
+oversize files contribute their real size to bounds, expose metadata only, and
+require review without dumping their contents into logs or prompts. The total
+review text is capped by the configured 512 KiB bound.
+
+Recovery prompts now contain bounded, redacted `RECOVERY CONTEXT` with the last
+failure, required CI failure excerpt, and relevant worker evidence. Normal
+worker prompts do not include persisted recovery failures, and workers are
+explicitly told not to query GitHub.
 
 ### Git and worker safety
 
@@ -121,7 +145,9 @@ architecture; this remains for architect review.
 
 ## Verification
 
-- 19 supervisor unit tests passed under `skyrimdev`.
+- 31 supervisor unit tests passed under `skyrimdev`, including deterministic
+  V2.1 cases for Git-status failure, restart-safe rate-limit probes, retry
+  semantics, recovery evidence, and untracked-file review bounds.
 - `skyrim-dev self-test` passed, including Codex/GitHub authentication checks,
   safe push dry-runs, four clean worktrees, product context, credential
   isolation, and GitHub Actions polling.
@@ -129,6 +155,11 @@ architecture; this remains for architect review.
   and product-context checks.
 - No development worker was started, no development branch was pushed, and no
   development branch head changed.
+- Protected development heads remain:
+  `combat=905cf71c55200509702fb299aaa953ae46dcb374`,
+  `authority=caf7dcc31ca4b6d0912f31b151408ba24c13938c`,
+  `population=52c97ba4d5da993e6ef2fa4bdf398f13c22b456a`,
+  `ui=a473531ad16a82cecc8a4cdecc460934ba7efcfa`.
 
 See [CHANGELOG.md](CHANGELOG.md), [verification/self-test-results.md](verification/self-test-results.md),
 [verification/security-scan.md](verification/security-scan.md), and

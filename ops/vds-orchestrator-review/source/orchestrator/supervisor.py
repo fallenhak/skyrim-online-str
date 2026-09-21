@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import difflib
 import json
 import os
 import re
@@ -62,6 +63,10 @@ CODEX_CONTEXT_RE = re.compile(r"(?i)(?:codex|chatgpt|openai|usage\s+allowance|to
 GITHUB_LIMIT_RE = re.compile(r"(?i)(?:github|github\.com|gh\s+(?:api|run|issue))")
 UNMERGED_XY = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
 GENERATED_DIRS = {"node_modules", "build", "dist", "out", ".xmake", "obj"}
+MAX_UNTRACKED_REVIEW_FILE_BYTES = 64 * 1024
+MAX_RECOVERY_ERROR_BYTES = 4000
+MAX_RECOVERY_CI_BYTES = 8000
+MAX_RECOVERY_WORKER_BYTES = 8000
 
 
 def parse_porcelain_v1_z(output: bytes | str) -> list[dict[str, str | None]]:
@@ -331,6 +336,7 @@ class Supervisor:
         availability.setdefault("retry_count", 0)
         availability.setdefault("probe_started_at", None)
         availability.setdefault("reason", "")
+        self._reconcile_startup_runtime()
         self.state.setdefault("lanes", {})
         self.state.setdefault("events", [])
         for lane_name in LANE_ORDER:
@@ -389,14 +395,69 @@ class Supervisor:
                 }
             lane.setdefault("worker_attempt", 0)
             self._refresh_plan(lane_name, lane)
-            if lane.get("state") == "CODING":
+            if lane_name not in self.processes:
+                # A persisted PID is only historical evidence after a supervisor
+                # restart.  Never treat it as a live worker process.
                 lane["worker_pid"] = None
+            if lane.get("state") == "CODING":
                 lane["state"] = "RECOVERING" if self.state.get("global_mode") == "RUNNING" else "PAUSED"
                 lane["recovery_attempts"] = min(1, int(lane.get("recovery_attempts", 0)) + 1)
                 lane["last_error"] = "supervisor restart interrupted worker; recovery required"
             if lane.get("last_commit") is None:
                 lane["last_commit"] = self.git_head(spec["worktree"])
         self.save_state()
+
+    def _reconcile_startup_runtime(self) -> None:
+        """Reconcile persisted runtime markers with this supervisor instance.
+
+        PIDs and probe timestamps describe the previous process, not this
+        process.  A rate-limit probe may therefore be stale after a restart;
+        clear only that marker and retain a bounded retry window without
+        changing lane recovery budgets.
+        """
+        active_lanes = {
+            lane_name for lane_name, process in self.processes.items()
+            if process.poll() is None
+        }
+        for lane_name, lane in self.state.get("lanes", {}).items():
+            if lane_name not in active_lanes:
+                lane["worker_pid"] = None
+
+        availability = self.state.get("codex_availability", {})
+        if (
+            availability.get("status") != "RATE_LIMITED"
+            or not availability.get("probe_started_at")
+            or active_lanes
+        ):
+            return
+
+        try:
+            previous_backoff = int(availability.get("backoff_seconds") or 0)
+        except (TypeError, ValueError):
+            previous_backoff = 0
+        try:
+            base = max(1, int(self.config.get("codex_retry_base_seconds", 900)))
+            maximum = max(base, int(self.config.get("codex_retry_max_seconds", 3600)))
+        except (TypeError, ValueError):
+            base, maximum = 900, 3600
+        bounded_backoff = min(maximum, max(base, previous_backoff))
+        retry_at = parse_time(availability.get("next_retry_at"))
+        if retry_at <= time.time():
+            retry_at = time.time() + bounded_backoff
+            availability["next_retry_at"] = dt.datetime.fromtimestamp(
+                retry_at, dt.timezone.utc
+            ).isoformat(timespec="seconds")
+        availability["backoff_seconds"] = bounded_backoff
+        availability["probe_started_at"] = None
+        old_reason = str(availability.get("reason") or "").strip()
+        suffix = "stale probe marker reconciled after supervisor restart"
+        availability["reason"] = redact(f"{old_reason}; {suffix}" if old_reason else suffix)
+        self.state.setdefault("events", []).append({
+            "at": utc_now(),
+            "lane": None,
+            "message": availability["reason"],
+        })
+        del self.state["events"][:-200]
 
     def save_state(self) -> None:
         self.state["updated_at"] = utc_now()
@@ -586,9 +647,9 @@ class Supervisor:
             return False, [], redact(err or out or "git status failed")
         return True, parse_porcelain_v1_z(out), ""
 
-    def git_status_files(self, worktree: str) -> list[str]:
+    def git_status_files(self, worktree: str) -> list[str] | None:
         okay, entries, _ = self.git_status_details(worktree)
-        return status_paths(entries) if okay else []
+        return status_paths(entries) if okay else None
 
     def git_dirty(self, worktree: str) -> bool:
         okay, entries, _ = self.git_status_details(worktree)
@@ -621,9 +682,6 @@ class Supervisor:
         if entries and not recovery:
             return False, "normal worker requires a clean worktree"
         return True, ""
-
-    def git_dirty(self, worktree: str) -> bool:
-        return bool(self.git_status_files(worktree))
 
     def resource_guard(self) -> tuple[bool, str]:
         usage = os.statvfs("/")
@@ -766,9 +824,13 @@ class Supervisor:
         recovery_text = ""
         if recovery:
             recovery_text = (
-                "\nThis is the single bounded recovery attempt. Inspect the current dirty "
-                "diff and saved failure context. Complete only this same phase safely. "
-                "Never discard or reset the existing diff.\n"
+                "\nThis is the single bounded recovery attempt correcting the same failed "
+                "phase. Inspect the current diff and the bounded evidence below. Complete "
+                "only this phase safely; do not advance to another phase. Never discard or "
+                "reset the existing diff. Do not query GitHub and do not use credentials; "
+                "the supervisor has supplied the observed failure context.\n\n"
+                + self._bounded_recovery_context(lane_name)
+                + "\n"
             )
         return f"""You are the one-phase Codex worker for lane {lane_name}.
 Repository: {self.config["repo"]}
@@ -839,6 +901,78 @@ required evidence or tooling is unavailable.
         safe_phase = re.sub(r"[^A-Za-z0-9_.-]+", "-", phase_id)
         return LOG_ROOT / f"{lane_name}-{safe_phase}-attempt-{attempt}-{stamp}.log"
 
+    def _bounded_recovery_context(self, lane_name: str) -> str:
+        """Build bounded, redacted evidence for a same-phase recovery worker."""
+        lane = self.state["lanes"][lane_name]
+        stored = lane.get("recovery_context", {})
+        if not isinstance(stored, dict):
+            stored = {}
+
+        def bounded(value: Any, limit: int) -> str:
+            text = redact(str(value or ""))
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "\n[context truncated]"
+
+        previous_failure = stored.get("last_error") or lane.get("last_error")
+        review_reasons = stored.get("review_reasons") or lane.get("review_reasons", [])
+        if isinstance(review_reasons, list):
+            review_text = "\n".join(
+                bounded(item, MAX_RECOVERY_ERROR_BYTES) for item in review_reasons if item
+            )
+        else:
+            review_text = bounded(review_reasons, MAX_RECOVERY_ERROR_BYTES)
+        ci = lane.get("ci", {})
+        ci_excerpt = ci.get("failure_excerpt") if isinstance(ci, dict) else ""
+        ci_excerpt = ci_excerpt or stored.get("ci_failure_excerpt")
+        worker_evidence = ""
+        worker_log = lane.get("worker_log")
+        if worker_log:
+            worker_evidence = tail_text(Path(str(worker_log)), MAX_RECOVERY_WORKER_BYTES)
+        if not worker_evidence:
+            validation = lane.get("validation", {})
+            if isinstance(validation, dict):
+                worker_evidence = validation.get("worker_output_tail", "")
+        worker_evidence = worker_evidence or stored.get("worker_evidence")
+        sections = [
+            "RECOVERY CONTEXT",
+            "Previous failure:",
+            bounded(previous_failure, MAX_RECOVERY_ERROR_BYTES) or "(no persisted failure text)",
+            "",
+            "Required CI failure excerpt:",
+            bounded(ci_excerpt, MAX_RECOVERY_CI_BYTES) or "(no persisted CI failure excerpt)",
+            "",
+            "Previous worker evidence:",
+            bounded(worker_evidence, MAX_RECOVERY_WORKER_BYTES) or "(no persisted worker evidence)",
+        ]
+        if review_text:
+            sections[4:4] = ["", "Review observations:", review_text]
+        return "\n".join(sections)
+
+    def _capture_recovery_context(self, lane_name: str) -> dict[str, Any]:
+        lane = self.state["lanes"][lane_name]
+        ci = lane.get("ci", {})
+        validation = lane.get("validation", {})
+        worker_evidence = ""
+        if lane.get("worker_log"):
+            worker_evidence = tail_text(
+                Path(str(lane["worker_log"])), MAX_RECOVERY_WORKER_BYTES
+            )
+        if not worker_evidence and isinstance(validation, dict):
+            worker_evidence = str(validation.get("worker_output_tail") or "")
+        return {
+            "last_error": redact(str(lane.get("last_error") or ""))[:MAX_RECOVERY_ERROR_BYTES],
+            "review_reasons": [
+                redact(str(item))[:MAX_RECOVERY_ERROR_BYTES]
+                for item in lane.get("review_reasons", [])
+                if item
+            ][:8],
+            "ci_failure_excerpt": redact(
+                str(ci.get("failure_excerpt") if isinstance(ci, dict) else "")
+            )[:MAX_RECOVERY_CI_BYTES],
+            "worker_evidence": redact(worker_evidence)[:MAX_RECOVERY_WORKER_BYTES],
+        }
+
     def start_worker(self, lane_name: str, recovery: bool = False) -> bool:
         if lane_name in self.processes:
             return False
@@ -856,7 +990,13 @@ required evidence or tooling is unavailable.
             return False
         okay, reason = self.verify_worker_worktree(lane_name, recovery)
         if not okay:
-            if recovery or "branch" in reason or "conflict" in reason or "unrecognized" in reason:
+            if (
+                recovery
+                or "branch" in reason
+                or "conflict" in reason
+                or "unrecognized" in reason
+                or "status" in reason.lower()
+            ):
                 self.review(lane_name, [reason])
             else:
                 lane["state"] = "RECOVERING"
@@ -1050,7 +1190,7 @@ required evidence or tooling is unavailable.
                     f"worker exit={return_code}; marker={result or 'missing'}",
                 )
 
-    def changed_diff(self, lane_name: str) -> tuple[list[str], str, str, dict[str, int]]:
+    def changed_diff(self, lane_name: str) -> tuple[list[str], str, str, dict[str, Any]]:
         worktree = self.state["lanes"][lane_name]["worktree"]
         okay, entries, status_error = self.git_status_details(worktree)
         files = status_paths(entries) if okay else []
@@ -1076,23 +1216,136 @@ required evidence or tooling is unavailable.
             elif stat_err:
                 stat_parts.append(f"{label}: {redact(stat_err)}")
         untracked_bytes = 0
+        untracked_review_bytes = 0
+        untracked_review_issues: list[str] = []
+        try:
+            review_limit = max(1, int(self.config.get("max_total_diff_bytes", 524288)))
+        except (TypeError, ValueError):
+            review_limit = 524288
+        max_untracked_file = min(MAX_UNTRACKED_REVIEW_FILE_BYTES, review_limit)
+        worktree_root = Path(worktree).resolve()
         for entry in entries:
             if entry.get("kind") != "untracked" or not entry.get("path"):
                 continue
-            path = Path(worktree) / str(entry["path"])
+            relative = str(entry["path"])
+            path = worktree_root / relative
             try:
-                untracked_bytes += path.stat().st_size if path.is_file() else 0
-            except OSError:
-                pass
+                path = path.resolve()
+                path.relative_to(worktree_root)
+            except (OSError, ValueError):
+                untracked_review_issues.append(
+                    f"untracked path could not be safely resolved for bounded review: {relative}"
+                )
+                diff_parts.append(
+                    "### untracked file review metadata\n"
+                    f"path: {relative}\ncontent: omitted (unsafe path resolution)"
+                )
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError as exc:
+                untracked_review_issues.append(
+                    f"untracked file could not be read for bounded review: {relative} ({exc})"
+                )
+                diff_parts.append(
+                    "### untracked file review metadata\n"
+                    f"path: {relative}\ncontent: omitted (stat failed)"
+                )
+                continue
+            untracked_bytes += size
+            if not path.is_file():
+                reason = "not a regular file"
+                untracked_review_issues.append(
+                    f"untracked file requires review: {relative} ({reason})"
+                )
+                diff_parts.append(
+                    "### untracked file review metadata\n"
+                    f"path: {relative}\nsize_bytes: {size}\ncontent: omitted ({reason})"
+                )
+                continue
+            if size > max_untracked_file:
+                reason = f"{size} bytes exceeds bounded text review limit {max_untracked_file}"
+                untracked_review_issues.append(
+                    f"untracked file content omitted from bounded review: {relative} ({reason})"
+                )
+                diff_parts.append(
+                    "### untracked file review metadata\n"
+                    f"path: {relative}\nsize_bytes: {size}\ncontent: omitted ({reason})"
+                )
+                stat_parts.append(f"untracked: {relative} ({size} bytes; content omitted)")
+                continue
+            try:
+                raw = path.read_bytes()
+            except OSError as exc:
+                untracked_review_issues.append(
+                    f"untracked file could not be read for bounded review: {relative} ({exc})"
+                )
+                diff_parts.append(
+                    "### untracked file review metadata\n"
+                    f"path: {relative}\nsize_bytes: {size}\ncontent: omitted (read failed)"
+                )
+                continue
+            if len(raw) > max_untracked_file:
+                reason = f"{len(raw)} bytes exceeds bounded text review limit {max_untracked_file}"
+                untracked_review_issues.append(
+                    f"untracked file content omitted from bounded review: {relative} ({reason})"
+                )
+                diff_parts.append(
+                    "### untracked file review metadata\n"
+                    f"path: {relative}\nsize_bytes: {len(raw)}\ncontent: omitted ({reason})"
+                )
+                continue
+            if b"\0" in raw:
+                reason = "binary content detected"
+                untracked_review_issues.append(
+                    f"untracked binary file requires review: {relative} ({size} bytes)"
+                )
+                diff_parts.append(
+                    "### untracked file review metadata\n"
+                    f"path: {relative}\nsize_bytes: {size}\ncontent: omitted ({reason})"
+                )
+                stat_parts.append(f"untracked: {relative} ({size} bytes; binary omitted)")
+                continue
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                reason = "non-UTF-8/binary content detected"
+                untracked_review_issues.append(
+                    f"untracked binary file requires review: {relative} ({size} bytes)"
+                )
+                diff_parts.append(
+                    "### untracked file review metadata\n"
+                    f"path: {relative}\nsize_bytes: {size}\ncontent: omitted ({reason})"
+                )
+                stat_parts.append(f"untracked: {relative} ({size} bytes; binary omitted)")
+                continue
+            text = redact(text)
+            rendered = "".join(difflib.unified_diff(
+                [], text.splitlines(keepends=True),
+                fromfile="/dev/null", tofile=f"b/{relative}", n=0,
+            ))
+            diff_parts.append(f"### untracked text file: {relative}\n{rendered}")
+            untracked_review_bytes += len(rendered.encode("utf-8", errors="replace"))
+            stat_parts.append(f"untracked: {relative} ({size} bytes; text included)")
         metrics = {
             "changed_files": len(files),
             "tracked_diff_bytes": tracked_diff_bytes,
             "untracked_bytes": untracked_bytes,
             "total_diff_bytes": tracked_diff_bytes + untracked_bytes,
+            "untracked_review_bytes": untracked_review_bytes,
+            "untracked_review_issues": untracked_review_issues,
         }
         if status_error:
             diff_parts.append(f"### status error\n{status_error}")
-        return files, "\n\n".join(diff_parts)[:2_000_000], "\n\n".join(stat_parts)[:12000], metrics
+        diff_text = "\n\n".join(diff_parts)
+        diff_bytes = diff_text.encode("utf-8", errors="replace")
+        if len(diff_bytes) > review_limit:
+            marker = b"\n[review diff text truncated to configured bound]\n"
+            keep = max(0, review_limit - len(marker))
+            first = keep // 2
+            last = keep - first
+            diff_bytes = diff_bytes[:first] + marker + diff_bytes[-last:] if last else diff_bytes[:first] + marker
+        return files, diff_bytes.decode("utf-8", errors="replace"), "\n\n".join(stat_parts)[:12000], metrics
 
     def forbidden_change_reasons(self, lane_name: str, files: list[str]) -> list[str]:
         spec = self.config["lanes"][lane_name]
@@ -1178,7 +1431,7 @@ required evidence or tooling is unavailable.
             "unstaged and staged diff checks",
         ]
         if not status_ok:
-            reasons.append(status_error or "git status failed")
+            reasons.append("Git status failure: " + (status_error or "git status failed"))
         if any(entry.get("kind") == "unmerged" for entry in entries):
             reasons.append("Git merge/conflict state is not safe to review automatically")
         unstaged_check, _, unstaged_err = self.command(
@@ -1199,6 +1452,7 @@ required evidence or tooling is unavailable.
                 f"total diff size {metrics['total_diff_bytes']} bytes exceeds configured limit "
                 f"{self.config.get('max_total_diff_bytes', 524288)}"
             )
+        reasons.extend(str(item) for item in metrics.get("untracked_review_issues", []))
         phase_id = str(lane.get("phase_id") or "")
         phase_config = self.config.get("phase_completion", {}).get(phase_id, {})
         allow_no_change = bool(
@@ -1244,6 +1498,8 @@ required evidence or tooling is unavailable.
                 or "merge/conflict" in reason
                 or "forbidden" in reason
                 or "generated/build" in reason
+                or "untracked" in reason
+                or "git status" in reason.lower()
                 for reason in reasons
             )
             if hard_review:
@@ -1275,6 +1531,11 @@ required evidence or tooling is unavailable.
             )
             return False
         current_files = self.git_status_files(worktree)
+        if current_files is None:
+            self.review(lane_name, [
+                "Git status failed after validation; automatic commit and push are forbidden",
+            ])
+            return False
         if sorted(current_files) != sorted(files):
             self.review(lane_name, [
                 "worktree changed after validation; validated explicit file set no longer matches",
@@ -1631,13 +1892,15 @@ required evidence or tooling is unavailable.
             return 1
         review["decision"] = "RETRY_CURRENT_PHASE"
         review["decided_at"] = utc_now()
+        lane["recovery_context"] = self._capture_recovery_context(lane_name)
         lane["review_reasons"] = []
         lane["review_packet"] = None
         lane["recovery_attempts"] = 0
         lane["last_error"] = "operator requested explicit retry of current phase"
         if self.state.get("global_mode") == "RUNNING":
-            lane["state"] = "RECOVERING" if self.git_dirty(lane["worktree"]) else "READY"
+            lane["state"] = "RECOVERING"
         else:
+            lane["paused_from_state"] = "RECOVERING"
             lane["state"] = "PAUSED"
         self.event("operator authorized retry of current phase", lane_name)
         return 0
