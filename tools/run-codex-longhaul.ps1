@@ -1,8 +1,8 @@
 param(
     [double]$Hours = 5.5,
-    [string]$Model = "gpt-5.6",
+    [string]$Model = "gpt-5.6-luna",
     [ValidateSet("low","medium","high","xhigh","max")]
-    [string]$Effort = "high",
+    [string]$Effort = "max",
     [int]$FailureRetrySeconds = 300
 )
 
