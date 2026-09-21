@@ -71,6 +71,7 @@ Write-Host "Long-haul Codex loop started."
 Write-Host "Branch: $ExpectedBranch"
 Write-Host "Model: $Model"
 Write-Host "Effort: $Effort"
+Write-Host "Approval policy: never (via -c override)"
 Write-Host "Deadline: $Deadline"
 Write-Host "Logs: $LogRoot"
 Write-Host ""
@@ -139,8 +140,8 @@ Complete one substantial phase cleanly and exit. The supervisor will launch a fr
     $CodexArgs = @(
         "exec",
         "--sandbox", "workspace-write",
-        "--ask-for-approval", "never",
         "--model", $Model,
+        "-c", 'approval_policy="never"',
         "-c", $ReasoningConfig,
         $RunPrompt
     )
@@ -218,8 +219,8 @@ Leave git status clean, then exit.
     $CleanupArgs = @(
         "exec",
         "--sandbox", "workspace-write",
-        "--ask-for-approval", "never",
         "--model", $Model,
+        "-c", 'approval_policy="never"',
         "-c", $ReasoningConfig,
         $CleanupPrompt
     )
