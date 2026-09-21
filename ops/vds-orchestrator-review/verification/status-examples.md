@@ -1,6 +1,6 @@
 # Scheduler status examples
 
-Captured with the global mode still PAUSED:
+Captured with the global mode still PAUSED and no runtime worker:
 
     CONTROL PLANE
     branch: orchestration/control-plane
@@ -13,12 +13,17 @@ Captured with the global mode still PAUSED:
 
     W01 BLOCKED_EXTERNAL_GATE: unresolved external gate(s): reviewed integration branch containing required combat lifecycle and population-classification foundations
 
-The paused lane view retains the exact queue positions:
+The lane view retains the exact queue positions and first-run review gates:
 
-    combat     C03  PAUSED
-    authority  A04  PAUSED
+    combat     C03  NEEDS_SOL_REVIEW  CURRENT_PHASE_REVIEW
+    authority  A04  NEEDS_SOL_REVIEW  CURRENT_PHASE_REVIEW
     population L03  PAUSED
     ui         U02  PAUSED
 
 milestone-status reports M01 acceptance criteria and says runtime evidence is
 required; it does not synthesize Windows evidence from Linux.
+
+Repeated status, roadmap-status, milestone-status, review-status, healthcheck,
+and self-test calls use observer supervisors and do not clear worker PIDs,
+change `CODING` ownership, increment recovery counters, clear a live rate-limit
+probe, or rewrite the persisted runtime identity.

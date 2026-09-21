@@ -1,5 +1,31 @@
 # Supervisor Hardening V2 changelog
 
+## Runtime-owner / observer separation + worker sandbox repair — 2026-09-22
+
+- Separated `Supervisor(runtime_owner=True)` daemon construction from the
+  default observer/operator construction. `status`, `roadmap-status`,
+  `milestone-status`, `review-status`, `healthcheck`, and `self-test` no longer
+  reconcile persisted worker ownership or stale Codex probes merely because
+  their local process table is empty.
+- Moved daemon-lock acquisition before runtime-owner construction and startup
+  reconciliation. A second daemon exits without rewriting live-worker state;
+  legitimate restart recovery remains available only to the lock owner.
+- Kept explicit operator mutations narrow and opt-in, and added regression
+  coverage for live CODING ownership, RATE_LIMITED probes, operator commands,
+  lock ordering, restart recovery, observer commands, credential isolation,
+  local-source prompt policy, and disposable smoke-workspace use.
+- Added `skyrim-dev worker-smoke-test`. It runs the official Codex CLI as
+  `skyrimdev` with `gpt-5.6-luna`, `max`, `approval_policy=never`, and
+  `workspace-write` in a disposable directory, then removes that directory.
+- The smoke test is intentionally fail-closed on this VDS: Ubuntu AppArmor's
+  `unprivileged_userns` profile prevents bubblewrap's required user/network
+  namespace setup. No unrestricted fallback or production policy relaxation
+  was installed; autonomous development remains disabled.
+- Preserved the exact C03/A04 review states and documented the complete first-
+  run logs: C03 was operator-paused before emitting a real result marker, while
+  A04 established the `DrawWeaponRequest`/`OwnershipEpoch` stale-reacquisition
+  finding before its workspace-write failure.
+
 ## Roadmap / Dependency Control Plane — 2026-09-21
 
 - Created the dedicated `/srv/projects/skyrim-online-str/control-plane`

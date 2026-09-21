@@ -1,8 +1,8 @@
 {
-  "captured_at": "2026-09-21T17:05:20+00:00",
+  "captured_at": "2026-09-21T18:20:10+00:00",
   "version": 3,
   "global_mode": "PAUSED",
-  "mode_reason": "installation default; explicit start is required",
+  "mode_reason": "operator requested pause",
   "safety_pause": false,
   "codex_availability": {
     "status": "AVAILABLE",
@@ -17,17 +17,18 @@
     "branch": "orchestration/control-plane",
     "applied_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
     "observed_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
-    "last_checked_at": "2026-09-21T17:05:19+00:00",
+    "last_checked_at": "2026-09-21T18:18:36+00:00",
     "status": "VALID",
     "validation_error": ""
   },
   "scheduler": {
-    "cursor": 0,
-    "last_selected_lane": null,
+    "cursor": 2,
+    "last_selected_lane": "authority",
     "task_state_counts": {
       "DONE": 8,
-      "PAUSED": 4,
+      "NEEDS_SOL_REVIEW": 2,
       "BLOCKED_DEPENDENCY": 52,
+      "PAUSED": 2,
       "BLOCKED_EXTERNAL_GATE": 10
     },
     "milestones": {
@@ -49,7 +50,7 @@
       "W09": {"lane": "world", "state": "BLOCKED_EXTERNAL_GATE", "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75"},
       "W10": {"lane": "world", "state": "BLOCKED_EXTERNAL_GATE", "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75"}
     },
-    "audit_event_count": 87
+    "audit_event_count": 103
   },
   "required_workflows_configured": ["Build linux", "Build windows"],
   "development_heads_at_capture": {
@@ -62,24 +63,32 @@
     "combat": {
       "branch": "parallel/combat-foundations",
       "worktree": "/srv/projects/skyrim-online-str/workers/combat",
-      "state": "PAUSED",
-      "scheduler_state": "PAUSED",
+      "state": "NEEDS_SOL_REVIEW",
+      "scheduler_state": "NEEDS_SOL_REVIEW",
       "scheduler_task_id": "C03",
-      "scheduler_reason": "global mode is PAUSED",
+      "scheduler_reason": "lane review pending: CURRENT_PHASE_REVIEW",
       "phase_index": 2,
       "phase_id": "C03",
-      "last_commit": "905cf71c55200509702fb299aaa953ae46dcb374"
+      "last_commit": "905cf71c55200509702fb299aaa953ae46dcb374",
+      "review_reasons": ["worker reported a blocking condition"],
+      "review_type": "CURRENT_PHASE_REVIEW",
+      "worker_attempt": 1,
+      "worker_finished_at": "2026-09-21T18:19:22+00:00"
     },
     "authority": {
       "branch": "parallel/interaction-authority",
       "worktree": "/srv/projects/skyrim-online-str/workers/authority",
-      "state": "PAUSED",
-      "scheduler_state": "PAUSED",
+      "state": "NEEDS_SOL_REVIEW",
+      "scheduler_state": "NEEDS_SOL_REVIEW",
       "scheduler_task_id": "A04",
-      "scheduler_reason": "global mode is PAUSED",
+      "scheduler_reason": "lane review pending: CURRENT_PHASE_REVIEW",
       "phase_index": 3,
       "phase_id": "A04",
-      "last_commit": "caf7dcc31ca4b6d0912f31b151408ba24c13938c"
+      "last_commit": "caf7dcc31ca4b6d0912f31b151408ba24c13938c",
+      "review_reasons": ["worker reported a blocking condition"],
+      "review_type": "CURRENT_PHASE_REVIEW",
+      "worker_attempt": 1,
+      "worker_finished_at": "2026-09-21T18:19:24+00:00"
     },
     "population": {
       "branch": "parallel/population-loader",

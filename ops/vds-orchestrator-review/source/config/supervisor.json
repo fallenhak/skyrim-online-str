@@ -39,6 +39,8 @@
     "active_snapshot_path": "/var/lib/skyrim-dev/state/control-plane/active/roadmap.json"
   },
   "max_audit_events": 500,
+  "worker_smoke_root": "/var/lib/skyrim-dev/smoke",
+  "worker_smoke_timeout_seconds": 180,
   "codex_retry_base_seconds": 900,
   "codex_retry_max_seconds": 3600,
   "post_issue_updates": true,

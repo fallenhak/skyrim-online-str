@@ -1,10 +1,11 @@
 # Skyrim Supervisor Roadmap / Dependency Control Plane review snapshot
 
 This is the secret-free architect-review snapshot of Supervisor V2.1 extended
-with the roadmap/dependency control plane. It was captured on 2026-09-21 after
-installation and verification. Autonomous development remains disabled: the
-orchestrator unit and healthcheck timer are both inactive and disabled, global
-mode is `PAUSED`, and no worker was launched during this pass.
+with the roadmap/dependency control plane and the runtime-owner/worker-sandbox
+repair. It was captured on 2026-09-22 after installation and verification.
+Autonomous development remains disabled: the orchestrator unit and healthcheck
+timer are both inactive and disabled, global mode is `PAUSED`, and no worker
+was launched during this pass.
 
 ## Installed layout
 
@@ -19,6 +20,7 @@ mode is `PAUSED`, and no worker was launched during this pass.
 - Review packets: `/var/lib/skyrim-dev/review-packets/`
 - Worker logs: `/var/log/skyrim-dev/`
 - Empty worker GitHub config: `/var/lib/skyrim-dev/worker-gh-config/`
+- Disposable worker smoke root: `/var/lib/skyrim-dev/smoke/`
 - Control-plane worktree: `/srv/projects/skyrim-online-str/control-plane`
 - Applied control-plane SHA: `3e7e893b4018b488e158aa5cda977399c0e55a75`
 - Validated control cache: `/var/lib/skyrim-dev/state/control-plane/`
@@ -56,6 +58,21 @@ operator interfaces. The third successful phase is counted before checkpoint
 evaluation, so exactly three successes trigger the checkpoint. Roadmap control
 commands are `roadmap-status`, `milestone-status`, `sync-control-plane`,
 `approve-task`, `approve-control-plane`, and `accept-milestone`.
+
+### Runtime-owner / observer separation
+
+The daemon path acquires `/var/lib/skyrim-dev/state/supervisor.lock` before it
+constructs `Supervisor(runtime_owner=True)`. Only that lock-owning daemon may
+clear historical worker PIDs, convert persisted `CODING` lanes to recovery, or
+reconcile a stale `RATE_LIMITED` probe. CLI, healthcheck, and self-test paths
+construct the default observer (`runtime_owner=False`); their state writes are
+disabled. Explicit operator commands enable only their own narrow mutation.
+
+The deterministic regression suite exercises each observer command against
+simulated live workers and asserts unchanged lane state, PID, timestamps,
+recovery counters, worker metadata, scheduler ownership, and Codex probe state.
+It also covers lock contention, legitimate daemon restart recovery, and an
+operator command that must not reconcile an unrelated live lane.
 
 For `CURRENT_PHASE_REVIEW`, `retry` always enters `RECOVERING` while the global
 mode is `RUNNING`. While globally paused it records
@@ -154,18 +171,28 @@ service-owned `/var/lib/skyrim-dev/worker-gh-config`; the outer supervisor keeps
 the real GitHub CLI configuration for its trusted push/CI operations. The
 installed Codex CLI sandbox behavior was inspected on version `0.155.1`.
 
+`skyrim-dev worker-smoke-test` is the only supported validation path for a
+worker write. It uses a disposable scratch directory, local read/write proof,
+no Git repository, no GitHub/SSH credentials, and cleanup after the process
+exits. On this VDS it returns `WORKER_SMOKE_FAILED`: bubblewrap `0.9.0` cannot
+complete the required unprivileged user/network namespace setup under Ubuntu
+24.04 AppArmor's `unprivileged_userns` profile. The exact direct error is
+`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`; no unrestricted
+fallback was used.
+
 Residual risk: workers still run as the same `skyrimdev` Unix account and can
 read any files that account can read, including Codex authentication needed for
 worker operation. A filesystem/user separation was not improvised because it
 would require a materially more complex privilege and authentication
-architecture; this remains for architect review.
+architecture; this remains for architect review. Until the AppArmor/bwrap
+compatibility is repaired through an approved bounded mechanism, autonomous
+development must remain disabled.
 
 ## Verification
 
-- 51 deterministic unit tests passed under `skyrimdev`: the 31 V2.1
-  supervisor tests plus 20 roadmap/control-plane tests for schema rejection,
-  dependency states, exact approvals, fairness, control mutation gates, and
-  milestone acceptance.
+- 65 deterministic unit tests passed: the original 51 tests plus runtime-owner,
+  observer-safety, lock-ordering, prompt-policy, credential-isolation, and
+  disposable-smoke-workspace regressions.
 - `skyrim-dev self-test` passed, including Codex/GitHub authentication checks,
   safe push dry-runs, four clean worktrees, product context, credential
   isolation, and GitHub Actions polling.
@@ -176,6 +203,13 @@ architecture; this remains for architect review.
   integration-branch external gate.
 - `skyrim-dev milestone-status` passed and kept M01 `ACTIVE`; runtime evidence
   remains required.
+- `skyrim-dev worker-smoke-test` failed closed with the explicit
+  `WORKER_SMOKE_FAILED` result; scratch read/write proof did not pass and no
+  development worktree or branch changed.
+- C03/A04 remain `NEEDS_SOL_REVIEW`; C03 had no actual result marker in the
+  complete log and was stopped by the operator pause, while A04's complete log
+  records the `DrawWeaponRequest`/`OwnershipEpoch` finding before the same
+  sandbox failure.
 - UI readiness was verified from the repository workflow and the minimal
   supported Node 20/pnpm 9 tooling was installed; no UI dependencies were
   installed.
@@ -192,5 +226,8 @@ architecture; this remains for architect review.
 See [CHANGELOG.md](CHANGELOG.md), [verification/self-test-results.md](verification/self-test-results.md),
 [verification/security-scan.md](verification/security-scan.md),
 [verification/control-plane-schema.md](verification/control-plane-schema.md),
+[verification/first-run-blockers.md](verification/first-run-blockers.md),
+[verification/sandbox-diagnosis.md](verification/sandbox-diagnosis.md),
+[verification/worker-smoke-results.md](verification/worker-smoke-results.md),
 [verification/ui-tooling-readiness.md](verification/ui-tooling-readiness.md), and
 [state/persistent-lane-state.json](state/persistent-lane-state.json).

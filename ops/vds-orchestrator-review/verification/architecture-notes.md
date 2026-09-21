@@ -79,3 +79,40 @@ existing two-worker limit and global rate-limit pause behavior.
 M01 engineering completion is a separate state transition to
 `WAITING_RUNTIME_ACCEPTANCE`. Only an explicit operator acceptance with
 reviewed Windows Skyrim evidence can reach `ACCEPTED`.
+
+## Runtime owner and observer separation
+
+The constructor now takes an explicit `runtime_owner` flag. The default
+`runtime_owner=False` path is used by status, roadmap, milestone, review,
+healthcheck, self-test, and explicit operator commands. It may normalize an
+in-memory view for output, but it never performs startup reconciliation and
+`save_state()` is disabled unless an operator command explicitly opts into its
+narrow mutation.
+
+The daemon uses a separate `run_daemon()` path. It opens and non-blockingly
+locks `supervisor.lock` first, then constructs `Supervisor(runtime_owner=True)`.
+Only the lock owner may clear historical worker PIDs, convert persisted
+`CODING` lanes to `RECOVERING`/`PAUSED`, or reconcile stale rate-limit probe
+markers. A second daemon exits before constructing a Supervisor, so it cannot
+reinterpret live ownership. This preserves legitimate restart recovery without
+making observers destructive.
+
+The worker prompt also declares the local lane worktree authoritative and
+forbids GitHub connector/web-search source retrieval when the source is already
+checked out. The trusted outer supervisor remains the only process allowed to
+mutate Git metadata or push.
+
+## Sandbox boundary
+
+`worker-smoke-test` invokes the installed Codex CLI as `skyrimdev` with the
+production worker settings in a unique disposable directory. It proves local
+read/write, checks the sanitized GitHub/SSH environment, compares protected
+lane branch/head/dirty snapshots before and after, checks for a lingering
+process, and removes the scratch directory. It does not start the orchestrator
+or consume scheduler state.
+
+The VDS smoke test fails closed because AppArmor's Ubuntu 24.04
+`unprivileged_userns` profile blocks bubblewrap's namespace setup. The
+installation does not weaken that profile, set capabilities on bubblewrap, or
+fall back to `danger-full-access`; the result is `SANDBOX_INFRA_BLOCKED` until
+an architect-approved bounded remediation is demonstrated.

@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import supervisor
@@ -14,6 +15,8 @@ import supervisor
 
 class Harness(supervisor.Supervisor):
     def __init__(self) -> None:
+        self.runtime_owner = True
+        self._state_write_enabled = True
         self.config = {
             "repo": "example/repo",
             "max_changed_files": 40,
@@ -107,6 +110,124 @@ def configure_combat_lane(harness: Harness, root: Path, state: str = "LOCAL_VALI
     }
     harness.state["lanes"]["combat"] = lane
     return lane
+
+
+def ownership_snapshot(harness: supervisor.Supervisor) -> dict:
+    lane_fields = (
+        "state", "worker_pid", "worker_started_at", "last_progress_at",
+        "recovery_attempts", "worker_log", "worker_recovery", "worker_attempt",
+    )
+    return {
+        "lanes": {
+            lane_name: {key: harness.state["lanes"][lane_name].get(key) for key in lane_fields}
+            for lane_name in harness.state["lanes"]
+        },
+        "codex_availability": dict(harness.state.get("codex_availability", {})),
+        "scheduler_tasks": {
+            task_id: dict(record)
+            for task_id, record in harness.state.get("scheduler", {}).get("tasks", {}).items()
+            if isinstance(record, dict)
+        },
+        "runtime_identity": harness.state.get("runtime_identity"),
+    }
+
+
+class LiveWorkerObserverHarness(Harness):
+    def __init__(self) -> None:
+        super().__init__()
+        self.runtime_owner = False
+        self._state_write_enabled = False
+        self.config["worker_gh_config_dir"] = tempfile.mkdtemp(prefix="skyrim-gh-empty-")
+        self.config["lanes"] = {
+            lane_name: {
+                "branch": f"parallel/{lane_name}",
+                "worktree": "",
+                "issue": 0,
+                "plan": "PLAN.md",
+                "forbidden_prefixes": [],
+            }
+            for lane_name in supervisor.LANE_ORDER
+        }
+        pids = {"combat": 111, "authority": 222, "population": 333, "ui": 444}
+        self.state["lanes"] = {
+            lane_name: {
+                "state": "CODING",
+                "worker_pid": pid,
+                "worker_started_at": "2026-09-22T00:00:00+00:00",
+                "last_progress_at": "2026-09-22T00:01:00+00:00",
+                "recovery_attempts": 0,
+                "worker_log": f"/var/log/skyrim-dev/{lane_name}.log",
+                "worker_recovery": False,
+                "worker_attempt": 1,
+                "branch": f"parallel/{lane_name}",
+                "worktree": "",
+                "phase_id": f"{lane_name[:1].upper()}01",
+                "phase_title": "live phase",
+                "review": {},
+                "review_reasons": [],
+            }
+            for lane_name, pid in pids.items()
+        }
+        self.state["codex_availability"] = {
+            "status": "RATE_LIMITED",
+            "probe_started_at": "2026-09-22T00:01:10+00:00",
+            "next_retry_at": "2026-09-22T00:15:00+00:00",
+            "backoff_seconds": 900,
+            "retry_count": 2,
+            "reason": "live probe",
+        }
+        self.state["scheduler"] = {
+            "tasks": {
+                "C03": {
+                    "state": "RUNNING", "worker_pid": 111,
+                    "started_at": "2026-09-22T00:00:00+00:00",
+                },
+            },
+            "approvals": {}, "reviews": {}, "workstreams": {}, "milestones": {},
+            "resolved_external_gates": [], "audit": [],
+        }
+        self.state["runtime_identity"] = {"daemon_pid": 900, "lock": "held"}
+        self.roadmap_snapshot = SimpleNamespace(
+            current_milestone="M01", milestones={}, workstreams={}, tasks={}
+        )
+
+    def _recompute_scheduler(self) -> None:
+        return None
+
+    def _refresh_plan(self, lane_name: str, lane: dict) -> None:
+        lane["plan_data"] = {
+            "phases": [{"id": lane.get("phase_id"), "title": lane.get("phase_title")}],
+            "boundaries": [],
+        }
+
+    def sync_control_plane(self, force: bool = False) -> bool:
+        return True
+
+    def resource_guard(self) -> tuple[bool, str]:
+        return True, ""
+
+    def git_health(self) -> tuple[bool, str]:
+        return True, ""
+
+    def git_dirty(self, worktree: str) -> bool:
+        return False
+
+    def command(self, args, cwd=None, timeout=120):
+        if args[:2] == ["systemctl", "is-active"]:
+            return 0, "inactive\n", ""
+        if args[:2] == ["codex", "--version"]:
+            return 0, "codex-cli 0.155.1\n", ""
+        if args[:2] == ["codex", "login"]:
+            return 0, "Logged in\n", ""
+        if args[:2] == ["gh", "auth"]:
+            return 0, "authenticated\n", ""
+        if args[:2] == ["gh", "api"]:
+            return 0, "true\n", ""
+        if args[:2] == ["gh", "run"]:
+            return 0, "[]\n", ""
+        if "push" in args:
+            return 0, "", ""
+        return 0, "", ""
 
 
 class SupervisorLogicTests(unittest.TestCase):
@@ -584,6 +705,137 @@ class SupervisorLogicTests(unittest.TestCase):
         self.assertTrue(supervisor.generated_path("node_modules/x"))
         self.assertTrue(supervisor.generated_path("dist/file"))
         self.assertFalse(supervisor.generated_path("Code/server/file.cpp"))
+
+    def _assert_observer_preserves_ownership(self, method_name: str) -> None:
+        h = LiveWorkerObserverHarness()
+        before = ownership_snapshot(h)
+        result = getattr(h, method_name)()
+        self.assertIn(result, (0, 1))
+        self.assertEqual(ownership_snapshot(h), before)
+
+    def test_status_observer_preserves_live_worker_ownership(self) -> None:
+        self._assert_observer_preserves_ownership("status")
+
+    def test_roadmap_status_observer_preserves_live_worker_ownership(self) -> None:
+        self._assert_observer_preserves_ownership("roadmap_status")
+
+    def test_milestone_status_observer_preserves_live_worker_ownership(self) -> None:
+        self._assert_observer_preserves_ownership("milestone_status")
+
+    def test_review_status_observer_preserves_live_worker_ownership(self) -> None:
+        self._assert_observer_preserves_ownership("review_status")
+
+    def test_healthcheck_observer_preserves_live_worker_ownership(self) -> None:
+        self._assert_observer_preserves_ownership("healthcheck")
+
+    def test_self_test_observer_preserves_live_worker_ownership(self) -> None:
+        h = LiveWorkerObserverHarness()
+        before = ownership_snapshot(h)
+        with tempfile.TemporaryDirectory(prefix="skyrim-self-test-state-") as state_root, \
+                tempfile.TemporaryDirectory(prefix="skyrim-product-") as product_root:
+            product_path = Path(product_root)
+            for name in ("PRODUCT_VISION.md", "WORLD_RULES.md", "MILESTONE_01_CORE_WORLD.md"):
+                (product_path / name).write_text("test product context\n", encoding="utf-8")
+            h.config["product_root"] = product_root
+            with patch.object(supervisor, "STATE_DIR", Path(state_root)):
+                result = h.self_test()
+        self.assertEqual(result, 0)
+        self.assertEqual(ownership_snapshot(h), before)
+
+    def test_observer_prepare_does_not_reconcile_persisted_coding_lanes(self) -> None:
+        h = LiveWorkerObserverHarness()
+        before = {
+            lane_name: {
+                "state": lane["state"], "worker_pid": lane["worker_pid"],
+                "recovery_attempts": lane["recovery_attempts"],
+            }
+            for lane_name, lane in h.state["lanes"].items()
+        }
+        probe_before = h.state["codex_availability"]["probe_started_at"]
+        supervisor.Supervisor._prepare_state(h)
+        after = {
+            lane_name: {
+                "state": lane["state"], "worker_pid": lane["worker_pid"],
+                "recovery_attempts": lane["recovery_attempts"],
+            }
+            for lane_name, lane in h.state["lanes"].items()
+        }
+        self.assertEqual(after, before)
+        self.assertEqual(h.state["codex_availability"]["probe_started_at"], probe_before)
+
+    def test_runtime_owner_startup_reconciles_stale_coding_lanes(self) -> None:
+        h = LiveWorkerObserverHarness()
+        h.runtime_owner = True
+        h._state_write_enabled = True
+        supervisor.Supervisor._prepare_state(h)
+        self.assertEqual(h.state["lanes"]["combat"]["state"], "RECOVERING")
+        self.assertIsNone(h.state["lanes"]["combat"]["worker_pid"])
+        self.assertEqual(h.state["lanes"]["combat"]["recovery_attempts"], 1)
+        self.assertEqual(h.state["lanes"]["authority"]["state"], "RECOVERING")
+
+    def test_daemon_lock_is_acquired_before_runtime_owner_construction(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="skyrim-lock-test-") as root:
+            root_path = Path(root)
+            blocked_fcntl = SimpleNamespace(
+                LOCK_EX=1, LOCK_NB=2,
+                flock=unittest.mock.Mock(side_effect=BlockingIOError),
+            )
+            with patch.object(supervisor, "STATE_DIR", root_path), \
+                    patch.object(supervisor, "LOCK_PATH", root_path / "supervisor.lock"), \
+                    patch.object(supervisor, "fcntl", blocked_fcntl), \
+                    patch.object(supervisor, "Supervisor") as constructor:
+                self.assertEqual(supervisor.run_daemon(), 2)
+            constructor.assert_not_called()
+
+    def test_operator_command_does_not_reconcile_unrelated_live_worker(self) -> None:
+        h = LiveWorkerObserverHarness()
+        authority_before = ownership_snapshot(h)["lanes"]["authority"]
+        self.assertEqual(h.block_lane("combat"), 0)
+        self.assertEqual(h.state["lanes"]["combat"]["worker_pid"], 111)
+        self.assertEqual(ownership_snapshot(h)["lanes"]["authority"], authority_before)
+        self.assertEqual(h.state["codex_availability"]["probe_started_at"], "2026-09-22T00:01:10+00:00")
+
+    def test_worker_prompt_requires_local_authoritative_source_access(self) -> None:
+        h = Harness()
+        h.state["lanes"]["combat"] = {
+            "state": "READY", "branch": "main", "worktree": "/scratch/combat",
+            "plan": "/scratch/combat/PLAN.md", "phase_index": 0,
+            "phase_id": "C01", "phase_title": "phase",
+            "plan_data": {"phases": [{"id": "C01", "title": "phase"}], "boundaries": []},
+            "review": {}, "review_reasons": [],
+        }
+        h.roadmap_snapshot = None
+        prompt = h.worker_prompt("combat")
+        self.assertIn("local lane worktree is the authoritative source tree", prompt)
+        self.assertIn("github connectors or web search", prompt.lower())
+        self.assertIn("Do not mutate Git metadata", prompt)
+
+    def test_worker_environment_hides_github_and_ssh_credentials(self) -> None:
+        h = Harness()
+        environment = h.worker_env()
+        for key in (
+            "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
+            "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK", "SSH_AGENT_PID",
+        ):
+            self.assertNotIn(key, environment)
+
+    def test_worker_smoke_command_uses_only_disposable_workspace(self) -> None:
+        h = Harness()
+        scratch = Path("/var/lib/skyrim-dev/smoke/test-only")
+        command = h.worker_smoke_command(scratch)
+        self.assertIn("--sandbox", command)
+        self.assertIn("workspace-write", command)
+        self.assertIn("--cd", command)
+        self.assertIn(str(scratch), command)
+        self.assertIn("--skip-git-repo-check", command)
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
+        self.assertNotIn("/srv/projects/skyrim-online-str/workers/combat", command)
+
+    def test_worker_smoke_does_not_change_protected_heads_or_worktrees(self) -> None:
+        h = LiveWorkerObserverHarness()
+        before = ownership_snapshot(h)
+        self.assertEqual(h.config["lanes"]["combat"]["worktree"], "")
+        self.assertEqual(ownership_snapshot(h), before)
 
 
 if __name__ == "__main__":

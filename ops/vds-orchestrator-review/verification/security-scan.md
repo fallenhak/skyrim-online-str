@@ -1,6 +1,6 @@
-# Secret and credential scan — V2.1
+# Secret and credential scan — runtime-owner/sandbox repair
 
-The V2.1 review snapshot was scanned after the supervisor/test/doc updates and
+The review snapshot was scanned after the supervisor/test/doc updates and
 before publication. The scan scope was the review tree only; authentication
 files, GitHub hosts/configuration, SSH keys, runtime logs, and
 conversation/session files were not copied into it.
@@ -18,9 +18,12 @@ Checks performed:
 - verified recovery prompt evidence is bounded and passed through the existing
   redaction helper, and that binary/oversize untracked content is represented
   only by metadata.
+- verified the worker smoke command is scratch-only, uses no Git operation, and
+  does not expose GitHub or SSH credential variables.
 
-Result: no credential value or private-key material was found in the V2.1
-review snapshot. The same-account filesystem residual risk is documented in
+Result: no credential value or private-key material was found in the
+review snapshot. The same-account filesystem residual risk and the
+`SANDBOX_INFRA_BLOCKED` result are documented in
 [residual-risks.md](residual-risks.md).
 
 The broad marker scan reported `supervisor.py` only because the source contains

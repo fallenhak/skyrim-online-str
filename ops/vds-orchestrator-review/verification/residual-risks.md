@@ -36,3 +36,13 @@
 - Node 20/pnpm 9 tooling is installed from the repository's explicit workflow
   contract, but UI dependencies were not installed or built during this
   control-plane pass.
+- The official Codex `workspace-write` sandbox is not usable on this VDS as
+  currently configured. Ubuntu 24.04 AppArmor transitions unprivileged user
+  namespaces into `unprivileged_userns`, whose policy denies the capability and
+  `/proc/*/uid_map` operations bubblewrap needs; direct bwrap testing reports
+  `Failed RTM_NEWADDR: Operation not permitted`. No broad AppArmor relaxation,
+  setcap workaround, root worker, or unrestricted Codex mode was attempted.
+  This is an explicit `SANDBOX_INFRA_BLOCKED` gate for autonomous development.
+- The smoke command's local write proof therefore fails closed. The command is
+  retained as a repeatable diagnostic and must pass before any worker phase is
+  considered runnable again.

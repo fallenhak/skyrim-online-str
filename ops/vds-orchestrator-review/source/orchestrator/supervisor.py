@@ -18,6 +18,7 @@ import signal
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -294,7 +295,11 @@ def tail_text(path: Path, limit: int = 12000) -> str:
 
 
 class Supervisor:
-    def __init__(self) -> None:
+    def __init__(self, runtime_owner: bool = False) -> None:
+        # Only the daemon that owns the process lock may reconcile persisted
+        # runtime markers. CLI/healthcheck instances are observers by default.
+        self.runtime_owner = bool(runtime_owner)
+        self._state_write_enabled = self.runtime_owner
         self.config = read_json(CONFIG_PATH, {})
         if not self.config:
             raise RuntimeError(f"missing configuration: {CONFIG_PATH}")
@@ -397,7 +402,8 @@ class Supervisor:
         availability.setdefault("retry_count", 0)
         availability.setdefault("probe_started_at", None)
         availability.setdefault("reason", "")
-        self._reconcile_startup_runtime()
+        if self.runtime_owner:
+            self._reconcile_startup_runtime()
         self.state.setdefault("lanes", {})
         self.state.setdefault("events", [])
         for lane_name in LANE_ORDER:
@@ -456,11 +462,11 @@ class Supervisor:
                 }
             lane.setdefault("worker_attempt", 0)
             self._refresh_plan(lane_name, lane)
-            if lane_name not in self.processes:
+            if self.runtime_owner and lane_name not in self.processes:
                 # A persisted PID is only historical evidence after a supervisor
                 # restart.  Never treat it as a live worker process.
                 lane["worker_pid"] = None
-            if lane.get("state") == "CODING":
+            if self.runtime_owner and lane.get("state") == "CODING":
                 lane["state"] = "RECOVERING" if self.state.get("global_mode") == "RUNNING" else "PAUSED"
                 lane["recovery_attempts"] = min(1, int(lane.get("recovery_attempts", 0)) + 1)
                 lane["last_error"] = "supervisor restart interrupted worker; recovery required"
@@ -952,6 +958,8 @@ class Supervisor:
         clear only that marker and retain a bounded retry window without
         changing lane recovery budgets.
         """
+        if not self.runtime_owner:
+            return
         active_lanes = {
             lane_name for lane_name, process in self.processes.items()
             if process.poll() is None
@@ -996,10 +1004,17 @@ class Supervisor:
         })
         del self.state["events"][:-200]
 
-    def save_state(self) -> None:
+    def enable_operator_writes(self) -> None:
+        """Allow an explicit operator command to persist its narrow mutation."""
+        self._state_write_enabled = True
+
+    def save_state(self) -> bool:
+        if not getattr(self, "_state_write_enabled", True):
+            return False
         self.state["updated_at"] = utc_now()
         atomic_write_json(STATE_PATH, self.state, 0o640)
         self.last_save = time.monotonic()
+        return True
 
     def log(self, message: str, lane: str | None = None) -> None:
         LOG_ROOT.mkdir(parents=True, exist_ok=True)
@@ -1174,6 +1189,8 @@ class Supervisor:
         return result
 
     def _request_task_review(self, task: ScheduledTask, reason: str) -> None:
+        if not getattr(self, "_state_write_enabled", True):
+            return
         scheduler = self.state["scheduler"]
         reviews = scheduler.setdefault("reviews", {})
         existing = reviews.get(task.task_id)
@@ -1541,6 +1558,190 @@ class Supervisor:
             environment.pop(key, None)
         return environment
 
+    def worker_smoke_command(self, scratch: Path) -> list[str]:
+        return [
+            "codex", "exec",
+            "--model", "gpt-5.6-luna",
+            "--config", 'model_reasoning_effort="max"',
+            "--config", 'approval_policy="never"',
+            "--sandbox", "workspace-write",
+            "--cd", str(scratch),
+            "--ephemeral",
+            "--color", "never",
+            "--skip-git-repo-check",
+            (
+                "Read input.txt first. Only when its exact content is "
+                "harmless smoke input, create output.txt containing exactly "
+                "smoke-write-ok. Do not access the network or any path outside "
+                "the current scratch workspace."
+            ),
+        ]
+
+    def _pids_with_command_marker(self, marker: str) -> list[int]:
+        matches: list[int] = []
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit() or int(entry.name) == os.getpid():
+                continue
+            try:
+                command_line = (entry / "cmdline").read_bytes().decode(
+                    "utf-8", errors="replace"
+                )
+            except OSError:
+                continue
+            if marker in command_line:
+                matches.append(int(entry.name))
+        return matches
+
+    def _development_snapshot(self) -> dict[str, dict[str, Any]]:
+        snapshot: dict[str, dict[str, Any]] = {}
+        for lane_name in LANE_ORDER:
+            spec = self.config.get("lanes", {}).get(lane_name, {})
+            worktree = str(spec.get("worktree") or "")
+            if not worktree:
+                continue
+            snapshot[lane_name] = {
+                "branch": self.git_branch(worktree),
+                "head": self.git_head(worktree),
+                "dirty": self.git_dirty(worktree),
+            }
+        return snapshot
+
+    def worker_smoke_test(self) -> int:
+        """Exercise the bounded Codex worker sandbox in a disposable directory."""
+        smoke_root = Path(str(
+            self.config.get("worker_smoke_root", STATE_ROOT / "smoke")
+        ))
+        timeout_seconds = max(
+            30, int(self.config.get("worker_smoke_timeout_seconds", 180))
+        )
+        forbidden_credentials = (
+            "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
+            "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK", "SSH_AGENT_PID",
+        )
+        environment = self.worker_env()
+        credentials_exposed = any(key in environment for key in forbidden_credentials[:-2])
+        ssh_exposed = any(key in environment for key in forbidden_credentials[-2:])
+        before = self._development_snapshot()
+        scratch: Path | None = None
+        output = ""
+        return_code: int | None = None
+        timed_out = False
+        cleanup_error = ""
+        try:
+            smoke_root.mkdir(parents=True, exist_ok=True)
+            os.chmod(smoke_root, 0o750)
+            scratch = Path(tempfile.mkdtemp(prefix="codex-worker-", dir=str(smoke_root)))
+            os.chmod(scratch, 0o700)
+            atomic_write_text(scratch / "input.txt", "harmless smoke input\n", 0o600)
+            process = subprocess.Popen(
+                self.worker_smoke_command(scratch),
+                cwd=str(scratch),
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                start_new_session=True,
+            )
+            try:
+                output, _ = process.communicate(timeout=timeout_seconds)
+                return_code = process.returncode
+            except subprocess.TimeoutExpired as exc:
+                timed_out = True
+                output = exc.output or ""
+                if isinstance(output, bytes):
+                    output = output.decode("utf-8", errors="replace")
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except OSError:
+                    pass
+                try:
+                    tail, _ = process.communicate(timeout=10)
+                    output += tail or ""
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                    tail, _ = process.communicate(timeout=10)
+                    output += tail or ""
+                return_code = process.returncode if process.returncode is not None else 124
+        except (OSError, ValueError) as exc:
+            output = f"worker smoke process failed: {exc}"
+            return_code = 127
+
+        after = self._development_snapshot()
+        output = redact(output or "")
+        output_lower = output.lower()
+        output_path = scratch / "output.txt" if scratch else None
+        local_write_ok = False
+        if output_path is not None:
+            try:
+                local_write_ok = output_path.read_text(encoding="utf-8") == "smoke-write-ok\n"
+            except OSError:
+                local_write_ok = False
+        local_read_ok = local_write_ok
+        rtm_error = bool(re.search(r"RTM_NEWADDR", output, re.IGNORECASE))
+        sandbox_failure = bool(re.search(
+            r"bwrap|loopback|workspace command runner .*fail|sandbox .*fail",
+            output_lower,
+        ))
+        persistent_processes = self._pids_with_command_marker(str(scratch)) if scratch else []
+        worktree_modified = before != after
+        branch_changed = any(
+            before.get(name, {}).get("branch") != after.get(name, {}).get("branch")
+            or before.get(name, {}).get("head") != after.get(name, {}).get("head")
+            for name in set(before) | set(after)
+        )
+        if scratch is not None:
+            try:
+                shutil.rmtree(scratch)
+            except OSError as exc:
+                cleanup_error = str(exc)
+
+        print(f"worker local filesystem read: {'PASS' if local_read_ok else 'FAIL'}")
+        print(f"worker local allowed write: {'PASS' if local_write_ok else 'FAIL'}")
+        print(f"bwrap RTM_NEWADDR error: {'PRESENT' if rtm_error else 'ABSENT'}")
+        print(f"sandbox failure signal: {'PRESENT' if sandbox_failure else 'ABSENT'}")
+        print(f"GitHub credentials exposed: {'YES' if credentials_exposed else 'NO'}")
+        print(f"SSH agent exposed: {'YES' if ssh_exposed else 'NO'}")
+        print(f"development worktree modified: {'YES' if worktree_modified else 'NO'}")
+        print(f"development branch changed: {'YES' if branch_changed else 'NO'}")
+        print(f"persistent worker process: {'YES' if persistent_processes else 'NO'}")
+
+        reasons: list[str] = []
+        if return_code != 0:
+            reasons.append(f"codex exit={return_code}")
+        if timed_out:
+            reasons.append("smoke command timed out")
+        if not local_read_ok or not local_write_ok:
+            reasons.append("scratch read/write proof failed")
+        if sandbox_failure:
+            reasons.append("Codex workspace-write sandbox reported a bwrap/loopback failure")
+        if credentials_exposed:
+            reasons.append("worker environment exposed GitHub credentials")
+        if ssh_exposed:
+            reasons.append("worker environment exposed SSH agent variables")
+        if worktree_modified:
+            reasons.append("development worktree changed")
+        if branch_changed:
+            reasons.append("development branch changed")
+        if persistent_processes:
+            reasons.append(f"persistent worker process(es): {persistent_processes}")
+        if cleanup_error:
+            reasons.append(f"scratch cleanup failed: {cleanup_error}")
+        if reasons:
+            failure_prefix = "SANDBOX_INFRA_BLOCKED: " if sandbox_failure else ""
+            print("WORKER_SMOKE_FAILED: " + failure_prefix + redact("; ".join(reasons)))
+            if output:
+                excerpt = output[-1200:].strip().replace("\n", " | ")
+                print("worker evidence: " + redact(excerpt))
+            return 1
+        print("WORKER_SMOKE_OK")
+        return 0
+
     def command(
         self, args: list[str], cwd: str | None = None, timeout: int = 120
     ) -> tuple[int, str, str]:
@@ -1788,6 +1989,15 @@ Acceptance criteria: {json.dumps(task_acceptance, sort_keys=True)}
 Perform exactly this one phase and then stop. Read PLAN.md and current source first.
 Respect its ownership boundary and hard boundaries:
 {boundaries}
+
+SOURCE ACCESS POLICY
+
+The local lane worktree is the authoritative source tree. Read, search, and edit
+source locally using rg/grep/find/read tools. Edit only this local worktree. Do
+not use GitHub connectors or web search to retrieve repository files already
+available here. Do not use GitHub as a workaround for broken filesystem access.
+Do not mutate Git metadata. Do not commit, push, reset, clean, merge, rebase,
+switch, or checkout; the trusted outer supervisor owns all Git operations.
 
 Edit only ordinary source, test, and documentation files needed for this phase. Do not edit
 PLAN.md, supervisor/service files, credentials, Git metadata, or unrelated lanes.
@@ -3614,6 +3824,28 @@ def write_control(mode: str, reason: str) -> int:
     return 0
 
 
+def run_daemon() -> int:
+    """Acquire the daemon lock before constructing a runtime owner."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with LOCK_PATH.open("w", encoding="utf-8") as lock_handle:
+        if fcntl is not None:
+            try:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print("another supervisor instance is already running", file=sys.stderr)
+                return 2
+
+        # Startup reconciliation is intentionally below the lock acquisition.
+        supervisor = Supervisor(runtime_owner=True)
+
+        def stop_handler(signum: int, frame: Any) -> None:
+            supervisor.stop_requested = True
+
+        signal.signal(signal.SIGTERM, stop_handler)
+        signal.signal(signal.SIGINT, stop_handler)
+        return supervisor.run()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Skyrim deterministic Codex supervisor")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -3625,6 +3857,7 @@ def main() -> int:
     sub.add_parser("review-status")
     sub.add_parser("healthcheck")
     sub.add_parser("self-test")
+    sub.add_parser("worker-smoke-test")
     for command_name in ("approve", "retry", "block"):
         command_parser = sub.add_parser(command_name)
         command_parser.add_argument("lane", choices=LANE_ORDER)
@@ -3648,7 +3881,15 @@ def main() -> int:
         write_control("PAUSED", "operator requested stop")
         return subprocess.run(["systemctl", "stop", UNIT_NAME], check=False).returncode
 
-    supervisor = Supervisor()
+    if args.command == "run":
+        return run_daemon()
+
+    supervisor = Supervisor(runtime_owner=False)
+    if args.command in {
+        "sync-control-plane", "approve", "retry", "block", "approve-task",
+        "approve-control-plane", "accept-milestone",
+    }:
+        supervisor.enable_operator_writes()
     if args.command == "status":
         return supervisor.status()
     if args.command == "roadmap-status":
@@ -3663,6 +3904,8 @@ def main() -> int:
         return supervisor.healthcheck()
     if args.command == "self-test":
         return supervisor.self_test()
+    if args.command == "worker-smoke-test":
+        return supervisor.worker_smoke_test()
     if args.command == "approve":
         result = supervisor.approve_review(args.lane)
         supervisor.save_state()
@@ -3689,21 +3932,7 @@ def main() -> int:
                 return 2
         return supervisor.accept_milestone(args.milestone_id, evidence)
 
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    with LOCK_PATH.open("w", encoding="utf-8") as lock_handle:
-        if fcntl is not None:
-            try:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                print("another supervisor instance is already running", file=sys.stderr)
-                return 2
-
-        def stop_handler(signum: int, frame: Any) -> None:
-            supervisor.stop_requested = True
-
-        signal.signal(signal.SIGTERM, stop_handler)
-        signal.signal(signal.SIGINT, stop_handler)
-        return supervisor.run()
+    raise AssertionError(f"unhandled command: {args.command}")
 
 
 if __name__ == "__main__":
