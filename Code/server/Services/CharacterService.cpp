@@ -198,9 +198,9 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
     if (!isPlayer && !sessionService.CanProcessGameplay(acMessage.pPlayer->GetConnectionId()))
         return;
 
+    const auto identity = m_world.GetActorPopulationIdentityResolver().Resolve(refId, message.FormId, message.LeveledNpcPickId);
     if (!isPlayer)
     {
-        const auto identity = m_world.GetActorPopulationIdentityResolver().Resolve(refId, message.FormId, message.LeveledNpcPickId);
         spdlog::debug(
             "Actor population identity for reference {:x}:{:x}: resolved reference {:08x}, NPC {:08x}, race {:08x} '{}', classification {}, source {}, trusted {}",
             refId.ModId,
@@ -292,12 +292,18 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
             if (transferToLeader)
                 TransferOwnership(acMessage.pPlayer, *itor, OwnershipTransferReason::LeaderAssignment);
 
+            // Canonical actors created by older code paths may not have the
+            // trusted projection yet. Hydrate it once, but never overwrite an
+            // existing incarnation's identity from a later client claim.
+            if (!m_world.all_of<ActorPopulationIdentityComponent>(*itor))
+                m_world.emplace<ActorPopulationIdentityComponent>(*itor, identity);
+
             return;
         }
     }
 
     // This entity has no owner create it
-    CreateCharacter(acMessage);
+    CreateCharacter(acMessage, identity);
 }
 
 void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwnershipTransfer>& acMessage) const noexcept
@@ -633,7 +639,7 @@ void CharacterService::OnSubtitleRequest(const PacketEvent<SubtitleRequest>& acM
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }
 
-void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>& acMessage) const noexcept
+void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>& acMessage, const ActorPopulationIdentity& acIdentity) const noexcept
 {
     auto& message = acMessage.Packet;
 
@@ -681,6 +687,7 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     auto* const pServer = GameServer::Get();
 
     m_world.emplace<OwnerComponent>(cEntity, acMessage.pPlayer);
+    m_world.emplace<ActorPopulationIdentityComponent>(cEntity, acIdentity);
 
     const GameId cellId = persistentCharacter.has_value() ? persistentCharacter->Cell : message.CellId;
     const GameId worldSpaceId = persistentCharacter.has_value() ? persistentCharacter->WorldSpace : message.WorldSpaceId;

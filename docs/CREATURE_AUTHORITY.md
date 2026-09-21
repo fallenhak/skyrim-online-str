@@ -28,8 +28,11 @@ architecture; it does not introduce server-simulated Skyrim AI.
    here; this path is not a client classification grant.
 3. **Canonical entity and initial owner** — `CreateCharacter` creates the ECS
    entity and attaches `OwnerComponent` with the assigning player and a
-   non-zero ownership epoch. `CharacterComponent` records creature/player,
-   mount, summon, dragon, and death classification used by later policies.
+   non-zero ownership epoch. It also attaches the server-only
+   `ActorPopulationIdentityComponent`, which stores the trusted population
+   classification and resolved server form IDs. `CharacterComponent` records
+   mount, summon, dragon, and death state; its client-provided base identity is
+   not a combat authority source.
 4. **Spawn publication** — `CharacterSpawnedEvent` serializes the canonical
    state, including server ID and ownership epoch, and sends it to eligible
    clients through the server range filter. A remote client creates or

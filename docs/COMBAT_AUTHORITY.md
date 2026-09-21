@@ -28,8 +28,9 @@ The server can currently establish:
 - the sender's connection and player;
 - the current owner and ownership epoch for a server entity;
 - the server entity's current lifecycle/incarnation;
-- whether the target is a known character and, where classification is
-  available, whether it is a creature rather than a player/mount/summon;
+- the server-only `ActorPopulationIdentityComponent`, including whether the
+  target is a trusted creature rather than an unknown/client-claimed actor;
+- the current character flags needed to exclude players, mounts, and summons;
 - whether the accepted health/death observation is current and finite.
 
 The server cannot currently establish from a client hit claim alone:

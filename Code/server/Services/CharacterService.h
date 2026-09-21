@@ -24,6 +24,7 @@ struct RequestRespawn;
 struct DialogueRequest;
 struct SubtitleRequest;
 struct Player;
+struct ActorPopulationIdentity;
 
 /**
  * @brief Manages player and actor state.
@@ -64,7 +65,7 @@ protected:
     void OnDialogueRequest(const PacketEvent<DialogueRequest>& acMessage) const noexcept;
     void OnSubtitleRequest(const PacketEvent<SubtitleRequest>& acMessage) const noexcept;
 
-    void CreateCharacter(const PacketEvent<AssignCharacterRequest>& acMessage) const noexcept;
+    void CreateCharacter(const PacketEvent<AssignCharacterRequest>& acMessage, const ActorPopulationIdentity& acIdentity) const noexcept;
     void PopulateAssignmentResponse(entt::entity aEntity, AssignCharacterResponse& aResponse) const noexcept;
     static const char* GetOwnershipTransferReasonName(OwnershipTransferReason aReason) noexcept;
     bool CanClaimOwnership(Player* apPlayer, entt::entity aEntity, uint32_t aExpectedOwnershipEpoch, OwnershipTransferReason aReason) const noexcept;

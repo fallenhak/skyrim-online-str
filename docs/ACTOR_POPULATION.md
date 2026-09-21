@@ -77,6 +77,13 @@ explicit rejection reason. The client marks the local entity as
 population-suppressed, preventing retry loops during the current connection.
 Cancelled assignments are cleaned up instead.
 
+After an assignment is accepted, the canonical server entity receives an
+`ActorPopulationIdentityComponent`. It stores only the resolver's trusted
+player/server-reference/server-NPC projection (classification and resolved
+server form IDs); temporary, actor-base, and leveled-pick client claims are
+discarded from canonical state. Later combat and death policy must consult this
+component rather than `CharacterComponent::BaseId` or any client claim.
+
 For `kPopulationHumanoidDenied` only, the connected client also applies a
 reversible local `DisableImpl()` to the exact placed reference. A separate
 session-owned form-ID registry records only references that this client actually
