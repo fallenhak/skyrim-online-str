@@ -22,9 +22,10 @@ Checks performed:
   does not expose GitHub or SSH credential variables.
 
 Result: no credential value or private-key material was found in the
-review snapshot. The same-account filesystem residual risk and the
-`SANDBOX_INFRA_BLOCKED` result are documented in
-[residual-risks.md](residual-risks.md).
+review snapshot. The same-account filesystem residual risk and the scoped
+AppArmor/bubblewrap boundary are documented in
+[residual-risks.md](residual-risks.md). The post-remediation smoke result was
+`WORKER_SMOKE_OK`.
 
 The broad marker scan reported `supervisor.py` only because the source contains
 the literal environment-variable names that it deliberately removes. A

@@ -1,5 +1,25 @@
 # Supervisor Hardening V2 changelog
 
+## Final scoped sandbox remediation — 2026-09-22
+
+- Installed only the required Ubuntu packages: `apparmor-profiles`,
+  `apparmor-utils`, and the existing `bubblewrap` package; no distribution
+  upgrade, Docker installation, kernel setting, or global namespace-policy
+  relaxation was performed.
+- Installed the official
+  `/usr/share/apparmor/extra-profiles/bwrap-userns-restrict` policy exactly at
+  `/etc/apparmor.d/bwrap-userns-restrict` and loaded it with
+  `apparmor_parser -r`. The enforced kernel profiles are `bwrap` and
+  `unpriv_bwrap`.
+- Preserved `kernel.apparmor_restrict_unprivileged_userns=1` and
+  `kernel.unprivileged_userns_clone=1`. Direct user and network bwrap probes
+  returned `rc=0` with no error output.
+- The production disposable worker smoke test now passes all isolation checks
+  and returns `WORKER_SMOKE_OK` while the orchestrator, timer, global pause,
+  and no-worker state remain unchanged.
+- Re-ran the complete 65-test suite and all observer paths; the persisted state
+  hash remained unchanged before and after the observer commands.
+
 ## Runtime-owner / observer separation + worker sandbox repair — 2026-09-22
 
 - Separated `Supervisor(runtime_owner=True)` daemon construction from the
@@ -17,7 +37,8 @@
 - Added `skyrim-dev worker-smoke-test`. It runs the official Codex CLI as
   `skyrimdev` with `gpt-5.6-luna`, `max`, `approval_policy=never`, and
   `workspace-write` in a disposable directory, then removes that directory.
-- The smoke test is intentionally fail-closed on this VDS: Ubuntu AppArmor's
+- Before the final scoped remediation, the smoke test was intentionally
+  fail-closed on this VDS: Ubuntu AppArmor's
   `unprivileged_userns` profile prevents bubblewrap's required user/network
   namespace setup. No unrestricted fallback or production policy relaxation
   was installed; autonomous development remains disabled.

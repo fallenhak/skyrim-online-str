@@ -174,19 +174,18 @@ installed Codex CLI sandbox behavior was inspected on version `0.155.1`.
 `skyrim-dev worker-smoke-test` is the only supported validation path for a
 worker write. It uses a disposable scratch directory, local read/write proof,
 no Git repository, no GitHub/SSH credentials, and cleanup after the process
-exits. On this VDS it returns `WORKER_SMOKE_FAILED`: bubblewrap `0.9.0` cannot
-complete the required unprivileged user/network namespace setup under Ubuntu
-24.04 AppArmor's `unprivileged_userns` profile. The exact direct error is
-`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`; no unrestricted
-fallback was used.
+exits. The architect-approved Ubuntu `bwrap-userns-restrict` AppArmor profile
+is installed at `/etc/apparmor.d/bwrap-userns-restrict`, loaded/enforced for
+`bwrap` and `unpriv_bwrap`, and leaves
+`kernel.apparmor_restrict_unprivileged_userns=1` unchanged. Both direct bwrap
+probes and the production smoke test now pass with `WORKER_SMOKE_OK`.
 
 Residual risk: workers still run as the same `skyrimdev` Unix account and can
 read any files that account can read, including Codex authentication needed for
 worker operation. A filesystem/user separation was not improvised because it
 would require a materially more complex privilege and authentication
-architecture; this remains for architect review. Until the AppArmor/bwrap
-compatibility is repaired through an approved bounded mechanism, autonomous
-development must remain disabled.
+architecture; this remains for architect review. Passing the sandbox gate does
+not itself authorize autonomous development.
 
 ## Verification
 
@@ -203,9 +202,9 @@ development must remain disabled.
   integration-branch external gate.
 - `skyrim-dev milestone-status` passed and kept M01 `ACTIVE`; runtime evidence
   remains required.
-- `skyrim-dev worker-smoke-test` failed closed with the explicit
-  `WORKER_SMOKE_FAILED` result; scratch read/write proof did not pass and no
-  development worktree or branch changed.
+- `skyrim-dev worker-smoke-test` passed with the explicit `WORKER_SMOKE_OK`
+  result; both direct bwrap probes passed and no development worktree or branch
+  changed.
 - C03/A04 remain `NEEDS_SOL_REVIEW`; C03 had no actual result marker in the
   complete log and was stopped by the operator pause, while A04's complete log
   records the `DrawWeaponRequest`/`OwnershipEpoch` finding before the same

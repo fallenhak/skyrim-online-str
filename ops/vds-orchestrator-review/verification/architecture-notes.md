@@ -111,8 +111,10 @@ lane branch/head/dirty snapshots before and after, checks for a lingering
 process, and removes the scratch directory. It does not start the orchestrator
 or consume scheduler state.
 
-The VDS smoke test fails closed because AppArmor's Ubuntu 24.04
-`unprivileged_userns` profile blocks bubblewrap's namespace setup. The
-installation does not weaken that profile, set capabilities on bubblewrap, or
-fall back to `danger-full-access`; the result is `SANDBOX_INFRA_BLOCKED` until
-an architect-approved bounded remediation is demonstrated.
+The architect-approved remediation installs Ubuntu's scoped
+`bwrap-userns-restrict` profile and loads it in enforced mode. It preserves
+global AppArmor and `kernel.apparmor_restrict_unprivileged_userns=1`; it does
+not set capabilities on bubblewrap or fall back to `danger-full-access`. Direct
+user/network probes and the production smoke test pass after this bounded
+profile is loaded. Passing this infrastructure gate does not start or
+authorize autonomous development.

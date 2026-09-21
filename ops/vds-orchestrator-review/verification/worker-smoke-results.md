@@ -18,23 +18,24 @@ directory under `/var/lib/skyrim-dev/smoke/`. It:
 It never calls Git, changes roadmap state, starts a worker lane, consumes a
 phase, commits, or pushes.
 
-## VDS result
+## VDS result after architect-approved remediation
 
-    worker local filesystem read: FAIL
-    worker local allowed write: FAIL
-    bwrap RTM_NEWADDR error: ABSENT (direct probe: PRESENT)
-    sandbox failure signal: PRESENT
+    worker local filesystem read: PASS
+    worker local allowed write: PASS
+    bwrap RTM_NEWADDR error: ABSENT
+    sandbox failure signal: ABSENT
     GitHub credentials exposed: NO
     SSH agent exposed: NO
     development worktree modified: NO
     development branch changed: NO
     persistent worker process: NO
-    WORKER_SMOKE_FAILED: SANDBOX_INFRA_BLOCKED: scratch read/write proof failed; Codex workspace-write sandbox reported a bwrap/loopback failure
+    WORKER_SMOKE_OK
 
-The exact CLI evidence was a workspace command-runner failure during the
-allowed file operation. The direct bwrap probe and kernel audit identify the
-underlying `RTM_NEWADDR`/namespace denial; see `sandbox-diagnosis.md`.
+Before the profile was installed, the same command failed closed with
+`SANDBOX_INFRA_BLOCKED`. After loading the official scoped profile, the exact
+production smoke command passed. Both direct bwrap probes also returned `rc=0`
+with empty output; see `sandbox-diagnosis.md`.
 
-Because local read/write proof did not pass, this result is not approval to
-start autonomous development. The service remains inactive/disabled and the
-global mode remains `PAUSED`.
+This result validates the worker sandbox only. It is not permission to start
+autonomous development; the service remains inactive/disabled and the global
+mode remains `PAUSED`.

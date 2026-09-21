@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-09-21T18:20:10+00:00",
+  "captured_at": "2026-09-22T01:15:53+03:00",
   "version": 3,
   "global_mode": "PAUSED",
   "mode_reason": "operator requested pause",
@@ -20,6 +20,24 @@
     "last_checked_at": "2026-09-21T18:18:36+00:00",
     "status": "VALID",
     "validation_error": ""
+  },
+  "sandbox": {
+    "status": "WORKER_SMOKE_OK",
+    "codex_cli": "0.155.1",
+    "bubblewrap": "0.9.0-1ubuntu0.3",
+    "apparmor": "4.0.1really4.0.1-0ubuntu0.24.04.7",
+    "apparmor_profiles": "4.0.1really4.0.1-0ubuntu0.24.04.7",
+    "apparmor_utils": "4.0.1really4.0.1-0ubuntu0.24.04.7",
+    "profile_source": "/usr/share/apparmor/extra-profiles/bwrap-userns-restrict",
+    "profile_installed": "/etc/apparmor.d/bwrap-userns-restrict",
+    "profile_sha256": "11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9",
+    "profiles_enforced": ["bwrap", "unpriv_bwrap"],
+    "kernel_apparmor_restrict_unprivileged_userns": 1,
+    "kernel_unprivileged_userns_clone": 1,
+    "direct_bwrap_user_rc": 0,
+    "direct_bwrap_network_rc": 0,
+    "credential_exposure": "none",
+    "worker_gh_config_dir": "/var/lib/skyrim-dev/worker-gh-config"
   },
   "scheduler": {
     "cursor": 2,

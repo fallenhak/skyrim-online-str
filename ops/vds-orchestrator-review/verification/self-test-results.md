@@ -54,25 +54,44 @@ Command:
 
     skyrim-dev worker-smoke-test
 
-Result:
+Result after architect-approved AppArmor remediation:
 
-    worker local filesystem read: FAIL
-    worker local allowed write: FAIL
-    bwrap RTM_NEWADDR error: ABSENT (direct bwrap probe: PRESENT)
-    sandbox failure signal: PRESENT
+    worker local filesystem read: PASS
+    worker local allowed write: PASS
+    bwrap RTM_NEWADDR error: ABSENT
+    sandbox failure signal: ABSENT
     GitHub credentials exposed: NO
     SSH agent exposed: NO
     development worktree modified: NO
     development branch changed: NO
     persistent worker process: NO
-    WORKER_SMOKE_FAILED: SANDBOX_INFRA_BLOCKED: scratch read/write proof failed; Codex workspace-write sandbox reported a bwrap/loopback failure
+    WORKER_SMOKE_OK
 
-The installed Codex CLI started in the disposable scratch directory, but its
-workspace command runner failed before the write operation. No lane, roadmap,
-branch, Git metadata, or persistent worker process was affected. The scratch
-directory was removed after the test.
+The installed Codex CLI read and wrote only the disposable scratch workspace.
+No lane, roadmap, branch, Git metadata, or persistent worker process was
+affected. The scratch directory was removed after the test.
 
-## First-run evidence
+## Sandbox remediation evidence
+
+- Package versions: `apparmor`, `apparmor-profiles`, and `apparmor-utils`
+  `4.0.1really4.0.1-0ubuntu0.24.04.7`; `bubblewrap`
+  `0.9.0-1ubuntu0.3`.
+- Official source profile existed at
+  `/usr/share/apparmor/extra-profiles/bwrap-userns-restrict` and was installed
+  at `/etc/apparmor.d/bwrap-userns-restrict` with mode `0644 root:root`.
+- Profile SHA-256:
+  `11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9`.
+- `apparmor_parser -r` succeeded; `apparmor_parser -Q -T` returned `0`;
+  kernel profiles `bwrap (enforce)` and `unpriv_bwrap (enforce)` are present.
+- `kernel.apparmor_restrict_unprivileged_userns=1` and
+  `kernel.unprivileged_userns_clone=1` remained unchanged.
+- Direct `bwrap --unshare-user` and `--unshare-net` probes both returned
+  `rc=0` with no output.
+- Worker options remain `--sandbox workspace-write`,
+  `approval_policy="never"`, and `--ephemeral`; GitHub/SSH variables were
+  absent and `GH_CONFIG_DIR` remained `/var/lib/skyrim-dev/worker-gh-config`.
+
+## First-run evidence preserved from before remediation
 
 - C03 complete-log result: no actual `WORKER_RESULT` marker was emitted; the
   apparent marker is part of the worker prompt template. The supervisor log
