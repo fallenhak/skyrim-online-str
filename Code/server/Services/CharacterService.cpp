@@ -264,6 +264,21 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
 
         if (itor != std::end(view))
         {
+            // Actors created before lifecycle tracking was introduced may still
+            // be present in a long-lived server. Give them a server-owned
+            // incarnation before returning any assignment state, but never
+            // replace an existing generation for the current actor.
+            if (!m_world.all_of<ActorLifecycleComponent>(*itor))
+            {
+                auto& lifecycleComponent = m_world.emplace<ActorLifecycleComponent>(*itor);
+                if (!lifecycleComponent.IsValid())
+                {
+                    m_world.remove<ActorLifecycleComponent>(*itor);
+                    spdlog::error("Cannot assign actor {:X}: lifecycle generation allocator is exhausted", World::ToInteger(*itor));
+                    return;
+                }
+            }
+
             spdlog::debug("FormId: {:x}:{:x} is already managed", refId.ModId, refId.BaseId);
 
             auto& ownerComponent = view.get<OwnerComponent>(*itor);
@@ -402,6 +417,8 @@ void CharacterService::OnCharacterRemoveEvent(const CharacterRemoveEvent& acEven
     for (auto pPlayer : m_world.GetPlayerManager())
         pPlayer->Send(response);
 
+    // Registry destruction removes the lifecycle component with the canonical
+    // actor state; its generation is intentionally never recycled.
     m_world.destroy(*it);
     spdlog::debug("Character destroyed {:X}", acEvent.ServerId);
 }
@@ -679,6 +696,13 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     }
 
     const auto cEntity = m_world.create();
+    auto& lifecycleComponent = m_world.emplace<ActorLifecycleComponent>(cEntity);
+    if (!lifecycleComponent.IsValid())
+    {
+        m_world.destroy(cEntity);
+        spdlog::error("Cannot create actor: lifecycle generation allocator is exhausted");
+        return;
+    }
 
     // For player characters and temporary forms
     if (!isCustom)

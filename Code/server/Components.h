@@ -5,6 +5,7 @@
 
 #include <Components/ModsComponent.h>
 #include <Components/FormIdComponent.h>
+#include <Components/ActorLifecycleComponent.h>
 #include <Components/ActorPopulationIdentityComponent.h>
 #include <Components/OwnerComponent.h>
 #include <Components/CellIdComponent.h>

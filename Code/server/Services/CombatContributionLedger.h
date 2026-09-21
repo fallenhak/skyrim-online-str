@@ -18,7 +18,7 @@
 struct CombatContributionTarget final
 {
     std::uint32_t ServerId{};
-    std::uint32_t LifecycleGeneration{};
+    std::uint64_t LifecycleGeneration{};
 
     friend bool operator<(const CombatContributionTarget& acLeft, const CombatContributionTarget& acRight) noexcept
     {

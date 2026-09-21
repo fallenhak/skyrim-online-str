@@ -27,7 +27,8 @@ The server can currently establish:
 
 - the sender's connection and player;
 - the current owner and ownership epoch for a server entity;
-- the server entity's current lifecycle/incarnation;
+- the server-only `ActorLifecycleComponent` generation for the current
+  lifecycle/incarnation, independent of EnTT ID reuse;
 - the server-only `ActorPopulationIdentityComponent`, including whether the
   target is a trusted creature rather than an unknown/client-claimed actor;
 - the current character flags needed to exclude players, mounts, and summons;
