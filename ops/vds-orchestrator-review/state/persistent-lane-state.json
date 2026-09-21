@@ -1,0 +1,150 @@
+{
+  "captured_at": "2026-09-21T14:26:49+00:00",
+  "development_heads_at_capture": {
+    "authority": "caf7dcc31ca4b6d0912f31b151408ba24c13938c",
+    "combat": "905cf71c55200509702fb299aaa953ae46dcb374",
+    "population": "52c97ba4d5da993e6ef2fa4bdf398f13c22b456a",
+    "ui": "a473531ad16a82cecc8a4cdecc460934ba7efcfa"
+  },
+  "global_mode": "PAUSED",
+  "lanes": {
+    "authority": {
+      "branch": "parallel/interaction-authority",
+      "ci": {
+        "run_id": null,
+        "sha": null,
+        "status": "NOT_RUN",
+        "url": null
+      },
+      "ci_poll_failures": 0,
+      "history": [],
+      "issue": 32,
+      "last_commit": "caf7dcc31ca4b6d0912f31b151408ba24c13938c",
+      "last_error": "",
+      "last_progress_at": null,
+      "phase_failure_count": 0,
+      "phase_id": "A04",
+      "phase_index": 3,
+      "phase_title": "Equipment and weapon-drawn stale-incarnation audit; add epoch only if same-client reacquisition creates a real stale-packet bug.",
+      "plan": "/srv/projects/skyrim-online-str/workers/authority/.codex/lane/PLAN.md",
+      "push_attempts": 0,
+      "recovery_attempts": 0,
+      "review_packet": null,
+      "review_reasons": [],
+      "state": "PAUSED",
+      "success_since_review": 0,
+      "worker_pid": null,
+      "worker_started_at": null,
+      "worktree": "/srv/projects/skyrim-online-str/workers/authority"
+    },
+    "combat": {
+      "branch": "parallel/combat-foundations",
+      "ci": {
+        "run_id": null,
+        "sha": null,
+        "status": "NOT_RUN",
+        "url": null
+      },
+      "ci_poll_failures": 0,
+      "history": [],
+      "issue": 31,
+      "last_commit": "905cf71c55200509702fb299aaa953ae46dcb374",
+      "last_error": "",
+      "last_progress_at": null,
+      "phase_failure_count": 0,
+      "phase_id": "C03",
+      "phase_index": 2,
+      "phase_title": "Add server-owned actor lifecycle/incarnation generation immune to entt ID reuse; cleanup on removal.",
+      "plan": "/srv/projects/skyrim-online-str/workers/combat/.codex/lane/PLAN.md",
+      "push_attempts": 0,
+      "recovery_attempts": 0,
+      "review_packet": null,
+      "review_reasons": [],
+      "state": "PAUSED",
+      "success_since_review": 0,
+      "worker_pid": null,
+      "worker_started_at": null,
+      "worktree": "/srv/projects/skyrim-online-str/workers/combat"
+    },
+    "population": {
+      "branch": "parallel/population-loader",
+      "ci": {
+        "run_id": null,
+        "sha": null,
+        "status": "NOT_RUN",
+        "url": null
+      },
+      "ci_poll_failures": 0,
+      "history": [],
+      "issue": 33,
+      "last_commit": "52c97ba4d5da993e6ef2fa4bdf398f13c22b456a",
+      "last_error": "",
+      "last_progress_at": null,
+      "phase_failure_count": 0,
+      "phase_id": "L03",
+      "phase_index": 2,
+      "phase_title": "Research TES4 plugin flags in loader. Correctly identify ESL/light namespace including ESL-flagged .esp if current extension heuristic is insufficient. Use plugin header authority, not client claim.",
+      "plan": "/srv/projects/skyrim-online-str/workers/population/.codex/lane/PLAN.md",
+      "push_attempts": 0,
+      "recovery_attempts": 0,
+      "review_packet": null,
+      "review_reasons": [],
+      "state": "PAUSED",
+      "success_since_review": 0,
+      "worker_pid": null,
+      "worker_started_at": null,
+      "worktree": "/srv/projects/skyrim-online-str/workers/population"
+    },
+    "ui": {
+      "branch": "parallel/character-ui",
+      "ci": {
+        "run_id": null,
+        "sha": null,
+        "status": "NOT_RUN",
+        "url": null
+      },
+      "ci_poll_failures": 0,
+      "history": [],
+      "issue": 34,
+      "last_commit": "a473531ad16a82cecc8a4cdecc460934ba7efcfa",
+      "last_error": "",
+      "last_progress_at": null,
+      "phase_failure_count": 0,
+      "phase_id": "U02",
+      "phase_index": 1,
+      "phase_title": "Document exact UI state machine and identify native-to-Angular data bridge needed for CharacterSummary/list/selection status.",
+      "plan": "/srv/projects/skyrim-online-str/workers/ui/.codex/lane/PLAN.md",
+      "push_attempts": 0,
+      "recovery_attempts": 0,
+      "review_packet": null,
+      "review_reasons": [],
+      "state": "PAUSED",
+      "success_since_review": 0,
+      "worker_pid": null,
+      "worker_started_at": null,
+      "worktree": "/srv/projects/skyrim-online-str/workers/ui"
+    }
+  },
+  "mode_reason": "installation default; explicit start is required",
+  "omitted_from_projection": [
+    "event history",
+    "plan parser cache",
+    "validation diff text",
+    "worker log paths/content",
+    "authentication/configuration credential material"
+  ],
+  "operator_control": {
+    "desired_mode": "PAUSED",
+    "reason": "operator requested stop",
+    "source_control": "/var/lib/skyrim-dev/state/control.json",
+    "updated_at": "2026-09-21T14:01:33+00:00"
+  },
+  "orchestrator_unit": {
+    "active": "inactive",
+    "enabled": "disabled"
+  },
+  "service_user": "skyrimdev",
+  "snapshot_type": "redacted persistent lane-state projection",
+  "source_state": "/var/lib/skyrim-dev/state/state.json",
+  "state_updated_at_at_capture": "2026-09-21T14:27:36+00:00"
+}

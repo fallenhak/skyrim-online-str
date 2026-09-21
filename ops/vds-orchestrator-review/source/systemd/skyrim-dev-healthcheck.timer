@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic Skyrim Codex orchestrator health check
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+Persistent=true
+Unit=skyrim-dev-healthcheck.service
+
+[Install]
+WantedBy=timers.target
+

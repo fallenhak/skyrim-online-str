@@ -1,0 +1,18 @@
+[Unit]
+Description=Skyrim Codex orchestrator health check
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=skyrimdev
+Group=skyrimdev
+WorkingDirectory=/srv/services/skyrim-dev/orchestrator
+Environment=HOME=/home/skyrimdev
+Environment=CODEX_HOME=/home/skyrimdev/.codex
+Environment=GH_CONFIG_DIR=/home/skyrimdev/.config/gh
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 /srv/services/skyrim-dev/orchestrator/supervisor.py healthcheck
+NoNewPrivileges=yes
+PrivateTmp=yes
+UMask=0077
+

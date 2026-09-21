@@ -1,0 +1,63 @@
+#!/bin/sh
+set -eu
+
+PY=/srv/services/skyrim-dev/orchestrator/supervisor.py
+UNIT=skyrim-dev-orchestrator.service
+ENVV="HOME=/home/skyrimdev CODEX_HOME=/home/skyrimdev/.codex GH_CONFIG_DIR=/home/skyrimdev/.config/gh PATH=/usr/local/bin:/usr/bin:/bin"
+
+usage() {
+    printf '%s\n' 'usage: skyrim-dev {status|start|pause|resume|stop|logs|healthcheck|self-test}'
+}
+
+run_service() {
+    if [ "$(id -u)" -eq 0 ]; then
+        runuser -u skyrimdev -- env $ENVV /usr/bin/python3 "$PY" "$@"
+    else
+        env $ENVV /usr/bin/python3 "$PY" "$@"
+    fi
+}
+
+if [ "$#" -gt 0 ]; then
+    command_name="$1"
+else
+    command_name=status
+fi
+
+case "$command_name" in
+    status)
+        run_service status
+        ;;
+    start|resume)
+        if [ "$(id -u)" -ne 0 ]; then
+            printf '%s\n' 'start/resume requires root' >&2
+            exit 1
+        fi
+        exec env $ENVV /usr/bin/python3 "$PY" control "$command_name"
+        ;;
+    pause)
+        run_service control pause
+        ;;
+    stop)
+        if [ "$(id -u)" -ne 0 ]; then
+            printf '%s\n' 'stop requires root' >&2
+            exit 1
+        fi
+        exec env $ENVV /usr/bin/python3 "$PY" control stop
+        ;;
+    logs)
+        journalctl -u "$UNIT" -n 200 --no-pager
+        printf '%s\n' '--- supervisor log ---'
+        tail -n 200 /var/log/skyrim-dev/supervisor.log 2>/dev/null || true
+        ;;
+    healthcheck)
+        run_service healthcheck
+        ;;
+    self-test)
+        run_service self-test
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac
+

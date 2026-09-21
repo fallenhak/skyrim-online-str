@@ -1,0 +1,27 @@
+[Unit]
+Description=Skyrim Codex deterministic orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skyrimdev
+Group=skyrimdev
+WorkingDirectory=/srv/services/skyrim-dev/orchestrator
+Environment=HOME=/home/skyrimdev
+Environment=CODEX_HOME=/home/skyrimdev/.codex
+Environment=GH_CONFIG_DIR=/home/skyrimdev/.config/gh
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 /srv/services/skyrim-dev/orchestrator/supervisor.py run
+Restart=on-failure
+RestartSec=20
+KillMode=mixed
+TimeoutStopSec=90
+NoNewPrivileges=yes
+PrivateTmp=yes
+UMask=0077
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
+

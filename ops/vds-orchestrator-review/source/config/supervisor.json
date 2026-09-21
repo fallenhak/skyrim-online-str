@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "repo": "fallenhak/skyrim-online-str",
+  "repo_url": "https://github.com/fallenhak/skyrim-online-str.git",
+  "repo_root": "/srv/projects/skyrim-online-str/repo",
+  "workers_root": "/srv/projects/skyrim-online-str/workers",
+  "service_root": "/srv/services/skyrim-dev",
+  "state_root": "/var/lib/skyrim-dev",
+  "log_root": "/var/log/skyrim-dev",
+  "min_free_gb": 8.0,
+  "min_memory_available_gb": 1.0,
+  "min_memory_available_fraction": 0.10,
+  "max_concurrent_workers": 2,
+  "worker_timeout_seconds": 5400,
+  "worker_stale_seconds": 1200,
+  "ci_timeout_seconds": 1800,
+  "ci_queue_timeout_seconds": 600,
+  "poll_interval_seconds": 15,
+  "max_push_attempts": 3,
+  "max_ci_poll_failures": 3,
+  "max_log_bytes": 5242880,
+  "post_issue_updates": true,
+  "lanes": {
+    "combat": {
+      "branch": "parallel/combat-foundations",
+      "worktree": "/srv/projects/skyrim-online-str/workers/combat",
+      "issue": 31,
+      "plan": "/srv/projects/skyrim-online-str/workers/combat/.codex/lane/PLAN.md",
+      "forbidden_prefixes": [
+        "Code/skyrim_ui/",
+        "Code/components/es_loader/",
+        "Code/immersive_launcher/",
+        "Code/immersive_elf/"
+      ]
+    },
+    "authority": {
+      "branch": "parallel/interaction-authority",
+      "worktree": "/srv/projects/skyrim-online-str/workers/authority",
+      "issue": 32,
+      "plan": "/srv/projects/skyrim-online-str/workers/authority/.codex/lane/PLAN.md",
+      "forbidden_prefixes": [
+        "Code/skyrim_ui/",
+        "Code/components/es_loader/"
+      ]
+    },
+    "population": {
+      "branch": "parallel/population-loader",
+      "worktree": "/srv/projects/skyrim-online-str/workers/population",
+      "issue": 33,
+      "plan": "/srv/projects/skyrim-online-str/workers/population/.codex/lane/PLAN.md",
+      "forbidden_prefixes": [
+        "Code/skyrim_ui/",
+        "Code/immersive_launcher/",
+        "Code/immersive_elf/"
+      ]
+    },
+    "ui": {
+      "branch": "parallel/character-ui",
+      "worktree": "/srv/projects/skyrim-online-str/workers/ui",
+      "issue": 34,
+      "plan": "/srv/projects/skyrim-online-str/workers/ui/.codex/lane/PLAN.md",
+      "forbidden_prefixes": [
+        "Code/server/",
+        "Code/components/",
+        "Code/encoding/",
+        "Code/immersive_launcher/",
+        "Code/immersive_elf/"
+      ]
+    }
+  }
+}
+

@@ -1,0 +1,13 @@
+e46fa28e3cc937573dccdd30a9ce169e6ed8e0d110491f029b7700046223a1a3  ./README.md
+bc0caac15155690a7d77d50f117ab0485a2f8d48037934b03a2b00f9ee8debf0  ./source/config/supervisor.json
+e55a1ec373a8ef3792b269c287c55ae29cbec86def41c27acb6dba7e7925cd0d  ./source/logrotate/skyrim-dev
+dd6d6e719edcf075ced5282c57704cff22b763eb6abf78bb548fd8203a22b5e0  ./source/management/skyrim-dev
+be9d4da5dac32796d1322382d8038f5957addafce37fc42dbfa9f14184114535  ./source/orchestrator/supervisor.py
+b4c338230ee611c08173d3c497a0842f89e37250cf54f92d6376338ed7f1d96f  ./source/systemd/skyrim-dev-healthcheck.service
+4ca3c1af504e89b49da5015920030d2876d938e1b5540fabdbdb54783a2d653a  ./source/systemd/skyrim-dev-healthcheck.timer
+2cc3b5b25d90420e584cbc0fdbc77714c64907997a9b3e1b5a167e998b9830ed  ./source/systemd/skyrim-dev-orchestrator.service
+65e5878a73f01665c6608c07aaa5372ccc0a9914e946f16268ab1b986497726c  ./state/persistent-lane-state.json
+ebaa82760b9b81267af18023e2a99fea6811ac0dbfe4ff582c3d80ad7d70c3fc  ./verification/file-origins.md
+2a31744e847df554089d8630f9a1849e73f94d330573d68b2c29c639388af76d  ./verification/security-scan.md
+7e0c005ba0bc0a41df83e03cb3b88e3a1cc1a6ae7650325a42a62686e6ea276e  ./verification/self-test-results.md
+2e63bae7f30a9d133142ca5618f5b6ce7a773de21266ac87a3574d6c0308d4c0  ./verification/source-map.md

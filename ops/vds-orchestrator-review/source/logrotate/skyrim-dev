@@ -1,0 +1,12 @@
+/var/log/skyrim-dev/*.log {
+    daily
+    rotate 14
+    size 10M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    create 0640 skyrimdev skyrimdev
+}
+
