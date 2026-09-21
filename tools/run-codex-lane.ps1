@@ -45,9 +45,15 @@ function Push-Head {
     }
 }
 
-if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
+$CodexCommand = Get-Command codex -ErrorAction SilentlyContinue
+if (-not $CodexCommand) {
     throw "codex CLI was not found in PATH."
 }
+$CodexExe = $CodexCommand.Source
+if (-not $CodexExe) {
+    $CodexExe = $CodexCommand.Path
+}
+Write-Host "[$WorkerName] codex command: $CodexExe"
 
 $branch = ((& git branch --show-current) -join "").Trim()
 if ($branch -ne $ExpectedBranch) {
@@ -101,7 +107,9 @@ while ((Get-Date) -lt $Deadline) {
         }
     }
 
+    Write-Host "[$WorkerName] git sync complete; resolving HEAD..."
     $BeforeHead = ((& git rev-parse HEAD) -join "").Trim()
+    Write-Host "[$WorkerName] HEAD before round: $BeforeHead"
 
     if ($dirtyBefore) {
         $RunPrompt = @"
@@ -148,8 +156,13 @@ Complete one substantial phase and exit cleanly. A fresh Luna/max context will c
         $RunPrompt
     )
 
-    & codex @CodexArgs 2>&1 | Tee-Object -FilePath $LogFile
+    Write-Host "[$WorkerName] launching Codex now..."
+    Write-Host "[$WorkerName] log: $LogFile"
+    New-Item -ItemType File -Force -Path $LogFile | Out-Null
+
+    & $CodexExe @CodexArgs 2>&1 | Tee-Object -FilePath $LogFile -Append
     $CodexExit = $LASTEXITCODE
+    Write-Host "[$WorkerName] Codex process returned exit code $CodexExit"
 
     if ($CodexExit -ne 0) {
         $ConsecutiveFailures++
@@ -221,7 +234,7 @@ Leave git status clean, then exit.
         "-c", $ReasoningConfig,
         $CleanupPrompt
     )
-    & codex @CleanupArgs 2>&1 | Tee-Object -FilePath (Join-Path $LogRoot "final-cleanup.log")
+    & $CodexExe @CleanupArgs 2>&1 | Tee-Object -FilePath (Join-Path $LogRoot "final-cleanup.log")
 }
 
 if (-not (Get-DirtyState)) {
