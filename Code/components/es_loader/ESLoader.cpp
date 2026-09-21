@@ -1,8 +1,13 @@
 
 
 #include "ESLoader.h"
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <set>
+#include <system_error>
+#include <utility>
 
 #include <Records/CLMT.h>
 #include <Records/NPC.h>
@@ -10,6 +15,80 @@
 
 namespace ESLoader
 {
+namespace
+{
+bool IsWhitespace(const char aCharacter) noexcept
+{
+    return std::isspace(static_cast<unsigned char>(aCharacter)) != 0;
+}
+
+String NormalizeLoadOrderLine(String aLine, const bool aFirstLine)
+{
+    // loadorder.txt is commonly written as UTF-8 without a BOM, but accepting
+    // a BOM on the first line avoids turning it into part of the first plugin
+    // name when a mod manager emits one.
+    if (aFirstLine && aLine.size() >= 3 && static_cast<unsigned char>(aLine[0]) == 0xEF &&
+        static_cast<unsigned char>(aLine[1]) == 0xBB && static_cast<unsigned char>(aLine[2]) == 0xBF)
+    {
+        aLine.erase(0, 3);
+    }
+
+    auto first = aLine.begin();
+    while (first != aLine.end() && IsWhitespace(*first))
+        ++first;
+
+    auto last = aLine.end();
+    while (last != first && IsWhitespace(*(last - 1)))
+        --last;
+
+    return String(first, last);
+}
+
+String MakeFilenameKey(const String& acFilename)
+{
+    String key = acFilename;
+    std::transform(
+        key.begin(), key.end(), key.begin(), [](const char aCharacter) { return static_cast<char>(std::tolower(static_cast<unsigned char>(aCharacter))); });
+    return key;
+}
+
+bool IsSafePluginFilename(const String& acFilename) noexcept
+{
+    return !acFilename.empty() && acFilename.find('/') == String::npos && acFilename.find('\\') == String::npos &&
+           acFilename.find(':') == String::npos &&
+           std::none_of(acFilename.begin(), acFilename.end(), [](const char aCharacter) {
+               return std::iscntrl(static_cast<unsigned char>(aCharacter)) != 0;
+           });
+}
+
+enum class PluginType : uint8_t
+{
+    kInvalid,
+    kMaster,
+    kStandard,
+    kLite,
+};
+
+PluginType GetPluginType(const String& acFilename) noexcept
+{
+    const auto extensionStart = acFilename.rfind('.');
+    if (extensionStart == String::npos || extensionStart == 0 || acFilename.size() - extensionStart != 4)
+        return PluginType::kInvalid;
+
+    String extension = acFilename.substr(extensionStart);
+    std::transform(
+        extension.begin(), extension.end(), extension.begin(), [](const char aCharacter) { return static_cast<char>(std::tolower(static_cast<unsigned char>(aCharacter))); });
+
+    if (extension == ".esm")
+        return PluginType::kMaster;
+    if (extension == ".esp")
+        return PluginType::kStandard;
+    if (extension == ".esl")
+        return PluginType::kLite;
+    return PluginType::kInvalid;
+}
+} // namespace
+
 String ReadZString(Buffer::Reader& aReader) noexcept
 {
     String zstring = String(reinterpret_cast<const char*>(aReader.GetDataAtPosition()));
@@ -27,14 +106,22 @@ String ReadWString(Buffer::Reader& aReader) noexcept
 }
 
 ESLoader::ESLoader()
+    : ESLoader(fs::current_path() / "Data")
 {
-    m_directory = fs::current_path() / "Data"; //< Keep upper case to match Skyrim's file system
+}
+
+ESLoader::ESLoader(fs::path aDirectory)
+    : m_directory(std::move(aDirectory))
+{
 }
 
 UniquePtr<RecordCollection> ESLoader::BuildRecordCollection(bool aLoadRecords) noexcept
 {
-    if (!fs::is_directory(m_directory))
+    std::error_code directoryError;
+    if (!fs::is_directory(m_directory, directoryError))
     {
+        m_loadOrder.clear();
+        m_masterFiles.clear();
         if (aLoadRecords)
             spdlog::warn("Actor population record loading unavailable: ESLoader Data directory not found at '{}'", m_directory.string());
         return nullptr;
@@ -64,50 +151,78 @@ UniquePtr<RecordCollection> ESLoader::BuildRecordCollection(bool aLoadRecords) n
 
 bool ESLoader::LoadLoadOrder()
 {
-    std::ifstream loadOrderFile;
-    auto loadOrderPath = m_directory / "loadorder.txt";
-    loadOrderFile.open(loadOrderPath.c_str());
-    if (loadOrderFile.fail())
+    m_loadOrder.clear();
+    m_masterFiles.clear();
+
+    const auto loadOrderPath = m_directory / "loadorder.txt";
+    std::ifstream loadOrderFile(loadOrderPath);
+    if (!loadOrderFile)
     {
-        spdlog::warn("Failed to open loadorder.txt");
+        spdlog::warn("Failed to open loadorder.txt at '{}'", loadOrderPath.string());
         return false;
     }
 
     uint8_t standardId = 0x0;
     uint16_t liteId = 0x0;
+    std::set<String> seenFilenames;
+    bool firstLine = true;
+    String line;
 
-    while (!loadOrderFile.eof())
+    while (std::getline(loadOrderFile, line))
     {
-        String line;
-        std::getline(loadOrderFile, line);
-        if (line[0] == '#' || line.empty())
+        line = NormalizeLoadOrderLine(std::move(line), firstLine);
+        firstLine = false;
+
+        if (line.empty() || line.front() == '#')
             continue;
 
-        PluginData plugin;
+        if (!IsSafePluginFilename(line))
+        {
+            spdlog::warn("Ignoring unsafe plugin entry in loadorder.txt");
+            continue;
+        }
+
+        const auto pluginType = GetPluginType(line);
+        if (pluginType == PluginType::kInvalid)
+        {
+            spdlog::warn("Ignoring unrecognized plugin entry in loadorder.txt: {}", line);
+            continue;
+        }
+
+        if (!seenFilenames.emplace(MakeFilenameKey(line)).second)
+        {
+            spdlog::warn("Ignoring duplicate plugin entry in loadorder.txt: {}", line);
+            continue;
+        }
+
+        PluginData plugin{};
         plugin.m_filename = line;
 
-        // On Linux, the carriage return won't be taken into account
-        line.erase(std::remove(line.begin(), line.end(), '\r'), line.end());
-
-        char extensionType = line.back();
-
-        switch (extensionType)
+        switch (pluginType)
         {
-        case 'm': m_masterFiles[line] = standardId;
-        case 'p':
-            plugin.m_standardId = standardId;
-            standardId += 0x01;
+        case PluginType::kMaster:
+            m_masterFiles.emplace(plugin.m_filename, standardId);
+            [[fallthrough]];
+        case PluginType::kStandard:
+            plugin.m_standardId = standardId++;
             plugin.m_isLite = false;
-            m_loadOrder.push_back(plugin);
             break;
-        case 'l':
-            plugin.m_liteId = liteId;
-            liteId += 0x0001;
+        case PluginType::kLite:
+            plugin.m_liteId = liteId++;
             plugin.m_isLite = true;
-            m_loadOrder.push_back(plugin);
             break;
-        default: spdlog::error("Extension in loadorder.txt not recognized: {}", line);
+        case PluginType::kInvalid: break;
         }
+
+        m_loadOrder.push_back(plugin);
+    }
+
+    if (loadOrderFile.bad())
+    {
+        spdlog::warn("Failed while reading loadorder.txt at '{}'", loadOrderPath.string());
+        m_loadOrder.clear();
+        m_masterFiles.clear();
+        return false;
     }
 
     return true;
@@ -143,14 +258,18 @@ UniquePtr<RecordCollection> ESLoader::LoadFiles()
     return recordCollection;
 }
 
-fs::path ESLoader::GetPath(String& aFilename)
+fs::path ESLoader::GetPath(const String& acFilename) const
 {
-    for (const auto& entry : fs::directory_iterator(m_directory))
-    {
-        String filename = entry.path().filename().string().c_str();
-        if (filename == aFilename)
-            return entry.path();
-    }
+    // loadorder.txt contains plugin filenames, not paths. Reject path syntax so
+    // a malformed entry cannot make the loader read outside Data, and resolve
+    // the exact path directly instead of depending on directory iteration order.
+    if (!IsSafePluginFilename(acFilename))
+        return {};
+
+    const fs::path pluginPath = m_directory / fs::path(acFilename);
+    std::error_code error;
+    if (fs::is_regular_file(pluginPath, error))
+        return pluginPath;
 
     return fs::path();
 }

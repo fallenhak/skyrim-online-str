@@ -29,16 +29,18 @@ class ESLoader
 {
 public:
     ESLoader();
+    explicit ESLoader(fs::path aDirectory);
 
     UniquePtr<RecordCollection> BuildRecordCollection(bool aLoadRecords = false) noexcept;
 
     PluginCollection& GetLoadOrder() noexcept { return m_loadOrder; }
+    const PluginCollection& GetLoadOrder() const noexcept { return m_loadOrder; }
 
 private:
     bool LoadLoadOrder();
     UniquePtr<RecordCollection> LoadFiles();
 
-    fs::path GetPath(String& aFilename);
+    fs::path GetPath(const String& acFilename) const;
 
     fs::path m_directory = "";
     Vector<PluginData> m_loadOrder{};

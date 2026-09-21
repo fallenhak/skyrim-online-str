@@ -105,6 +105,14 @@ With the setting disabled, `World` still loads the load order and gives
 `ActorPopulationPolicy` an empty `RecordCollection`; NPC classification is
 `Unknown` and `GameId(0, 0x14)` is still `Player`. Since the assignment gate is
 also disabled by default, this preserves the existing assignment behavior.
+
+Load-order metadata is kept in the file's declared order. Blank/comment lines,
+UTF-8 BOMs, CR/LF endings, and surrounding whitespace are normalized; duplicate
+or unsupported/unsafe plugin entries (including path-bearing or control-character
+names) are ignored without consuming an ID.
+When full record loading is enabled, absent plugin files are warned about and
+skipped while the parsed metadata remains available.
+
 With it enabled, `World`
 asks ESLoader to parse server plugin files and build references. If the Data
 directory, `loadorder.txt`, or record collection is unavailable, the server

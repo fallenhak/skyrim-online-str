@@ -12,16 +12,48 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <string>
 #include <system_error>
 #include <vector>
 
 namespace
 {
 using Bytes = std::vector<uint8_t>;
+
+class TemporaryDirectory
+{
+public:
+    TemporaryDirectory()
+    {
+        const auto uniqueSuffix = std::chrono::steady_clock::now().time_since_epoch().count();
+        m_path = std::filesystem::temp_directory_path() /
+                 ("skyrim-online-str-load-order-test-" + std::to_string(uniqueSuffix));
+        std::filesystem::create_directory(m_path, m_error);
+    }
+
+    ~TemporaryDirectory()
+    {
+        std::error_code ignored;
+        std::filesystem::remove_all(m_path, ignored);
+    }
+
+    [[nodiscard]] bool IsCreated() const noexcept
+    {
+        std::error_code error;
+        return !m_error && std::filesystem::is_directory(m_path, error) && !error;
+    }
+    [[nodiscard]] const std::error_code& Error() const noexcept { return m_error; }
+    [[nodiscard]] const std::filesystem::path& Path() const noexcept { return m_path; }
+
+private:
+    std::filesystem::path m_path;
+    std::error_code m_error;
+};
 
 constexpr uint32_t kMasterPrefix = 0x02000000;
 constexpr uint32_t kNordRaceRawId = 0x01001000;
@@ -289,6 +321,72 @@ TEST(ActorPopulationPolicy, KeepsNpcUnknownWithoutLoadedRecords)
 
     EXPECT_EQ(policy.ClassifyNpcBase(kNordNpcId).Class, ActorPopulationClass::kUnknown);
     EXPECT_EQ(policy.ClassifyActor(GameId(0, 0x14)).Class, ActorPopulationClass::kPlayer);
+}
+
+TEST(ESLoader, ParsesLoadOrderMetadataSafelyWithoutPluginFiles)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt", std::ios::binary);
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "\xEF\xBB\xBF  Skyrim.esm  \r\n"
+                  << " # comment\r\n"
+                  << "\tUpdate.ESP\t\n"
+                  << " \r\n"
+                  << "Light.ESL\r\n"
+                  << "skyrim.ESM\r\n"
+                  << "../Escape.esp\r\n"
+                  << "Nested/Plugin.esp\r\n"
+                  << "Embedded\rPlugin.esp\r\n"
+                  << "Malformed.xpm\r\n"
+                  << "Not a plugin.txt\r\n";
+    }
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto metadataOnly = loader.BuildRecordCollection(false);
+    ASSERT_NE(metadataOnly, nullptr);
+
+    const auto& plugins = loader.GetLoadOrder();
+    ASSERT_EQ(plugins.size(), 3U);
+    EXPECT_EQ(plugins[0].m_filename, "Skyrim.esm");
+    EXPECT_FALSE(plugins[0].IsLite());
+    EXPECT_EQ(plugins[0].m_standardId, 0U);
+    EXPECT_EQ(plugins[1].m_filename, "Update.ESP");
+    EXPECT_FALSE(plugins[1].IsLite());
+    EXPECT_EQ(plugins[1].m_standardId, 1U);
+    EXPECT_EQ(plugins[2].m_filename, "Light.ESL");
+    EXPECT_TRUE(plugins[2].IsLite());
+    EXPECT_EQ(plugins[2].m_liteId, 0U);
+
+    // Metadata remains available even when record loading is explicitly enabled
+    // and every listed plugin file is absent.
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+    EXPECT_FALSE(records->HasAnyRecords());
+}
+
+TEST(ESLoader, MissingLoadOrderClearsPreviouslyLoadedMetadata)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Skyrim.esm\nTest.esp\n";
+    }
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    ASSERT_NE(loader.BuildRecordCollection(false), nullptr);
+    ASSERT_EQ(loader.GetLoadOrder().size(), 2U);
+
+    std::error_code error;
+    ASSERT_TRUE(std::filesystem::remove(dataDirectory.Path() / "loadorder.txt", error));
+    ASSERT_FALSE(error);
+    EXPECT_EQ(loader.BuildRecordCollection(false), nullptr);
+    EXPECT_TRUE(loader.GetLoadOrder().empty());
 }
 
 void AddServerPlugin(ModsComponent& aMods, const char* apFilename, const uint16_t aLoadOrderId, const bool aIsLite)

@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <system_error>
 
 namespace ESLoader
 {
@@ -26,7 +27,14 @@ bool TESFile::LoadFile(const std::filesystem::path& acPath) noexcept
 {
     m_filename = acPath.filename().string();
 
-    const uintmax_t fileSize = std::filesystem::file_size(acPath);
+    std::error_code fileSizeError;
+    const uintmax_t fileSize = std::filesystem::file_size(acPath, fileSizeError);
+    if (fileSizeError)
+    {
+        spdlog::warn("Failed to stat plugin {}: {}", m_filename, fileSizeError.message());
+        return false;
+    }
+
     m_buffer.Resize(fileSize);
 
     std::ifstream file(acPath, std::ios::binary);
@@ -36,7 +44,15 @@ bool TESFile::LoadFile(const std::filesystem::path& acPath) noexcept
         return false;
     }
 
-    file.read(reinterpret_cast<char*>(m_buffer.GetWriteData()), fileSize);
+    if (fileSize != 0)
+    {
+        file.read(reinterpret_cast<char*>(m_buffer.GetWriteData()), static_cast<std::streamsize>(fileSize));
+        if (file.gcount() != static_cast<std::streamsize>(fileSize))
+        {
+            spdlog::warn("Failed to read plugin {} completely", m_filename);
+            return false;
+        }
+    }
 
     return true;
 }
