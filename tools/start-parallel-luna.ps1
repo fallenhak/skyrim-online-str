@@ -104,11 +104,16 @@ foreach ($name in $Selected) {
         }
     }
 
-    $WorkerCommand = '$host.UI.RawUI.WindowTitle = "Skyrim Online STR - ' + $name + '"; & "' + $Runner + '" -RepoRoot "' + $path + '" -ExpectedBranch "' + $branch + '" -WorkerName "' + $name + '" -Hours ' + ([string]$Hours) + ' -Model "' + $Model + '" -Effort "' + $Effort + '"'
     $ProcessArgs = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-Command", $WorkerCommand
+        "-File", $Runner,
+        "-RepoRoot", $path,
+        "-ExpectedBranch", $branch,
+        "-WorkerName", $name,
+        "-Hours", ([string]$Hours),
+        "-Model", $Model,
+        "-Effort", $Effort
     )
 
     $proc = Start-Process -FilePath "powershell.exe" -ArgumentList $ProcessArgs -PassThru
