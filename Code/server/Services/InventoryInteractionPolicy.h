@@ -1,11 +1,17 @@
 #pragma once
 
-#include <algorithm>
-#include <cmath>
+#include <TiltedCore/Stl.hpp>
+#include <TiltedCore/Buffer.hpp>
+
 #include <cstdint>
-#include <limits>
+#include <functional>
+#include <optional>
 
 #include <Structs/Inventory.h>
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
 
 struct InventoryInteractionPolicy final
 {
