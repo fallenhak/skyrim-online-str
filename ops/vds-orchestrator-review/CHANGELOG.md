@@ -1,5 +1,26 @@
 # Supervisor Hardening V2 changelog
 
+## Roadmap / Dependency Control Plane — 2026-09-21
+
+- Created the dedicated `/srv/projects/skyrim-online-str/control-plane`
+  worktree on `orchestration/control-plane` at
+  `3e7e893b4018b488e158aa5cda977399c0e55a75` and made synchronization
+  fetch/clean-branch/fast-forward-only and fail closed.
+- Added strict roadmap parsing for milestones, workstreams, existing PLAN
+  queues, roadmap tasks, dependencies, cycles, external gates, future lanes,
+  executable flags, risk, Sol-review requirements, and acceptance criteria.
+- Added persisted task identity, dependency decisions, exact SHA/definition
+  approvals, bounded audit history, round-robin fairness, reboot-safe cursor,
+  global rate-limit gating, and the M01 runtime-acceptance state machine.
+- Preserved the existing C03/A04/L03/U02 positions and left M01-WORLD W01-W10
+  blocked on its canonical reviewed integration-branch gate. No future branch
+  was created and no development phase was started.
+- Added 20 deterministic roadmap/control-plane tests; the combined suite now
+  passes 51 tests.
+- Installed the repository-required Node 20/pnpm 9 UI tooling with bounded
+  service-owned caches. No UI dependencies, Docker, or heavyweight build
+  infrastructure were installed.
+
 ## V2.1 — 2026-09-21
 
 - Removed the duplicate `git_dirty()` definition and made Git-status failure

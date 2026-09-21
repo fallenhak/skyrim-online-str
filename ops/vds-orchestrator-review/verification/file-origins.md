@@ -1,18 +1,22 @@
-# V2.1 file origins
+# Roadmap / dependency control-plane file origins
 
 - `source/orchestrator/supervisor.py`: V1 installed supervisor reviewed at
   architect snapshot commit `7aa07f042fe21da3e0ac87cca6870d95f0f11ebe`, then
   hardened in V2 and corrected in this V2.1 pass.
-- `source/orchestrator/roadmap.py`: new V2 standard-library adapter for the
-  future milestone/dependency scheduler.
-- `source/orchestrator/test_supervisor.py`: V2 tests plus 12 deterministic V2.1
-  regression tests; 31 tests pass in the installed suite.
+- `source/orchestrator/roadmap.py`: standard-library control-plane parser,
+  normalized task model, dependency evaluator, exact approval binding, and
+  round-robin helper.
+- `source/orchestrator/test_supervisor.py`: 31 V2/V2.1 supervisor tests.
+- `source/orchestrator/test_roadmap.py`: 20 deterministic roadmap/control-plane
+  tests; 51 tests pass in the installed suite.
 - `source/config/supervisor.json`: V1 installed configuration extended with V2
   workflow, evidence, bounds, product, worker-isolation, and retry settings.
-- `source/management/skyrim-dev`: V1 management wrapper extended with explicit
-  review lifecycle commands.
-- `source/product/*.md`: new canonical product-context files requested for V2.
+- `source/management/skyrim-dev`: management wrapper extended with control-plane,
+  roadmap, task-approval, and milestone-acceptance commands.
+- `source/product/*.md`: canonical copies from control-plane SHA
+  `3e7e893b4018b488e158aa5cda977399c0e55a75`.
 - `source/systemd/*`: existing paused/disabled unit definitions republished;
   no unit was enabled or started for autonomous development.
-- `state/persistent-lane-state.json`: redacted projection of the installed V2
-  state, preserving the four protected development heads.
+- `verification/control-plane-schema.md`: schema/parser/scheduler contract.
+- `state/persistent-lane-state.json`: redacted projection of the installed V3
+  scheduler state, preserving the four protected development heads.

@@ -6,7 +6,7 @@ UNIT=skyrim-dev-orchestrator.service
 ENVV="HOME=/home/skyrimdev CODEX_HOME=/home/skyrimdev/.codex GH_CONFIG_DIR=/home/skyrimdev/.config/gh PATH=/usr/local/bin:/usr/bin:/bin"
 
 usage() {
-    printf '%s\n' 'usage: skyrim-dev {status|start|pause|resume|stop|logs|healthcheck|self-test|review-status|approve|retry|block} [lane]'
+    printf '%s\n' 'usage: skyrim-dev {status|roadmap-status|milestone-status|sync-control-plane|start|pause|resume|stop|logs|healthcheck|self-test|review-status|approve|retry|block|approve-task|approve-control-plane|accept-milestone} [argument]'
 }
 
 run_service() {
@@ -26,6 +26,9 @@ fi
 case "$command_name" in
     status)
         run_service status
+        ;;
+    roadmap-status|milestone-status|sync-control-plane)
+        run_service "$command_name"
         ;;
     start|resume)
         if [ "$(id -u)" -ne 0 ]; then
@@ -64,6 +67,27 @@ case "$command_name" in
             exit 2
         fi
         run_service "$command_name" "$2"
+        ;;
+    approve-task|approve-control-plane)
+        if [ "$#" -ne 2 ]; then
+            usage >&2
+            exit 2
+        fi
+        run_service "$command_name" "$2"
+        ;;
+    accept-milestone)
+        if [ "$#" -lt 2 ] || [ "$#" -gt 4 ]; then
+            usage >&2
+            exit 2
+        fi
+        if [ "$#" -eq 4 ] && [ "$3" = "--evidence-file" ]; then
+            run_service "$command_name" "$2" "$3" "$4"
+        elif [ "$#" -eq 2 ]; then
+            run_service "$command_name" "$2"
+        else
+            usage >&2
+            exit 2
+        fi
         ;;
     *)
         usage >&2

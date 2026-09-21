@@ -1,4 +1,4 @@
-# Residual risks for V2.1 architect review
+# Residual risks for the V2.1 control-plane review
 
 - Workers and the outer supervisor still use the same `skyrimdev` Unix account.
   Worker environment isolation hides GitHub CLI credentials and SSH-agent
@@ -23,3 +23,16 @@
   this snapshot.
 - Milestone 1 acceptance remains a real multi-client runtime/integration
   scenario; supervisor queue completion is not product acceptance.
+- The control-plane worktree and GitHub fetch depend on the configured
+  `skyrimdev` GitHub credential helper. A fetch or fast-forward failure fails
+  closed and retains the last valid snapshot, but an operator must resolve the
+  external Git condition before new roadmap state can apply.
+- External gates are intentionally explicit and currently unresolved for
+  M01-WORLD. No automatic branch creation or integration inference is
+  attempted; the architect must publish the reviewed branch/gate state.
+- The roadmap parser and scheduler are deterministic unit-tested, but actual
+  W01-W10 runtime behavior is not proven by this installation and no Linux
+  check is treated as Windows Skyrim acceptance evidence.
+- Node 20/pnpm 9 tooling is installed from the repository's explicit workflow
+  contract, but UI dependencies were not installed or built during this
+  control-plane pass.

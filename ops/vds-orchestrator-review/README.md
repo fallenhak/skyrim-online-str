@@ -1,16 +1,17 @@
-# Skyrim Supervisor Hardening V2.1 review snapshot
+# Skyrim Supervisor Roadmap / Dependency Control Plane review snapshot
 
-This is the secret-free architect-review snapshot of the V2.1 supervisor installed
-on the Ubuntu VDS. It was captured on 2026-09-21 after installation and
-verification. Autonomous development remains disabled: the orchestrator unit
-and healthcheck timer are both inactive and disabled, global mode is `PAUSED`,
-and no worker was launched during this pass.
+This is the secret-free architect-review snapshot of Supervisor V2.1 extended
+with the roadmap/dependency control plane. It was captured on 2026-09-21 after
+installation and verification. Autonomous development remains disabled: the
+orchestrator unit and healthcheck timer are both inactive and disabled, global
+mode is `PAUSED`, and no worker was launched during this pass.
 
 ## Installed layout
 
 - Supervisor: `/srv/services/skyrim-dev/orchestrator/supervisor.py`
-- Future task adapter: `/srv/services/skyrim-dev/orchestrator/roadmap.py`
-- Unit tests: `/srv/services/skyrim-dev/orchestrator/test_supervisor.py`
+- Roadmap parser/scheduler: `/srv/services/skyrim-dev/orchestrator/roadmap.py`
+- Unit tests: `/srv/services/skyrim-dev/orchestrator/test_supervisor.py` and
+  `/srv/services/skyrim-dev/orchestrator/test_roadmap.py`
 - Configuration: `/srv/services/skyrim-dev/config/supervisor.json`
 - Management command: `/usr/local/bin/skyrim-dev`
 - Product context: `/srv/services/skyrim-dev/product/`
@@ -18,6 +19,9 @@ and no worker was launched during this pass.
 - Review packets: `/var/lib/skyrim-dev/review-packets/`
 - Worker logs: `/var/log/skyrim-dev/`
 - Empty worker GitHub config: `/var/lib/skyrim-dev/worker-gh-config/`
+- Control-plane worktree: `/srv/projects/skyrim-online-str/control-plane`
+- Applied control-plane SHA: `3e7e893b4018b488e158aa5cda977399c0e55a75`
+- Validated control cache: `/var/lib/skyrim-dev/state/control-plane/`
 
 The review branch contains the corresponding source under `source/`, a redacted
 state projection under `state/`, and verification evidence under `verification/`.
@@ -49,7 +53,9 @@ Review metadata is explicit and persistent:
 
 `skyrim-dev review-status`, `approve`, `retry`, and `block` are explicit
 operator interfaces. The third successful phase is counted before checkpoint
-evaluation, so exactly three successes trigger the checkpoint.
+evaluation, so exactly three successes trigger the checkpoint. Roadmap control
+commands are `roadmap-status`, `milestone-status`, `sync-control-plane`,
+`approve-task`, `approve-control-plane`, and `accept-milestone`.
 
 For `CURRENT_PHASE_REVIEW`, `retry` always enters `RECOVERING` while the global
 mode is `RUNNING`. While globally paused it records
@@ -118,16 +124,27 @@ state and review packet say `focused tests: not independently verified by
 supervisor`. A command is reported passed only when the supervisor observed its
 exit result.
 
-## Product awareness
+## Product-aware scheduling
 
-The installed product files define the persistent multiplayer RP/MMO vision,
-server-owned Character/AccountId/CharacterId authority, humanoid suppression,
-trusted creature population, lifecycle/incarnation rules, renewable encounters,
-and the first playable core-world milestone. Worker prompts receive a bounded
-vision/rules/milestone section plus lane-specific relevance, the current phase,
-hard boundaries, and a roadmap task record. The current C/A/L/U queues remain
-unchanged; `roadmap.py` is only an adapter for a future milestone/dependency
-scheduler.
+The dedicated control-plane worktree is synchronized every five minutes by the
+trusted outer supervisor using the exact configured branch and fast-forward-only
+Git. The canonical product files define the persistent multiplayer RP/MMO
+vision, server-owned Character/AccountId/CharacterId authority, humanoid
+suppression, trusted creature population, lifecycle/incarnation rules,
+renewable encounters, and the first playable core-world milestone. Validated
+copies are cached with the applied SHA; worker prompts receive only bounded
+context plus the task identity and SHA.
+
+The current C/A/L/U queues remain intact and start at C03, A04, L03, and U02.
+They are normalized as `EXISTING_PLAN` tasks. M01-WORLD W01-W10 are
+`ROADMAP` tasks and remain visibly `BLOCKED_EXTERNAL_GATE` until the architect
+provides the reviewed integration branch. M02-M05 are product direction only
+with `executable: false` and can never be scheduled.
+
+The scheduler persists dependency decisions and a bounded audit trail, uses
+round-robin selection across ready lanes, caps concurrency at two, and keeps
+Codex rate limiting global. Queue completion transitions M01 to runtime
+acceptance waiting; it never accepts M01 automatically.
 
 ## Security boundary
 
@@ -145,14 +162,23 @@ architecture; this remains for architect review.
 
 ## Verification
 
-- 31 supervisor unit tests passed under `skyrimdev`, including deterministic
-  V2.1 cases for Git-status failure, restart-safe rate-limit probes, retry
-  semantics, recovery evidence, and untracked-file review bounds.
+- 51 deterministic unit tests passed under `skyrimdev`: the 31 V2.1
+  supervisor tests plus 20 roadmap/control-plane tests for schema rejection,
+  dependency states, exact approvals, fairness, control mutation gates, and
+  milestone acceptance.
 - `skyrim-dev self-test` passed, including Codex/GitHub authentication checks,
   safe push dry-runs, four clean worktrees, product context, credential
   isolation, and GitHub Actions polling.
 - `skyrim-dev healthcheck` passed resource, Git/worktree, state-persistence,
-  and product-context checks.
+  control-plane, and canonical product-context checks.
+- `skyrim-dev roadmap-status` passed with applied and observed SHA
+  `3e7e893b4018b488e158aa5cda977399c0e55a75`; W01-W10 report the reviewed
+  integration-branch external gate.
+- `skyrim-dev milestone-status` passed and kept M01 `ACTIVE`; runtime evidence
+  remains required.
+- UI readiness was verified from the repository workflow and the minimal
+  supported Node 20/pnpm 9 tooling was installed; no UI dependencies were
+  installed.
 - No development worker was started, no development branch was pushed, and no
   development branch head changed.
 - Protected development heads remain:
@@ -160,7 +186,11 @@ architecture; this remains for architect review.
   `authority=caf7dcc31ca4b6d0912f31b151408ba24c13938c`,
   `population=52c97ba4d5da993e6ef2fa4bdf398f13c22b456a`,
   `ui=a473531ad16a82cecc8a4cdecc460934ba7efcfa`.
+- The orchestrator and healthcheck timer remain inactive and disabled, global
+  mode remains `PAUSED`, and no Luna worker was started.
 
 See [CHANGELOG.md](CHANGELOG.md), [verification/self-test-results.md](verification/self-test-results.md),
-[verification/security-scan.md](verification/security-scan.md), and
+[verification/security-scan.md](verification/security-scan.md),
+[verification/control-plane-schema.md](verification/control-plane-schema.md),
+[verification/ui-tooling-readiness.md](verification/ui-tooling-readiness.md), and
 [state/persistent-lane-state.json](state/persistent-lane-state.json).

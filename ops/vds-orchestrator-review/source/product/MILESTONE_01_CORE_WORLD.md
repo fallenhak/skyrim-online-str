@@ -1,35 +1,32 @@
-# Milestone 1: Core World
+# Milestone 01 — Core World
 
-The first playable target is defined from the player's point of view:
+## Player-facing target
 
-```text
 Launch Skyrim
-  ->
-connect/authenticate
-  ->
-Character Select
-  ->
-choose server-owned character
-  ->
-character snapshot applied
-  ->
-enter world
-  ->
-ordinary humanoid NPC population absent
-  ->
-players coexist
-  ->
-trusted creatures remain and synchronize
-  ->
-players can enter a dungeon/encounter
-  ->
-creature combat/death/lifecycle is coherent
-  ->
-cleared renewable population can later reset safely
-  ->
-reconnect restores the server character
-```
+→ connect/authenticate
+→ Character Select
+→ choose a server-owned character
+→ apply character snapshot
+→ enter world
+→ ordinary humanoid NPC population is absent
+→ multiple players coexist
+→ trusted creatures remain and synchronize
+→ enter a dungeon/encounter
+→ creature combat/death/lifecycle remains coherent
+→ cleared renewable population can reset safely
+→ reconnect restores the same server character
 
-Milestone 1 is not complete merely because individual engineering queues end.
-Final acceptance requires a real runtime/integration scenario with multiple
-Skyrim clients.
+## Engineering workstreams
+
+- Character entry/UI
+- Humanoid suppression and actor classification
+- Creature lifecycle/combat authority
+- Interaction/authority hardening
+- Renewable dungeon/encounter runtime
+- Persistence/reconnect validation
+
+## Acceptance gate
+
+Milestone 01 is not complete when queues are merely exhausted. Final acceptance requires reviewed multi-client runtime evidence on Windows with at least two Skyrim clients, including a reconnect and a renewable encounter reset scenario.
+
+Any missing integration branch, client runtime test, protocol/trust change, persistence schema change, or cross-lane dependency is a human/Sol gate rather than something the scheduler may improvise around.

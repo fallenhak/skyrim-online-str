@@ -18,9 +18,11 @@ until explicit approval. A current-phase failure can only be retried. A final
 queue review has no automatic next work and therefore resolves to a safe
 blocked state.
 
-The future `RoadmapTask` adapter in `roadmap.py` is intentionally small. It
-maps the current authoritative PLAN.md record to the future scheduler contract
-without replacing the current queues or introducing a dependency graph in V2.
+The control-plane scheduler in `roadmap.py` now validates the canonical
+roadmap, normalizes both existing PLAN phases and roadmap-native work into a
+common task identity, evaluates dependencies fail-closed, and persists each
+decision. The existing queues are wrapped, not replaced; their persisted
+phase indexes remain authoritative.
 
 Product context is injected as a bounded prompt section because the reason for
 a phase is part of its safety boundary. The canonical files remain the source
@@ -51,3 +53,29 @@ so security-sensitive content such as `CharacterId` cannot be hidden by a
 generic filename. Binary, oversize, unreadable, and unsafe-path entries expose
 metadata only and route to review; actual untracked bytes still count toward
 the total diff bound.
+
+## Roadmap / dependency control plane
+
+The trusted outer supervisor owns the dedicated
+`/srv/projects/skyrim-online-str/control-plane` worktree. It fetches only
+`orchestration/control-plane`, requires a clean exact-branch worktree, and
+fast-forwards it without force or rewrite. The candidate is parsed before it
+can become active. Invalid candidates preserve the last valid cached snapshot;
+changes to active work, completed semantics, running-work dependencies,
+`WORLD_RULES.md`, or milestone acceptance semantics create a global
+`NEEDS_SOL_REVIEW` gate.
+
+M01-WORLD W01-W10 remain blocked by the canonical unresolved reviewed
+integration-branch gate. The parser allows this explicit future lane with
+`branch: null`, but the scheduler never creates a branch or worker for it.
+M02-M05 have `executable: false` and are never expanded or scheduled.
+
+Task approvals record both a definition hash and control-plane SHA. The audit
+history records control application, selection, dependency evaluation, task
+start/completion, reviews, approvals, and milestone transitions with bounded
+retention. Round-robin lane selection persists its cursor and respects the
+existing two-worker limit and global rate-limit pause behavior.
+
+M01 engineering completion is a separate state transition to
+`WAITING_RUNTIME_ACCEPTANCE`. Only an explicit operator acceptance with
+reviewed Windows Skyrim evidence can reach `ACCEPTED`.

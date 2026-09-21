@@ -29,6 +29,16 @@
   "focused_validation_commands": {},
   "product_root": "/srv/services/skyrim-dev/product",
   "worker_gh_config_dir": "/var/lib/skyrim-dev/worker-gh-config",
+  "control_plane": {
+    "remote": "origin",
+    "branch": "orchestration/control-plane",
+    "worktree": "/srv/projects/skyrim-online-str/control-plane",
+    "repo_root": "/srv/projects/skyrim-online-str/repo",
+    "sync_interval_seconds": 300,
+    "cache_root": "/var/lib/skyrim-dev/state/control-plane",
+    "active_snapshot_path": "/var/lib/skyrim-dev/state/control-plane/active/roadmap.json"
+  },
+  "max_audit_events": 500,
   "codex_retry_base_seconds": 900,
   "codex_retry_max_seconds": 3600,
   "post_issue_updates": true,
