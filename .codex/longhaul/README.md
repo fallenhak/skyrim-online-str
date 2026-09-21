@@ -10,16 +10,13 @@ git pull --ff-only origin hardening/longhaul-creature-combat
 .\tools\run-codex-longhaul.ps1 -Hours 5.5
 
 Defaults:
-- model: gpt-5.6 (Sol)
-- reasoning effort: high
+- model: gpt-5.6-luna (Luna)
+- reasoning effort: max
 - sandbox: workspace-write
 - approval policy: never
 - Codex itself does not push. The outer PowerShell process pushes clean commits between iterations.
 
 Optional stronger reasoning:
-.\tools\run-codex-longhaul.ps1 -Hours 5.5 -Model gpt-5.6 -Effort xhigh
-
-Optional cheaper/faster model:
-.\tools\run-codex-longhaul.ps1 -Hours 5.5 -Model gpt-5.6-terra -Effort high
+.\tools\run-codex-longhaul.ps1 -Hours 5.5 -Model gpt-5.6-luna -Effort max
 
 The runner retries temporary Codex failures until the deadline. Dirty work from an interrupted run triggers a recovery Codex session instead of starting another phase. Logs are written outside the repo under the system temp directory.
