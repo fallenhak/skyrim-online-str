@@ -104,16 +104,11 @@ foreach ($name in $Selected) {
         }
     }
 
+    $WorkerCommand = '$host.UI.RawUI.WindowTitle = "Skyrim Online STR - ' + $name + '"; & "' + $Runner + '" -RepoRoot "' + $path + '" -ExpectedBranch "' + $branch + '" -WorkerName "' + $name + '" -Hours ' + ([string]$Hours) + ' -Model "' + $Model + '" -Effort "' + $Effort + '"'
     $ProcessArgs = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-File", $Runner,
-        "-RepoRoot", $path,
-        "-ExpectedBranch", $branch,
-        "-WorkerName", $name,
-        "-Hours", ([string]$Hours),
-        "-Model", $Model,
-        "-Effort", $Effort
+        "-Command", $WorkerCommand
     )
 
     $proc = Start-Process -FilePath "powershell.exe" -ArgumentList $ProcessArgs -PassThru
@@ -145,10 +140,36 @@ foreach ($info in $WorkerInfo) {
 }
 
 Write-Host ""
-Write-Host "This launcher will wait for all worker processes."
+Write-Host "This launcher will monitor all worker processes."
+Write-Host "If one worker exits early, the other workers will keep running."
 Write-Host "Do not let Windows sleep."
 
-Wait-Process -Id ($Processes | ForEach-Object { $_.Id })
+$ReportedExit = @{}
+while ($true) {
+    $runningCount = 0
+
+    for ($i = 0; $i -lt $Processes.Count; $i++) {
+        $proc = $Processes[$i]
+        $info = $WorkerInfo[$i]
+        $proc.Refresh()
+
+        if ($proc.HasExited) {
+            if (-not $ReportedExit.ContainsKey($proc.Id)) {
+                $ReportedExit[$proc.Id] = $true
+                Write-Warning "$($info.Name) worker exited with code $($proc.ExitCode) (PID $($proc.Id)). Other workers continue."
+            }
+        }
+        else {
+            $runningCount++
+        }
+    }
+
+    if ($runningCount -eq 0) {
+        break
+    }
+
+    Start-Sleep -Seconds 15
+}
 
 Write-Host ""
 Write-Host "All selected workers exited."
