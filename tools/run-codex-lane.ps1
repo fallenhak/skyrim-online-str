@@ -143,13 +143,14 @@ approximate remaining minutes: $([math]::Round($Remaining.TotalMinutes))
 consecutive no-commit rounds before this run: $NoCommitRounds
 
 Complete one substantial phase and exit cleanly. A fresh Luna/max context will continue this SAME lane immediately.
+
+If your runtime header says sandbox: read-only, do not pretend implementation is possible. Exit without modifying state so the supervisor can retry after configuration is fixed.
 "@
     }
 
     $ReasoningConfig = 'model_reasoning_effort="' + $Effort + '"'
     $CodexArgs = @(
         "exec",
-        "--ignore-user-config",
         "--sandbox", "workspace-write",
         "--model", $Model,
         "-c", 'approval_policy="never"',
@@ -157,7 +158,7 @@ Complete one substantial phase and exit cleanly. A fresh Luna/max context will c
         $RunPrompt
     )
 
-    Write-Host "[$WorkerName] launching Codex now (ignore-user-config, workspace-write, Luna/max)..."
+    Write-Host "[$WorkerName] launching Codex now (workspace-write, Luna/max)..."
     Write-Host "[$WorkerName] log: $LogFile"
     New-Item -ItemType File -Force -Path $LogFile | Out-Null
 
@@ -243,7 +244,6 @@ Leave git status clean, then exit.
     $ReasoningConfig = 'model_reasoning_effort="' + $Effort + '"'
     $CleanupArgs = @(
         "exec",
-        "--ignore-user-config",
         "--sandbox", "workspace-write",
         "--model", $Model,
         "-c", 'approval_policy="never"',
