@@ -230,3 +230,33 @@ See [CHANGELOG.md](CHANGELOG.md), [verification/self-test-results.md](verificati
 [verification/worker-smoke-results.md](verification/worker-smoke-results.md),
 [verification/ui-tooling-readiness.md](verification/ui-tooling-readiness.md), and
 [state/persistent-lane-state.json](state/persistent-lane-state.json).
+
+## V3 bounded repair — 2026-09-22
+
+This section supersedes earlier V2/V2.1 installation-state prose above for the
+bounded operator-request/validation repair. The review branch is installed on
+the production VDS. The supervisor service is `active` in global `PAUSED`
+mode; the healthcheck timer is `active/enabled`.
+
+Mutating operator commands now use the daemon-owned durable request inbox at
+`/var/lib/skyrim-dev/operator-requests`; observers remain read-only and there
+is no offline `state.json` fallback. The processed-request ledger and durable
+receipts provide restart-safe idempotence. See
+[verification/operator-request-design.md](verification/operator-request-design.md).
+
+Worker result semantics now include
+`COMPLETE_WITH_VALIDATION_GAP` with a bounded `VALIDATION_GAP:` reason. The
+supervisor still runs structural validation, focused checks when configured,
+trusted commit, push, and exact-SHA CI. See
+[verification/validation-gap.md](verification/validation-gap.md).
+
+Prospective commits are checked with an isolated temporary Git index before the
+real index is staged; the real cached diff check remains as defense in depth.
+See [verification/prospective-diff-validation.md](verification/prospective-diff-validation.md).
+
+The VDS suite passed 87 tests. The disposable Luna smoke test returned
+`WORKER_SMOKE_OK` with the operator inbox probe `BLOCKED`. C04, A04, L03, and
+U02 remain pending exactly as captured, with protected heads and dirty-worktree
+bytes preserved. See [verification/final-verification.md](verification/final-verification.md),
+[verification/current-state-redacted.json](verification/current-state-redacted.json),
+and [verification/dirty-worktrees-v3.md](verification/dirty-worktrees-v3.md).

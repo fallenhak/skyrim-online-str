@@ -28,3 +28,19 @@
   fail-closed result.
 - `state/persistent-lane-state.json`: redacted projection of the installed V3
   scheduler state, preserving the four protected development heads.
+
+## V3 bounded repair additions
+
+- `source/orchestrator/supervisor.py`: daemon-owned operator request lifecycle,
+  exactly-once processed ledger, validation-gap protocol, temporary-index
+  prospective diff check, review-gated scheduler summary, and preserved review
+  worktree self-test behavior.
+- `source/orchestrator/test_supervisor.py`: 87-test deterministic suite,
+  including operator ownership/replay, malformed/inactive requests,
+  validation gaps, prospective Git checks, and cross-lane scheduling.
+- `source/config/supervisor.json`: private operator request root and bounded
+  request/receipt settings.
+- `source/management/skyrim-dev`: wrapper documentation stating that mutation
+  commands are submitted to the live daemon.
+- `verification/*-v3.md` and `verification/operator-request-design.md`:
+  secret-free design and final evidence captured from the VDS.

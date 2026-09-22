@@ -8,9 +8,11 @@ resource guards, and review checkpoints.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import difflib
 import hashlib
+import io
 import json
 import os
 import re
@@ -21,8 +23,9 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 try:
     import fcntl
@@ -52,6 +55,10 @@ STATE_DIR = STATE_ROOT / "state"
 STATE_PATH = STATE_DIR / "state.json"
 CONTROL_PATH = STATE_DIR / "control.json"
 LOCK_PATH = STATE_DIR / "supervisor.lock"
+OPERATOR_REQUEST_ROOT = STATE_ROOT / "operator-requests"
+OPERATOR_REQUEST_INBOX = OPERATOR_REQUEST_ROOT / "inbox"
+OPERATOR_REQUEST_RECEIPTS = OPERATOR_REQUEST_ROOT / "receipts"
+OPERATOR_REQUEST_ARCHIVE = OPERATOR_REQUEST_ROOT / "archive"
 REVIEW_ROOT = STATE_ROOT / "review-packets"
 LOG_ROOT = Path("/var/log/skyrim-dev")
 SUPERVISOR_LOG = LOG_ROOT / "supervisor.log"
@@ -74,7 +81,10 @@ SECRET_RE = re.compile(
     r"(?:token|oauth_token|access_token|password|secret)\s*[:=]\s*[^\s,;]+)"
 )
 PHASE_RE = re.compile(r"^([A-Z][0-9]+)\s+(.+?)\s*$")
-RESULT_RE = re.compile(r"WORKER_RESULT:\s*(COMPLETE|NEEDS_SOL_REVIEW|BLOCKED)")
+RESULT_RE = re.compile(
+    r"WORKER_RESULT:\s*(COMPLETE_WITH_VALIDATION_GAP|COMPLETE|NEEDS_SOL_REVIEW|BLOCKED)"
+)
+VALIDATION_GAP_RE = re.compile(r"VALIDATION_GAP:\s*(.+)")
 CODEX_USAGE_RE = re.compile(
     r"(?i)(?:usage\s+limit|rate\s+limit|too\s+many\s+requests|quota\s+exhausted|"
     r"capacity\s+exhausted|try\s+again\s+later)"
@@ -87,6 +97,17 @@ MAX_UNTRACKED_REVIEW_FILE_BYTES = 64 * 1024
 MAX_RECOVERY_ERROR_BYTES = 4000
 MAX_RECOVERY_CI_BYTES = 8000
 MAX_RECOVERY_WORKER_BYTES = 8000
+OPERATOR_REQUEST_VERSION = 1
+OPERATOR_MUTATION_COMMANDS = {
+    "approve",
+    "retry",
+    "block",
+    "approve-task",
+    "approve-control-plane",
+    "accept-milestone",
+    "sync-control-plane",
+}
+OPERATOR_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 
 
 def parse_porcelain_v1_z(output: bytes | str) -> list[dict[str, str | None]]:
@@ -256,17 +277,52 @@ def redact(text: str) -> str:
 def atomic_write_json(path: Path, data: Any, mode: int = 0o640) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".tmp-{os.getpid()}-{threading.get_ident()}")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
+    try:
+        with tmp.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def atomic_write_text(path: Path, text: str, mode: int = 0o640) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".tmp-{os.getpid()}-{threading.get_ident()}")
-    tmp.write_text(text, encoding="utf-8")
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
+    try:
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def sha256_file(path: Path) -> str:
@@ -286,6 +342,178 @@ def read_json(path: Path, default: Any) -> Any:
         return default
 
 
+def operator_request_paths(config: Mapping[str, Any] | None = None) -> dict[str, Path]:
+    configured = config.get("operator_request_root") if isinstance(config, dict) else None
+    root = Path(str(configured)) if configured else OPERATOR_REQUEST_ROOT
+    if not root.is_absolute():
+        root = OPERATOR_REQUEST_ROOT
+    return {
+        "root": root,
+        "inbox": root / "inbox",
+        "receipts": root / "receipts",
+        "archive": root / "archive",
+    }
+
+
+def ensure_operator_request_dirs(config: Mapping[str, Any] | None = None) -> dict[str, Path]:
+    paths = operator_request_paths(config)
+    for path in paths.values():
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
+    return paths
+
+
+def _valid_operator_request_id(value: Any) -> bool:
+    return isinstance(value, str) and bool(OPERATOR_REQUEST_ID_RE.fullmatch(value))
+
+
+def validate_operator_request(
+    payload: Any,
+    *,
+    now: float | None = None,
+    max_age_seconds: int = 900,
+) -> tuple[bool, str, str]:
+    """Validate the durable request envelope before it reaches Supervisor state."""
+    if not isinstance(payload, dict):
+        return False, "", "request envelope is not an object"
+    request_id = payload.get("request_id")
+    if not _valid_operator_request_id(request_id):
+        return False, str(request_id or ""), "request_id is missing or unsafe"
+    if payload.get("version") != OPERATOR_REQUEST_VERSION:
+        return False, request_id, "unsupported request version"
+    command = payload.get("command")
+    if command not in OPERATOR_MUTATION_COMMANDS:
+        return False, request_id, "unsupported operator command"
+    args = payload.get("args")
+    if not isinstance(args, dict):
+        return False, request_id, "request args must be an object"
+    created_at = payload.get("created_at")
+    created_timestamp = parse_time(created_at if isinstance(created_at, str) else None)
+    if not created_timestamp:
+        return False, request_id, "created_at is missing or invalid"
+    current_time = time.time() if now is None else now
+    if created_timestamp > current_time + 60:
+        return False, request_id, "request timestamp is too far in the future"
+    if current_time - created_timestamp > max(1, int(max_age_seconds)):
+        return False, request_id, "request is stale"
+    if command in {"approve", "retry", "block"}:
+        if set(args) != {"lane"} or args.get("lane") not in LANE_ORDER:
+            return False, request_id, "lane command requires one known lane"
+    elif command == "approve-task":
+        if set(args) != {"task_id"} or not isinstance(args.get("task_id"), str) or not args["task_id"].strip():
+            return False, request_id, "approve-task requires a task_id"
+    elif command == "approve-control-plane":
+        sha = args.get("sha")
+        if set(args) != {"sha"} or not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", sha):
+            return False, request_id, "approve-control-plane requires a Git SHA"
+    elif command == "accept-milestone":
+        if set(args) != {"milestone_id", "evidence"}:
+            return False, request_id, "accept-milestone requires milestone_id and evidence"
+        if not isinstance(args.get("milestone_id"), str) or not args["milestone_id"].strip():
+            return False, request_id, "accept-milestone requires a milestone_id"
+        if not isinstance(args.get("evidence"), dict):
+            return False, request_id, "milestone evidence must be an object"
+    elif command == "sync-control-plane":
+        if set(args) != {"force"} or not isinstance(args.get("force"), bool):
+            return False, request_id, "sync-control-plane requires a boolean force flag"
+    return True, request_id, ""
+
+
+def daemon_is_active() -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "--quiet", UNIT_NAME],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"cannot verify supervisor service: {exc}"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "inactive").strip()
+        return False, f"supervisor service is not active ({detail})"
+    return True, ""
+
+
+def submit_operator_request(
+    command: str,
+    args: dict[str, Any],
+    *,
+    request_id: str | None = None,
+    wait_seconds: int | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> int:
+    """Submit a mutation and wait only for the daemon's durable receipt."""
+    if command not in OPERATOR_MUTATION_COMMANDS:
+        print(f"unsupported operator command: {command}", file=sys.stderr)
+        return 2
+    active, reason = daemon_is_active()
+    if not active:
+        print(f"operator mutation refused: {reason}; no offline state write is performed", file=sys.stderr)
+        return 1
+    request_id = request_id or uuid.uuid4().hex
+    payload = {
+        "version": OPERATOR_REQUEST_VERSION,
+        "request_id": request_id,
+        "command": command,
+        "args": args,
+        "created_at": utc_now(),
+        "submitted_by": str(os.getuid()) if hasattr(os, "getuid") else "operator",
+    }
+    valid, _, validation_error = validate_operator_request(payload, max_age_seconds=10**9)
+    if not valid:
+        print(f"operator request rejected locally: {validation_error}", file=sys.stderr)
+        return 2
+    paths = ensure_operator_request_dirs(config)
+    receipt_path = paths["receipts"] / f"{request_id}.json"
+    existing_receipt = read_json(receipt_path, None)
+    if isinstance(existing_receipt, dict):
+        receipt = existing_receipt
+    else:
+        request_path = paths["inbox"] / f"{request_id}.json"
+        if not request_path.exists():
+            atomic_write_json(request_path, payload, 0o600)
+        timeout = wait_seconds
+        if timeout is None:
+            configured = (config or {}).get("operator_request_timeout_seconds", 45)
+            try:
+                timeout = max(1, int(configured))
+            except (TypeError, ValueError):
+                timeout = 45
+        deadline = time.monotonic() + timeout
+        receipt = None
+        while time.monotonic() < deadline:
+            candidate = read_json(receipt_path, None)
+            if isinstance(candidate, dict):
+                receipt = candidate
+                break
+            time.sleep(0.1)
+        if receipt is None:
+            print(
+                f"operator request {request_id} timed out waiting for daemon receipt; "
+                "the durable request was not replayed through an offline path",
+                file=sys.stderr,
+            )
+            return 1
+    if receipt.get("status") == "SUCCEEDED" and receipt.get("return_code") == 0:
+        output = str(receipt.get("stdout") or "").rstrip()
+        if output:
+            print(output)
+        else:
+            print(f"operator request {request_id} succeeded")
+        return 0
+    error = str(receipt.get("stderr") or receipt.get("stdout") or "operator request failed")
+    print(error.rstrip(), file=sys.stderr)
+    return int(receipt.get("return_code") or 1)
+
+
 def tail_text(path: Path, limit: int = 12000) -> str:
     try:
         data = path.read_bytes()
@@ -300,6 +528,8 @@ class Supervisor:
         # runtime markers. CLI/healthcheck instances are observers by default.
         self.runtime_owner = bool(runtime_owner)
         self._state_write_enabled = self.runtime_owner
+        self._deferred_save_depth = 0
+        self._save_deferred = False
         self.config = read_json(CONFIG_PATH, {})
         if not self.config:
             raise RuntimeError(f"missing configuration: {CONFIG_PATH}")
@@ -315,7 +545,7 @@ class Supervisor:
 
     def _new_state(self) -> dict[str, Any]:
         return {
-            "version": 3,
+            "version": 4,
             "created_at": utc_now(),
             "updated_at": utc_now(),
             "global_mode": "PAUSED",
@@ -356,6 +586,7 @@ class Supervisor:
                 "resolved_external_gates": [],
                 "audit": [],
             },
+            "processed_operator_requests": {},
             "events": [],
         }
 
@@ -376,9 +607,9 @@ class Supervisor:
 
     def _prepare_state(self) -> None:
         try:
-            self.state["version"] = max(int(self.state.get("version", 1)), 3)
+            self.state["version"] = max(int(self.state.get("version", 1)), 4)
         except (TypeError, ValueError):
-            self.state["version"] = 3
+            self.state["version"] = 4
         self.state.setdefault("created_at", utc_now())
         self.state.setdefault("global_mode", "PAUSED")
         self.state.setdefault("mode_reason", "installation default")
@@ -405,6 +636,8 @@ class Supervisor:
         if self.runtime_owner:
             self._reconcile_startup_runtime()
         self.state.setdefault("lanes", {})
+        if not isinstance(self.state.get("processed_operator_requests"), dict):
+            self.state["processed_operator_requests"] = {}
         self.state.setdefault("events", [])
         for lane_name in LANE_ORDER:
             spec = self.config["lanes"][lane_name]
@@ -433,10 +666,12 @@ class Supervisor:
                 "recovery_attempts": 0,
                 "push_attempts": 0,
                 "ci_poll_failures": 0,
-                "review_packet": None,
-                "review_reasons": [],
-                "worker_attempt": 0,
-            })
+                 "review_packet": None,
+                 "review_reasons": [],
+                 "worker_attempt": 0,
+                 "worker_result": None,
+                 "validation_gap": {"status": "NONE", "reason": "", "at": None},
+             })
             lane.update({
                 "branch": spec["branch"],
                 "worktree": spec["worktree"],
@@ -461,6 +696,9 @@ class Supervisor:
                     "created_at": None,
                 }
             lane.setdefault("worker_attempt", 0)
+            lane.setdefault("worker_result", None)
+            if not isinstance(lane.get("validation_gap"), dict):
+                lane["validation_gap"] = {"status": "NONE", "reason": "", "at": None}
             self._refresh_plan(lane_name, lane)
             if self.runtime_owner and lane_name not in self.processes:
                 # A persisted PID is only historical evidence after a supervisor
@@ -1004,17 +1242,216 @@ class Supervisor:
         })
         del self.state["events"][:-200]
 
-    def enable_operator_writes(self) -> None:
-        """Allow an explicit operator command to persist its narrow mutation."""
-        self._state_write_enabled = True
-
     def save_state(self) -> bool:
         if not getattr(self, "_state_write_enabled", True):
             return False
+        if getattr(self, "_deferred_save_depth", 0) > 0:
+            self._save_deferred = True
+            return True
         self.state["updated_at"] = utc_now()
         atomic_write_json(STATE_PATH, self.state, 0o640)
         self.last_save = time.monotonic()
+        self._save_deferred = False
         return True
+
+    def _operator_paths(self) -> dict[str, Path]:
+        return ensure_operator_request_dirs(self.config)
+
+    def _remember_operator_request(self, request_id: str, receipt: dict[str, Any]) -> None:
+        processed = self.state.setdefault("processed_operator_requests", {})
+        if not isinstance(processed, dict):
+            processed = {}
+            self.state["processed_operator_requests"] = processed
+        processed[request_id] = dict(receipt)
+        try:
+            limit = max(16, int(self.config.get("max_processed_operator_requests", 256)))
+        except (TypeError, ValueError):
+            limit = 256
+        ordered = sorted(
+            processed.items(),
+            key=lambda item: parse_time(
+                str(item[1].get("processed_at") or "")
+                if isinstance(item[1], dict) else ""
+            ),
+            reverse=True,
+        )
+        self.state["processed_operator_requests"] = dict(ordered[:limit])
+
+    def _operator_receipt(
+        self,
+        request_id: str,
+        command: str,
+        return_code: int,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> dict[str, Any]:
+        return {
+            "version": OPERATOR_REQUEST_VERSION,
+            "request_id": request_id,
+            "command": command,
+            "status": "SUCCEEDED" if return_code == 0 else "FAILED",
+            "return_code": int(return_code),
+            "stdout": redact(stdout)[-8000:],
+            "stderr": redact(stderr)[-8000:],
+            "processed_at": utc_now(),
+            "daemon_pid": os.getpid(),
+        }
+
+    def _write_operator_receipt(self, receipt: dict[str, Any]) -> None:
+        request_id = str(receipt.get("request_id") or "")
+        if not _valid_operator_request_id(request_id):
+            return
+        path = self._operator_paths()["receipts"] / f"{request_id}.json"
+        atomic_write_json(path, receipt, 0o600)
+
+    def _archive_operator_request(self, path: Path) -> None:
+        paths = self._operator_paths()
+        try:
+            if path.is_symlink() or path.resolve().parent != paths["inbox"].resolve():
+                return
+            target = paths["archive"] / path.name
+            if target.exists():
+                target = paths["archive"] / (
+                    f"{path.stem}-archived-{uuid.uuid4().hex[:12]}{path.suffix}"
+                )
+            path.replace(target)
+        except OSError as exc:
+            self.log(f"operator request archive failed: {exc}")
+
+    def _prune_operator_artifacts(self) -> None:
+        paths = self._operator_paths()
+        try:
+            keep = max(16, int(self.config.get("max_processed_operator_requests", 256)))
+        except (TypeError, ValueError):
+            keep = 256
+        for key in ("receipts", "archive"):
+            files = sorted(
+                paths[key].glob("*.json"),
+                key=lambda item: item.stat().st_mtime if item.exists() else 0,
+                reverse=True,
+            )
+            for path in files[keep:]:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+
+    def _dispatch_operator_request(self, payload: dict[str, Any]) -> tuple[int, str, str]:
+        command = str(payload["command"])
+        args = payload["args"]
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                if command == "approve":
+                    result = self.approve_review(str(args["lane"]))
+                elif command == "retry":
+                    result = self.retry_review(str(args["lane"]))
+                elif command == "block":
+                    result = self.block_lane(str(args["lane"]))
+                elif command == "approve-task":
+                    result = self.approve_task(str(args["task_id"]))
+                elif command == "approve-control-plane":
+                    result = self.approve_control_plane(str(args["sha"]))
+                elif command == "accept-milestone":
+                    result = self.accept_milestone(
+                        str(args["milestone_id"]), dict(args["evidence"])
+                    )
+                elif command == "sync-control-plane":
+                    result = 0 if self.sync_control_plane(bool(args["force"])) else 1
+                else:  # validate_operator_request should make this unreachable
+                    result = 2
+                    print("unsupported operator command", file=sys.stderr)
+        except Exception as exc:  # fail closed and retain the request for audit
+            result = 1
+            print(f"operator request raised {type(exc).__name__}: {redact(str(exc))}", file=sys.stderr)
+        return int(result), stdout.getvalue(), stderr.getvalue()
+
+    def process_operator_requests(self) -> int:
+        """Execute bounded operator mutations against this daemon's live state."""
+        if not self.runtime_owner:
+            return 0
+        paths = self._operator_paths()
+        try:
+            maximum = max(1, int(self.config.get("max_operator_requests_per_tick", 16)))
+        except (TypeError, ValueError):
+            maximum = 16
+        try:
+            max_age = max(1, int(self.config.get("operator_request_stale_seconds", 900)))
+        except (TypeError, ValueError):
+            max_age = 900
+        processed_count = 0
+        for path in sorted(paths["inbox"].glob("*.json"))[:maximum]:
+            if path.is_symlink() or path.resolve().parent != paths["inbox"].resolve():
+                self.log(f"rejecting operator request with unsafe path: {path.name}")
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                payload = None
+                parse_error = f"request JSON is unreadable: {type(exc).__name__}"
+            else:
+                parse_error = ""
+            valid, request_id, validation_error = validate_operator_request(
+                payload, max_age_seconds=max_age
+            )
+            if parse_error:
+                valid = False
+                validation_error = parse_error
+            if valid:
+                processed = self.state.get("processed_operator_requests", {})
+                previous = processed.get(request_id) if isinstance(processed, dict) else None
+                if isinstance(previous, dict):
+                    # The state record is authoritative after restart.  Re-emitting the
+                    # receipt is safe and never dispatches the logical command twice.
+                    self._write_operator_receipt(previous)
+                    self._archive_operator_request(path)
+                    processed_count += 1
+                    continue
+                self._deferred_save_depth += 1
+                try:
+                    return_code, stdout, stderr = self._dispatch_operator_request(payload)
+                finally:
+                    self._deferred_save_depth = max(0, self._deferred_save_depth - 1)
+                receipt = self._operator_receipt(
+                    request_id, str(payload["command"]), return_code, stdout, stderr
+                )
+                self._remember_operator_request(request_id, receipt)
+                try:
+                    if not self.save_state():
+                        self.log("operator request state save was refused; request retained")
+                        continue
+                except OSError as exc:
+                    self.log(f"operator request state save failed; request retained: {exc}")
+                    continue
+                self._write_operator_receipt(receipt)
+                self._archive_operator_request(path)
+                processed_count += 1
+                continue
+
+            safe_id = request_id if _valid_operator_request_id(request_id) else re.sub(
+                r"[^A-Za-z0-9_.:-]+", "-", path.stem
+            )[:96] or uuid.uuid4().hex
+            receipt = self._operator_receipt(
+                safe_id,
+                str(payload.get("command") if isinstance(payload, dict) else "malformed"),
+                2,
+                stderr=f"operator request rejected: {validation_error}",
+            )
+            if _valid_operator_request_id(request_id):
+                self._remember_operator_request(request_id, receipt)
+                try:
+                    if not self.save_state():
+                        self.log("malformed operator request state save was refused; request retained")
+                        continue
+                except OSError as exc:
+                    self.log(f"malformed operator request state save failed: {exc}")
+                    continue
+            self._write_operator_receipt(receipt)
+            self._archive_operator_request(path)
+            processed_count += 1
+        self._prune_operator_artifacts()
+        return processed_count
 
     def log(self, message: str, lane: str | None = None) -> None:
         LOG_ROOT.mkdir(parents=True, exist_ok=True)
@@ -1558,7 +1995,10 @@ class Supervisor:
             environment.pop(key, None)
         return environment
 
-    def worker_smoke_command(self, scratch: Path) -> list[str]:
+    def worker_smoke_command(self, scratch: Path, operator_probe: Path | None = None) -> list[str]:
+        operator_probe = operator_probe or (
+            operator_request_paths(self.config)["inbox"] / "worker-smoke-probe"
+        )
         return [
             "codex", "exec",
             "--model", "gpt-5.6-luna",
@@ -1570,11 +2010,18 @@ class Supervisor:
             "--color", "never",
             "--skip-git-repo-check",
             (
-                "Read input.txt first. Only when its exact content is "
-                "harmless smoke input, create output.txt containing exactly "
-                "smoke-write-ok. Do not access the network or any path outside "
-                "the current scratch workspace."
-            ),
+             "Read input.txt first. Only when its exact content is "
+             "harmless smoke input, create output.txt containing exactly "
+             "smoke-write-ok. Do not access the network or any path outside "
+             "the current scratch workspace except for this required negative "
+             f"security probe: attempt to write exactly one byte to {operator_probe}. "
+             "The probe must be denied by the workspace-write sandbox. If denied, "
+             "print WORKER_OPERATOR_INBOX: BLOCKED. If it succeeds, print "
+             "WORKER_OPERATOR_INBOX: WRITABLE and delete the probe immediately. "
+             "Never create a .json file or submit an operator request. Stop immediately "
+             "after this probe; do not use apply_patch, do not fix output.txt, and do not "
+             "run any additional commands."
+         ),
         ]
 
     def _pids_with_command_marker(self, marker: str) -> list[int]:
@@ -1633,8 +2080,12 @@ class Supervisor:
             scratch = Path(tempfile.mkdtemp(prefix="codex-worker-", dir=str(smoke_root)))
             os.chmod(scratch, 0o700)
             atomic_write_text(scratch / "input.txt", "harmless smoke input\n", 0o600)
+            operator_probe = (
+                operator_request_paths(self.config)["inbox"] / f"worker-smoke-{os.getpid()}-probe"
+            )
+            ensure_operator_request_dirs(self.config)
             process = subprocess.Popen(
-                self.worker_smoke_command(scratch),
+                self.worker_smoke_command(scratch, operator_probe),
                 cwd=str(scratch),
                 env=environment,
                 stdin=subprocess.DEVNULL,
@@ -1676,10 +2127,32 @@ class Supervisor:
         output = redact(output or "")
         output_lower = output.lower()
         output_path = scratch / "output.txt" if scratch else None
+        operator_probe = (
+            operator_request_paths(self.config)["inbox"] / f"worker-smoke-{os.getpid()}-probe"
+        )
+        operator_probe_exists = operator_probe.exists()
+        probe_marker = re.search(
+            r"(?m)^\s*(?:\|\s*)?WORKER_OPERATOR_INBOX:\s*(WRITABLE|BLOCKED)\s*$",
+            output,
+        )
+        operator_probe_blocked = (
+            bool(probe_marker and probe_marker.group(1) == "BLOCKED")
+            or bool(re.search(
+                r"(?:operator request inbox|inbox|probe).{0,100}(?:blocked|denied|not permitted)",
+                output,
+                re.IGNORECASE | re.DOTALL,
+            ))
+        )
+        operator_probe_writable = bool(
+            (probe_marker and probe_marker.group(1) == "WRITABLE") or operator_probe_exists
+        )
         local_write_ok = False
         if output_path is not None:
             try:
-                local_write_ok = output_path.read_text(encoding="utf-8") == "smoke-write-ok\n"
+                local_write_ok = output_path.read_text(encoding="utf-8") in {
+                    "smoke-write-ok",
+                    "smoke-write-ok\n",
+                }
             except OSError:
                 local_write_ok = False
         local_read_ok = local_write_ok
@@ -1707,6 +2180,10 @@ class Supervisor:
         print(f"sandbox failure signal: {'PRESENT' if sandbox_failure else 'ABSENT'}")
         print(f"GitHub credentials exposed: {'YES' if credentials_exposed else 'NO'}")
         print(f"SSH agent exposed: {'YES' if ssh_exposed else 'NO'}")
+        print(
+            "operator request inbox from worker: "
+            + ("BLOCKED" if operator_probe_blocked and not operator_probe_writable else "WRITABLE/UNPROVEN")
+        )
         print(f"development worktree modified: {'YES' if worktree_modified else 'NO'}")
         print(f"development branch changed: {'YES' if branch_changed else 'NO'}")
         print(f"persistent worker process: {'YES' if persistent_processes else 'NO'}")
@@ -1724,6 +2201,8 @@ class Supervisor:
             reasons.append("worker environment exposed GitHub credentials")
         if ssh_exposed:
             reasons.append("worker environment exposed SSH agent variables")
+        if not operator_probe_blocked or operator_probe_writable:
+            reasons.append("workspace-write worker could write the operator request inbox")
         if worktree_modified:
             reasons.append("development worktree changed")
         if branch_changed:
@@ -1743,11 +2222,15 @@ class Supervisor:
         return 0
 
     def command(
-        self, args: list[str], cwd: str | None = None, timeout: int = 120
+        self,
+        args: list[str],
+        cwd: str | None = None,
+        timeout: int = 120,
+        env: Mapping[str, str] | None = None,
     ) -> tuple[int, str, str]:
         try:
             result = subprocess.run(
-                args, cwd=cwd, env=self.env(), text=True,
+                args, cwd=cwd, env=dict(env) if env is not None else self.env(), text=True,
                 encoding="utf-8", errors="replace",
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=timeout, check=False,
@@ -2013,8 +2496,14 @@ Prefer focused low-concurrency tests. Do not run a full multi-platform build.
 End with a concise summary, focused tests actually run, unresolved safety questions, and exactly
 one marker:
 WORKER_RESULT: COMPLETE
-Use WORKER_RESULT: NEEDS_SOL_REVIEW if safety cannot be proven. Use WORKER_RESULT: BLOCKED if
-required evidence or tooling is unavailable.
+Use WORKER_RESULT: COMPLETE_WITH_VALIDATION_GAP when implementation is complete, every check
+available in this worker environment passed, and a local validation tool/test is unavailable
+without any known failure. Immediately add one bounded line:
+VALIDATION_GAP: <tool or local validation command unavailable; no known check failed>
+Use WORKER_RESULT: NEEDS_SOL_REVIEW when a design, security, authority, product, or source
+evidence decision genuinely requires architect review. Use WORKER_RESULT: BLOCKED only when a
+real blocker prevents safe completion. Missing xmake/Catch2 alone is a validation gap, not BLOCKED;
+an actually failing command is not a validation gap.
 """
 
     def _bound_worker_log(self, path: Path) -> None:
@@ -2216,6 +2705,8 @@ required evidence or tooling is unavailable.
             "last_progress_at": utc_now(),
             "worker_recovery": recovery,
             "worker_attempt": attempt,
+            "worker_result": None,
+            "validation_gap": {"status": "NONE", "reason": "", "at": None},
             "last_error": "",
         })
         thread = threading.Thread(
@@ -2252,6 +2743,14 @@ required evidence or tooling is unavailable.
         path = Path(self.state["lanes"][lane_name].get("worker_log") or "")
         matches = RESULT_RE.findall(tail_text(path, 30000))
         return matches[-1] if matches else None
+
+    def worker_validation_gap_reason(self, lane_name: str) -> str | None:
+        path = Path(self.state["lanes"][lane_name].get("worker_log") or "")
+        matches = VALIDATION_GAP_RE.findall(tail_text(path, 30000))
+        if not matches:
+            return None
+        reason = redact(matches[-1].strip())
+        return reason[:1000] if reason else None
 
     def worker_failure(self, lane_name: str, reason: str) -> None:
         lane = self.state["lanes"][lane_name]
@@ -2333,6 +2832,7 @@ required evidence or tooling is unavailable.
                 thread.join(timeout=5)
             self.processes.pop(lane_name, None)
             result = self.worker_result(lane_name)
+            validation_gap_reason = self.worker_validation_gap_reason(lane_name)
             worker_output = tail_text(Path(lane.get("worker_log") or ""), 40000)
             lane["worker_pid"] = None
             lane["worker_finished_at"] = utc_now()
@@ -2341,7 +2841,23 @@ required evidence or tooling is unavailable.
                 self.handle_codex_rate_limited(lane_name, worker_output)
                 continue
             self.mark_codex_available()
-            if return_code == 0 and result == "COMPLETE":
+            if return_code == 0 and result in {"COMPLETE", "COMPLETE_WITH_VALIDATION_GAP"}:
+                if result == "COMPLETE_WITH_VALIDATION_GAP" and not validation_gap_reason:
+                    self.worker_failure(
+                        lane_name,
+                        "worker reported COMPLETE_WITH_VALIDATION_GAP without a bounded VALIDATION_GAP reason",
+                    )
+                    continue
+                lane["worker_result"] = result
+                lane["validation_gap"] = (
+                    {
+                        "status": "PRESENT",
+                        "reason": validation_gap_reason,
+                        "at": utc_now(),
+                    }
+                    if result == "COMPLETE_WITH_VALIDATION_GAP"
+                    else {"status": "NONE", "reason": "", "at": utc_now()}
+                )
                 lane["state"] = (
                     "LOCAL_VALIDATION"
                     if self.state.get("global_mode") == "RUNNING"
@@ -2349,9 +2865,17 @@ required evidence or tooling is unavailable.
                 )
                 lane["last_error"] = ""
                 self.event(
-                    "worker completed; entering local validation"
+                    (
+                        "worker completed with local validation gap; entering local validation"
+                        if result == "COMPLETE_WITH_VALIDATION_GAP"
+                        else "worker completed; entering local validation"
+                    )
                     if lane["state"] == "LOCAL_VALIDATION"
-                    else "worker completed while paused; diff preserved",
+                    else (
+                        "worker completed with validation gap while paused; diff preserved"
+                        if result == "COMPLETE_WITH_VALIDATION_GAP"
+                        else "worker completed while paused; diff preserved"
+                    ),
                     lane_name,
                 )
             elif result == "NEEDS_SOL_REVIEW":
@@ -2588,6 +3112,92 @@ required evidence or tooling is unavailable.
             "message": "focused tests observed by supervisor",
         }
 
+    def _git_index_logical_snapshot(self, worktree: str) -> tuple[str | None, str]:
+        code, output, error = self.command(
+            ["git", "-C", worktree, "ls-files", "--stage", "-z"], timeout=120
+        )
+        if code != 0:
+            return None, redact(error or output or "git index snapshot failed")
+        return hashlib.sha256(output.encode("utf-8", errors="surrogateescape")).hexdigest(), ""
+
+    def prospective_commit_diff_check(
+        self, worktree: str, files: list[str]
+    ) -> dict[str, Any]:
+        """Check the prospective HEAD-to-working-tree commit in an isolated index."""
+        before, before_error = self._git_index_logical_snapshot(worktree)
+        result: dict[str, Any] = {
+            "status": "FAIL",
+            "mechanism": "temporary Git index populated from HEAD with explicit validated paths",
+            "files": list(files),
+            "real_index_before": before,
+            "real_index_after": None,
+            "real_index_unchanged": False,
+            "diff_check": False,
+            "output_tail": "",
+        }
+        if before is None:
+            result["output_tail"] = before_error
+            return result
+        if not files:
+            after, after_error = self._git_index_logical_snapshot(worktree)
+            result.update({
+                "status": "PASS",
+                "real_index_after": after,
+                "real_index_unchanged": after == before,
+                "diff_check": True,
+                "output_tail": after_error,
+            })
+            if after is None or after != before:
+                result["status"] = "FAIL"
+                result["output_tail"] = after_error or "real Git index changed during prospective check"
+            return result
+
+        descriptor, temporary_index_name = tempfile.mkstemp(prefix="skyrim-supervisor-index-")
+        os.close(descriptor)
+        temporary_index = Path(temporary_index_name)
+        try:
+            temporary_index.unlink(missing_ok=True)
+            isolated_environment = self.env()
+            isolated_environment["GIT_INDEX_FILE"] = str(temporary_index)
+            code, output, error = self.command(
+                ["git", "-C", worktree, "read-tree", "HEAD"],
+                timeout=120,
+                env=isolated_environment,
+            )
+            if code == 0:
+                code, output, error = self.command(
+                    ["git", "-C", worktree, "add", "--"] + list(files),
+                    cwd=worktree,
+                    timeout=120,
+                    env=isolated_environment,
+                )
+            if code == 0:
+                code, output, error = self.command(
+                    ["git", "-C", worktree, "diff", "--cached", "--check"],
+                    timeout=120,
+                    env=isolated_environment,
+                )
+            result["diff_check"] = code == 0
+            result["output_tail"] = redact((output or "") + "\n" + (error or ""))[-4000:]
+            result["status"] = "PASS" if code == 0 else "FAIL"
+        finally:
+            try:
+                temporary_index.unlink(missing_ok=True)
+            except OSError:
+                pass
+            after, after_error = self._git_index_logical_snapshot(worktree)
+            result["real_index_after"] = after
+            result["real_index_unchanged"] = after is not None and after == before
+            if after is None:
+                result["status"] = "FAIL"
+                result["output_tail"] = (result.get("output_tail") or "") + "\n" + after_error
+            elif not result["real_index_unchanged"]:
+                result["status"] = "FAIL"
+                result["output_tail"] = (result.get("output_tail") or "") + (
+                    "\nreal Git index changed during prospective check"
+                )
+        return result
+
     def local_validate(self, lane_name: str) -> bool:
         lane = self.state["lanes"][lane_name]
         worktree = lane["worktree"]
@@ -2603,6 +3213,7 @@ required evidence or tooling is unavailable.
             "porcelain Git status understood",
             "unmerged/conflict status absent",
             "unstaged and staged diff checks",
+            "prospective temporary-index commit diff check",
         ]
         if not status_ok:
             reasons.append("Git status failure: " + (status_error or "git status failed"))
@@ -2616,6 +3227,22 @@ required evidence or tooling is unavailable.
         )
         if unstaged_check != 0 or staged_check != 0:
             reasons.append("staged or unstaged git diff --check failed")
+        prospective = self.prospective_commit_diff_check(worktree, files) if status_ok else {
+            "status": "NOT_RUN",
+            "mechanism": "temporary Git index populated from HEAD with explicit validated paths",
+            "files": list(files),
+            "real_index_unchanged": None,
+            "diff_check": None,
+            "output_tail": "prospective check not run because Git status failed",
+        }
+        if prospective.get("status") != "PASS":
+            reasons.append(
+                "prospective commit diff check failed before real index mutation"
+                + (
+                    ": " + str(prospective.get("output_tail"))
+                    if prospective.get("output_tail") else ""
+                )
+            )
         if metrics["changed_files"] > int(self.config.get("max_changed_files", 40)):
             reasons.append(
                 f"changed file count {metrics['changed_files']} exceeds configured limit "
@@ -2652,6 +3279,7 @@ required evidence or tooling is unavailable.
                 "staged_diff_check": staged_check == 0,
                 "unstaged_diff_error": redact(unstaged_err),
                 "staged_diff_error": redact(staged_err),
+                "prospective_commit": prospective,
             },
             "focused_tests": focused,
             "tests": [
@@ -2662,8 +3290,17 @@ required evidence or tooling is unavailable.
             "diffstat": stat,
             "diff_text": diff,
             "diff_metrics": metrics,
+            "worker_result": lane.get("worker_result") or "COMPLETE",
+            "validation_gap": dict(lane.get("validation_gap") or {
+                "status": "NONE", "reason": "", "at": None,
+            }),
             "worker_output_tail": tail_text(Path(lane.get("worker_log") or ""), 8000),
         }
+        if reasons and lane["validation"].get("validation_gap", {}).get("status") == "PRESENT":
+            lane["validation"]["validation_gap"]["status"] = "INVALIDATED"
+            lane["validation"]["validation_gap"]["invalidated_reason"] = (
+                "a structural or configured validation check failed"
+            )
         if reasons:
             lane["last_error"] = "; ".join(reasons)
             hard_review = any(
@@ -2749,6 +3386,11 @@ required evidence or tooling is unavailable.
             "changed_files": files,
             "diffstat": stat.strip()[:12000] if stat_code == 0 else "",
             "tests": lane.get("validation", {}).get("tests", []),
+            "worker_result": lane.get("validation", {}).get("worker_result"),
+            "validation_gap": lane.get("validation", {}).get("validation_gap"),
+            "prospective_commit": lane.get("validation", {}).get("structural", {}).get(
+                "prospective_commit"
+            ),
             "at": utc_now(), "ci": {"status": "PENDING"},
         })
         lane["push_attempts"] = 0
@@ -3264,6 +3906,8 @@ invalidates the approval before any worker can start.
             f"- structural status: {structural.get('status', 'not recorded')}",
             f"- unstaged diff check observed: {structural.get('unstaged_diff_check', 'not recorded')}",
             f"- staged diff check observed: {structural.get('staged_diff_check', 'not recorded')}",
+            f"- prospective temporary-index check: {(structural.get('prospective_commit') or {}).get('status', 'not recorded')}",
+            f"- real index unchanged during preview: {(structural.get('prospective_commit') or {}).get('real_index_unchanged', 'not recorded')}",
         ])
         if focused.get("commands"):
             focused_text = "\n".join(
@@ -3323,6 +3967,11 @@ Diff summary:
 ## Structural validation observed
 
 {structural_text}
+
+## Worker result semantics
+
+- worker result: {validation.get('worker_result') or lane.get('worker_result') or 'not recorded'}
+- validation gap: {json.dumps(validation.get('validation_gap') or lane.get('validation_gap') or {}, sort_keys=True)}
 
 ## Focused tests actually run
 
@@ -3516,6 +4165,7 @@ operator decision.
 
     def run_once(self) -> None:
         self.refresh_control()
+        self.process_operator_requests()
         self.poll_workers()
         self.sync_control_plane()
         self.periodic_guards()
@@ -3544,6 +4194,40 @@ operator decision.
             self.shutdown()
             self.log("supervisor stopped")
         return 0
+
+    def scheduler_idle_summary(self) -> dict[str, Any]:
+        scheduler = self.state.get("scheduler", {})
+        records = scheduler.get("tasks", {}) if isinstance(scheduler, dict) else {}
+        runnable: list[str] = []
+        review_gated: list[str] = []
+        waiting_checkpoint: list[str] = []
+        for lane_name in LANE_ORDER:
+            lane = self.state.get("lanes", {}).get(lane_name, {})
+            review = lane.get("review", {})
+            if lane.get("state") == "NEEDS_SOL_REVIEW" or review.get("type"):
+                review_gated.append(lane_name)
+            if review.get("type") == "POST_PHASE_CHECKPOINT":
+                waiting_checkpoint.append(lane_name)
+            record = records.get(lane.get("phase_id")) if isinstance(records, dict) else None
+            if (
+                lane.get("state") in RUNNABLE_STATES
+                and isinstance(record, dict)
+                and record.get("state") == "READY"
+                and lane_name not in getattr(self, "processes", {})
+            ):
+                runnable.append(lane_name)
+        external = sum(
+            1
+            for record in records.values() if isinstance(record, dict)
+            and record.get("source") == "ROADMAP"
+            and record.get("state") == "BLOCKED_EXTERNAL_GATE"
+        ) if isinstance(records, dict) else 0
+        return {
+            "runnable": runnable,
+            "review_gated": sorted(set(review_gated)),
+            "waiting_checkpoint": sorted(set(waiting_checkpoint)),
+            "external_gated_future_tasks": external,
+        }
 
     def status(self) -> int:
         self._recompute_scheduler()
@@ -3598,6 +4282,10 @@ operator decision.
                     f"conclusion={workflow.get('conclusion') or 'unknown'}"
                 )
             print(f"last error: {lane.get('last_error') or 'none'}")
+            print(f"worker result: {lane.get('worker_result') or 'none'}")
+            gap = lane.get("validation_gap", {})
+            if isinstance(gap, dict) and gap.get("status") == "PRESENT":
+                print(f"validation gap: {gap.get('reason') or 'unspecified'}")
             review = lane.get("review", {})
             if review.get("type"):
                 print(
@@ -3611,6 +4299,24 @@ operator decision.
         for task_id, record in self.state.get("scheduler", {}).get("tasks", {}).items():
             if isinstance(record, dict) and record.get("source") == "ROADMAP" and record.get("state") != "DONE":
                 print(f"{task_id} {record.get('state')}: {record.get('reason') or 'none'}")
+        if self.state.get("global_mode") == "RUNNING":
+            idle = self.scheduler_idle_summary()
+            if not idle["runnable"]:
+                print()
+                print("SCHEDULER IDLE SUMMARY")
+                print("RUNNABLE WORK: 0")
+                print(
+                    "REVIEW-GATED LANES: "
+                    + (", ".join(idle["review_gated"]) or "none")
+                )
+                print(
+                    "WAITING CHECKPOINT: "
+                    + (", ".join(idle["waiting_checkpoint"]) or "none")
+                )
+                print(
+                    "EXTERNAL-GATED FUTURE TASKS: "
+                    + str(idle["external_gated_future_tasks"])
+                )
         return 0
 
     def roadmap_status(self) -> int:
@@ -3769,6 +4475,30 @@ operator decision.
             worker_config_dir.is_dir()
             and not any(worker_config_dir.iterdir()),
         )
+        operator_paths = self._operator_paths()
+        worker_roots = [
+            Path(str(spec.get("worktree"))).resolve()
+            for spec in self.config.get("lanes", {}).values()
+            if isinstance(spec, dict) and spec.get("worktree")
+        ]
+        try:
+            operator_root = operator_paths["root"].resolve()
+            outside_workers = all(
+                root != operator_root and root not in operator_root.parents
+                for root in worker_roots
+            )
+            private = os.name == "nt" or all(
+                (path.stat().st_mode & 0o077) == 0
+                for path in operator_paths.values()
+            )
+        except OSError:
+            outside_workers = False
+            private = False
+        check("operator request inbox outside worker workspaces", outside_workers and private)
+        check(
+            "worker sandbox negative inbox contract",
+            "WORKER_OPERATOR_INBOX: BLOCKED" in " ".join(self.worker_smoke_command(Path("/tmp/smoke"))),
+        )
         check(
             "Codex usage-limit classifier safety",
             classify_codex_usage_limit(1, "Codex: usage limit reached; resets in 15 minutes")
@@ -3783,7 +4513,26 @@ operator decision.
         )
         for lane_name in LANE_ORDER:
             lane = self.state["lanes"][lane_name]
-            check(f"{lane_name} worktree clean", not self.git_dirty(lane["worktree"]))
+            dirty = self.git_dirty(lane["worktree"])
+            if not dirty:
+                check(f"{lane_name} worktree clean", True)
+            else:
+                review = lane.get("review", {})
+                status_ok, entries, status_error = self.git_status_details(lane["worktree"])
+                conflict_free = status_ok and not any(
+                    entry.get("kind") == "unmerged" for entry in entries
+                )
+                expected_recovery_diff = (
+                    lane.get("state") == "NEEDS_SOL_REVIEW"
+                    and review.get("type") == "CURRENT_PHASE_REVIEW"
+                    and not lane.get("worker_pid")
+                )
+                check(
+                    f"{lane_name} expected review worktree preserved",
+                    expected_recovery_diff and conflict_free,
+                )
+                if not conflict_free and status_error:
+                    print(f"  {lane_name} status evidence: {status_error}")
             code, out, err = self.command([
                 "git", "-C", lane["worktree"],
                 "-c", "credential.helper=!gh auth git-credential",
@@ -3884,20 +4633,43 @@ def main() -> int:
     if args.command == "run":
         return run_daemon()
 
+    if args.command in OPERATOR_MUTATION_COMMANDS:
+        operator_args: dict[str, Any]
+        if args.command in {"approve", "retry", "block"}:
+            operator_args = {"lane": args.lane}
+        elif args.command == "approve-task":
+            operator_args = {"task_id": args.task_id}
+        elif args.command == "approve-control-plane":
+            operator_args = {"sha": args.sha}
+        elif args.command == "accept-milestone":
+            evidence: dict[str, Any] = {}
+            if args.evidence_file:
+                try:
+                    evidence = json.loads(
+                        Path(args.evidence_file).read_text(encoding="utf-8")
+                    )
+                except (OSError, json.JSONDecodeError) as exc:
+                    print(f"cannot read evidence file: {exc}", file=sys.stderr)
+                    return 2
+                if not isinstance(evidence, dict):
+                    print("evidence file must contain a JSON object", file=sys.stderr)
+                    return 2
+            operator_args = {"milestone_id": args.milestone_id, "evidence": evidence}
+        else:
+            operator_args = {"force": True}
+        return submit_operator_request(
+            args.command,
+            operator_args,
+            config=read_json(CONFIG_PATH, {}),
+        )
+
     supervisor = Supervisor(runtime_owner=False)
-    if args.command in {
-        "sync-control-plane", "approve", "retry", "block", "approve-task",
-        "approve-control-plane", "accept-milestone",
-    }:
-        supervisor.enable_operator_writes()
     if args.command == "status":
         return supervisor.status()
     if args.command == "roadmap-status":
         return supervisor.roadmap_status()
     if args.command == "milestone-status":
         return supervisor.milestone_status()
-    if args.command == "sync-control-plane":
-        return 0 if supervisor.sync_control_plane(force=True) else 1
     if args.command == "review-status":
         return supervisor.review_status()
     if args.command == "healthcheck":
@@ -3906,32 +4678,6 @@ def main() -> int:
         return supervisor.self_test()
     if args.command == "worker-smoke-test":
         return supervisor.worker_smoke_test()
-    if args.command == "approve":
-        result = supervisor.approve_review(args.lane)
-        supervisor.save_state()
-        return result
-    if args.command == "retry":
-        result = supervisor.retry_review(args.lane)
-        supervisor.save_state()
-        return result
-    if args.command == "block":
-        result = supervisor.block_lane(args.lane)
-        supervisor.save_state()
-        return result
-    if args.command == "approve-task":
-        return supervisor.approve_task(args.task_id)
-    if args.command == "approve-control-plane":
-        return supervisor.approve_control_plane(args.sha)
-    if args.command == "accept-milestone":
-        evidence: dict[str, Any] = {}
-        if args.evidence_file:
-            try:
-                evidence = json.loads(Path(args.evidence_file).read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                print(f"cannot read evidence file: {exc}", file=sys.stderr)
-                return 2
-        return supervisor.accept_milestone(args.milestone_id, evidence)
-
     raise AssertionError(f"unhandled command: {args.command}")
 
 

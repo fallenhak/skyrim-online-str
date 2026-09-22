@@ -45,3 +45,18 @@
   the successful sandbox smoke test does not create a complete filesystem/user
   isolation boundary. Codex authentication remains available to the worker by
   design, while GitHub/SSH credentials remain filtered.
+
+## V3 repair-specific residuals
+
+- The durable request inbox is outside worker worktrees and the production
+  `workspace-write` smoke probe is blocked, but a future change to the Codex
+  sandbox or same-account permissions must preserve that negative regression.
+- Processed request history and receipts are intentionally bounded. Requests
+  older than the retained history are not an infinite audit ledger; durable
+  archived evidence must be exported if longer retention is required.
+- A crash before the daemon's atomic state commit can leave the request in the
+  inbox for a safe retry. The exactly-once guarantee begins at the persisted
+  processed-request record and prevents replay after that commit.
+- `COMPLETE_WITH_VALIDATION_GAP` remains a claim by the worker until local
+  structural checks and required CI pass; any actual failure invalidates the
+  gap and follows recovery/review.

@@ -119,3 +119,11 @@ Protected heads remain unchanged:
 
 Autonomous development remains disabled pending architect review and a safe,
 bounded Codex workspace-write remediation.
+
+## V3 final capture
+
+The installed self-test returned `SELF_TEST_OK` after explicitly accepting only
+the conflict-free dirty worktrees whose lane state is
+`CURRENT_PHASE_REVIEW`; authority remained clean. It also passed the operator
+inbox location/permission check and the negative worker-inbox contract. The
+full final command set is summarized in [final-verification.md](final-verification.md).

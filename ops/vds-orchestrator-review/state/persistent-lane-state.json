@@ -1,149 +1,42 @@
 {
-  "captured_at": "2026-09-22T01:15:53+03:00",
-  "version": 3,
+  "captured_at": "2026-09-22",
+  "version": 4,
   "global_mode": "PAUSED",
-  "mode_reason": "operator requested pause",
-  "safety_pause": false,
-  "codex_availability": {
-    "status": "AVAILABLE",
-    "detected_at": null,
-    "next_retry_at": null,
-    "backoff_seconds": 0,
-    "probe_started_at": null,
-    "reason": "",
-    "retry_count": 0
-  },
+  "service": {"orchestrator": "active", "healthcheck_timer": "active", "orchestrator_enabled": true, "healthcheck_timer_enabled": true},
   "control_plane": {
     "branch": "orchestration/control-plane",
     "applied_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
     "observed_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
-    "last_checked_at": "2026-09-21T18:18:36+00:00",
-    "status": "VALID",
-    "validation_error": ""
+    "status": "VALID"
   },
-  "sandbox": {
-    "status": "WORKER_SMOKE_OK",
-    "codex_cli": "0.155.1",
-    "bubblewrap": "0.9.0-1ubuntu0.3",
-    "apparmor": "4.0.1really4.0.1-0ubuntu0.24.04.7",
-    "apparmor_profiles": "4.0.1really4.0.1-0ubuntu0.24.04.7",
-    "apparmor_utils": "4.0.1really4.0.1-0ubuntu0.24.04.7",
-    "profile_source": "/usr/share/apparmor/extra-profiles/bwrap-userns-restrict",
-    "profile_installed": "/etc/apparmor.d/bwrap-userns-restrict",
-    "profile_sha256": "11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9",
-    "profiles_enforced": ["bwrap", "unpriv_bwrap"],
-    "kernel_apparmor_restrict_unprivileged_userns": 1,
-    "kernel_unprivileged_userns_clone": 1,
-    "direct_bwrap_user_rc": 0,
-    "direct_bwrap_network_rc": 0,
-    "credential_exposure": "none",
-    "worker_gh_config_dir": "/var/lib/skyrim-dev/worker-gh-config"
+  "operator_requests": {
+    "root": "/var/lib/skyrim-dev/operator-requests",
+    "processed_history_count": 1,
+    "live_fixture": {"request_id": "infra-fixture-invalid-20260922", "status": "FAILED", "return_code": 2, "mutation": "none"}
   },
   "scheduler": {
-    "cursor": 2,
-    "last_selected_lane": "authority",
-    "task_state_counts": {
-      "DONE": 8,
-      "NEEDS_SOL_REVIEW": 2,
-      "BLOCKED_DEPENDENCY": 52,
-      "PAUSED": 2,
-      "BLOCKED_EXTERNAL_GATE": 10
-    },
-    "milestones": {
-      "M01": {"state": "ACTIVE", "title": "Core World"},
-      "M02": {"state": "PLANNED", "title": "Character Gameplay"},
-      "M03": {"state": "PLANNED", "title": "Persistent World"},
-      "M04": {"state": "PLANNED", "title": "RP and Social Systems"},
-      "M05": {"state": "PLANNED", "title": "Production Hardening"}
-    },
-    "roadmap_tasks": {
-      "W01": {"lane": "world", "state": "BLOCKED_EXTERNAL_GATE", "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75"},
-      "W02": {"lane": "world", "state": "BLOCKED_EXTERNAL_GATE", "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75"},
-      "W03": {"lane": "world", "state": "BLOCKED_EXTERNAL_GATE", "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75"},
-      "W04": {"lane": "world", "state": "BLOCKED_EXTERNAL_GATE", "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75"},
-      "W05": {"lane": "world", "state": "BLOCKED_EXTERNAL_GATE", "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75"},
-      "W06": {"lane": "world", "state": "BLOCKED_EXTERNAL_GATE", "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75"},
-      "W07": {"lane": "world", "state": "BLOCKED_EXTERNAL_GATE", "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75"},
-      "W08": {"lane": "world", "state": "BLOCKED_EXTERNAL_GATE", "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75"},
-      "W09": {"lane": "world", "state": "BLOCKED_EXTERNAL_GATE", "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75"},
-      "W10": {"lane": "world", "state": "BLOCKED_EXTERNAL_GATE", "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75"}
-    },
-    "audit_event_count": 103
+    "current_review_gated_lanes": ["combat", "authority", "population", "ui"],
+    "waiting_checkpoint": ["authority"],
+    "external_gated_future_tasks": 10,
+    "future_task_ids": ["W01", "W02", "W03", "W04", "W05", "W06", "W07", "W08", "W09", "W10"]
   },
-  "required_workflows_configured": ["Build linux", "Build windows"],
   "development_heads_at_capture": {
-    "combat": "905cf71c55200509702fb299aaa953ae46dcb374",
-    "authority": "caf7dcc31ca4b6d0912f31b151408ba24c13938c",
+    "combat": "500bf5ea5e04341f565776ed5263119c1cf06893",
+    "authority": "b8fc40415fceee88ae6424d25bd68a2a0ddeb70a",
     "population": "52c97ba4d5da993e6ef2fa4bdf398f13c22b456a",
     "ui": "a473531ad16a82cecc8a4cdecc460934ba7efcfa"
   },
   "lanes": {
-    "combat": {
-      "branch": "parallel/combat-foundations",
-      "worktree": "/srv/projects/skyrim-online-str/workers/combat",
-      "state": "NEEDS_SOL_REVIEW",
-      "scheduler_state": "NEEDS_SOL_REVIEW",
-      "scheduler_task_id": "C03",
-      "scheduler_reason": "lane review pending: CURRENT_PHASE_REVIEW",
-      "phase_index": 2,
-      "phase_id": "C03",
-      "last_commit": "905cf71c55200509702fb299aaa953ae46dcb374",
-      "review_reasons": ["worker reported a blocking condition"],
-      "review_type": "CURRENT_PHASE_REVIEW",
-      "worker_attempt": 1,
-      "worker_finished_at": "2026-09-21T18:19:22+00:00"
-    },
-    "authority": {
-      "branch": "parallel/interaction-authority",
-      "worktree": "/srv/projects/skyrim-online-str/workers/authority",
-      "state": "NEEDS_SOL_REVIEW",
-      "scheduler_state": "NEEDS_SOL_REVIEW",
-      "scheduler_task_id": "A04",
-      "scheduler_reason": "lane review pending: CURRENT_PHASE_REVIEW",
-      "phase_index": 3,
-      "phase_id": "A04",
-      "last_commit": "caf7dcc31ca4b6d0912f31b151408ba24c13938c",
-      "review_reasons": ["worker reported a blocking condition"],
-      "review_type": "CURRENT_PHASE_REVIEW",
-      "worker_attempt": 1,
-      "worker_finished_at": "2026-09-21T18:19:24+00:00"
-    },
-    "population": {
-      "branch": "parallel/population-loader",
-      "worktree": "/srv/projects/skyrim-online-str/workers/population",
-      "state": "PAUSED",
-      "scheduler_state": "PAUSED",
-      "scheduler_task_id": "L03",
-      "scheduler_reason": "global mode is PAUSED",
-      "phase_index": 2,
-      "phase_id": "L03",
-      "last_commit": "52c97ba4d5da993e6ef2fa4bdf398f13c22b456a"
-    },
-    "ui": {
-      "branch": "parallel/character-ui",
-      "worktree": "/srv/projects/skyrim-online-str/workers/ui",
-      "state": "PAUSED",
-      "scheduler_state": "PAUSED",
-      "scheduler_task_id": "U02",
-      "scheduler_reason": "global mode is PAUSED",
-      "phase_index": 1,
-      "phase_id": "U02",
-      "last_commit": "a473531ad16a82cecc8a4cdecc460934ba7efcfa"
-    }
+    "combat": {"state": "NEEDS_SOL_REVIEW", "review_type": "CURRENT_PHASE_REVIEW", "phase": "C04", "worker_pid": null},
+    "authority": {"state": "NEEDS_SOL_REVIEW", "review_type": "POST_PHASE_CHECKPOINT", "phase": "A04", "worker_pid": null},
+    "population": {"state": "NEEDS_SOL_REVIEW", "review_type": "CURRENT_PHASE_REVIEW", "phase": "L03", "worker_pid": null},
+    "ui": {"state": "NEEDS_SOL_REVIEW", "review_type": "CURRENT_PHASE_REVIEW", "phase": "U02", "worker_pid": null}
   },
-  "operator_control": {
-    "desired_mode": "PAUSED",
-    "source_control": "/var/lib/skyrim-dev/state/control.json"
+  "dirty_worktree_summary": {
+    "combat": ["?? Code/server/Services/ValidatedHitObservation.h", "?? Code/tests/ValidatedHitObservationTests.cpp"],
+    "authority": [],
+    "population": [" M Code/components/es_loader/ESLoader.cpp", " M Code/components/es_loader/Records/Record.h", " M Code/components/es_loader/TESFile.cpp", " M Code/components/es_loader/TESFile.h", " M Code/tests/ActorPopulationTests.cpp", " M docs/ACTOR_POPULATION.md"],
+    "ui": ["M  docs/CHARACTER_UI_AUDIT.md", "A  docs/CHARACTER_UI_STATE_MACHINE.md"]
   },
-  "orchestrator_unit": {"active": "inactive", "enabled": "disabled"},
-  "healthcheck_timer": {"active": "inactive", "enabled": "disabled"},
-  "service_user": "skyrimdev",
-  "snapshot_type": "redacted persistent scheduler projection",
-  "source_state": "/var/lib/skyrim-dev/state/state.json",
-  "omitted_from_projection": [
-    "worker logs/content",
-    "validation diff text",
-    "GitHub/Codex credentials",
-    "full audit details"
-  ]
+  "omitted": ["credentials", "worker logs", "raw validation diff", "full audit details"]
 }

@@ -1,0 +1,27 @@
+{
+  "captured_at": "2026-09-22",
+  "global_mode": "PAUSED",
+  "service": "active",
+  "healthcheck_timer": "active/enabled",
+  "state_version": 4,
+  "control_plane": {
+    "branch": "orchestration/control-plane",
+    "applied_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
+    "observed_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
+    "status": "VALID"
+  },
+  "lanes": {
+    "combat": {"state": "NEEDS_SOL_REVIEW", "phase": "C04", "worker_pid": null, "head": "500bf5ea5e04341f565776ed5263119c1cf06893"},
+    "authority": {"state": "NEEDS_SOL_REVIEW", "phase": "A04", "review_type": "POST_PHASE_CHECKPOINT", "worker_pid": null, "head": "b8fc40415fceee88ae6424d25bd68a2a0ddeb70a"},
+    "population": {"state": "NEEDS_SOL_REVIEW", "phase": "L03", "worker_pid": null, "head": "52c97ba4d5da993e6ef2fa4bdf398f13c22b456a"},
+    "ui": {"state": "NEEDS_SOL_REVIEW", "phase": "U02", "worker_pid": null, "head": "a473531ad16a82cecc8a4cdecc460934ba7efcfa"}
+  },
+  "future_external_gated_tasks": 10,
+  "processed_operator_requests": 1,
+  "live_fixture": {
+    "request_id": "infra-fixture-invalid-20260922",
+    "status": "FAILED",
+    "return_code": 2,
+    "mutation": "none"
+  }
+}

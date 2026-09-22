@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -17,11 +19,15 @@ class Harness(supervisor.Supervisor):
     def __init__(self) -> None:
         self.runtime_owner = True
         self._state_write_enabled = True
+        self._deferred_save_depth = 0
+        self._save_deferred = False
         self.config = {
             "repo": "example/repo",
             "max_changed_files": 40,
             "max_total_diff_bytes": 524288,
             "required_workflows": ["Build linux", "Build windows"],
+            "operator_request_root": tempfile.mkdtemp(prefix="skyrim-operator-requests-"),
+            "max_processed_operator_requests": 3,
             "lanes": {
                 "combat": {
                     "branch": "parallel/combat-foundations",
@@ -41,6 +47,7 @@ class Harness(supervisor.Supervisor):
                 "retry_count": 0,
             },
             "lanes": {},
+            "processed_operator_requests": {},
             "events": [],
         }
         self.processes = {}
@@ -56,8 +63,8 @@ class Harness(supervisor.Supervisor):
     def event(self, message: str, lane: str | None = None) -> None:
         self.state.setdefault("events", []).append({"message": message, "lane": lane})
 
-    def save_state(self) -> None:
-        return None
+    def save_state(self) -> bool:
+        return True
 
     def review(self, lane_name: str, reasons: list[str], **kwargs) -> None:
         self.review_calls.append((lane_name, reasons, kwargs))
@@ -110,6 +117,24 @@ def configure_combat_lane(harness: Harness, root: Path, state: str = "LOCAL_VALI
     }
     harness.state["lanes"]["combat"] = lane
     return lane
+
+
+def operator_payload(request_id: str, command: str, args: dict) -> dict:
+    return {
+        "version": supervisor.OPERATOR_REQUEST_VERSION,
+        "request_id": request_id,
+        "command": command,
+        "args": args,
+        "created_at": supervisor.utc_now(),
+        "submitted_by": "test",
+    }
+
+
+def put_operator_request(harness: Harness, payload: dict) -> Path:
+    paths = supervisor.ensure_operator_request_dirs(harness.config)
+    path = paths["inbox"] / f"{payload['request_id']}.json"
+    supervisor.atomic_write_json(path, payload, 0o600)
+    return path
 
 
 def ownership_snapshot(harness: supervisor.Supervisor) -> dict:
@@ -230,7 +255,312 @@ class LiveWorkerObserverHarness(Harness):
         return 0, "", ""
 
 
+class SchedulingHarness(Harness):
+    def __init__(self, lane_states: dict[str, str], task_states: dict[str, str]) -> None:
+        super().__init__()
+        self.config["max_concurrent_workers"] = 2
+        self.state["global_mode"] = "RUNNING"
+        self.state["scheduler"] = {
+            "cursor": 0,
+            "tasks": {},
+            "approvals": {},
+            "reviews": {},
+            "workstreams": {},
+            "milestones": {},
+            "resolved_external_gates": [],
+            "audit": [],
+        }
+        self.state["lanes"] = {}
+        for lane_name in supervisor.LANE_ORDER:
+            self.state["lanes"][lane_name] = {
+                "state": lane_states.get(lane_name, "NEEDS_SOL_REVIEW"),
+                "phase_id": lane_name[:1].upper() + "01",
+                "phase_title": "test phase",
+                "review": (
+                    {"type": "POST_PHASE_CHECKPOINT"}
+                    if lane_states.get(lane_name) == "NEEDS_SOL_REVIEW"
+                    else {}
+                ),
+            }
+            task_id = self.state["lanes"][lane_name]["phase_id"]
+            self.state["scheduler"]["tasks"][task_id] = {
+                "task_id": task_id,
+                "lane": lane_name,
+                "source": "EXISTING_PLAN",
+                "state": task_states.get(lane_name, "PAUSED"),
+                "reason": "fixture",
+            }
+
+    def _recompute_scheduler(self) -> None:
+        return None
+
+    def _control_plane_valid(self) -> bool:
+        return True
+
+    def _scheduled_task_for_lane(self, lane_name: str) -> dict | None:
+        phase_id = self.state["lanes"][lane_name].get("phase_id")
+        return self.state["scheduler"]["tasks"].get(phase_id)
+
+    def start_worker(self, lane_name: str, recovery: bool = False) -> bool:
+        self.processes[lane_name] = SimpleNamespace(pid=lane_name)
+        return True
+
+
 class SupervisorLogicTests(unittest.TestCase):
+    def test_operator_request_contract_rejects_unknown_and_stale_requests(self) -> None:
+        unknown = operator_payload("unknown-1", "delete-all", {})
+        valid, request_id, reason = supervisor.validate_operator_request(unknown)
+        self.assertFalse(valid)
+        self.assertEqual(request_id, "unknown-1")
+        self.assertIn("unsupported", reason)
+        stale = operator_payload("stale-1", "block", {"lane": "combat"})
+        stale["created_at"] = "2020-01-01T00:00:00+00:00"
+        valid, _, reason = supervisor.validate_operator_request(stale, now=time.time())
+        self.assertFalse(valid)
+        self.assertIn("stale", reason)
+
+    def test_daemon_owned_approve_applies_to_current_memory_and_emits_receipt(self) -> None:
+        h = Harness()
+        h.state["lanes"]["combat"] = {
+            "state": "NEEDS_SOL_REVIEW",
+            "phase_index": 2,
+            "phase_id": "C03",
+            "phase_title": "lifecycle",
+            "success_since_review": 3,
+            "review_reasons": ["checkpoint"],
+            "review": {
+                "type": "POST_PHASE_CHECKPOINT",
+                "reviewed_phase": {"id": "C03", "title": "lifecycle"},
+                "next_phase": {"id": "C04", "title": "next"},
+            },
+        }
+        h._refresh_plan = lambda _lane, lane: lane.update(
+            {"phase_id": "C04", "phase_title": "next"}
+        )
+        put_operator_request(
+            h, operator_payload("approve-current", "approve", {"lane": "combat"})
+        )
+        self.assertEqual(h.process_operator_requests(), 1)
+        self.assertEqual(h.state["lanes"]["combat"]["phase_id"], "C04")
+        receipt = supervisor.read_json(
+            supervisor.operator_request_paths(h.config)["receipts"] / "approve-current.json", {}
+        )
+        self.assertEqual(receipt["status"], "SUCCEEDED")
+        self.assertEqual(receipt["daemon_pid"], os.getpid())
+
+    def test_daemon_save_after_operator_request_cannot_revert_live_mutation(self) -> None:
+        h = Harness()
+        h.state["lanes"]["combat"] = {"state": "READY", "review": {}}
+        persisted: list[dict] = []
+
+        def save() -> bool:
+            if h._deferred_save_depth:
+                h._save_deferred = True
+                return True
+            persisted.append(deepcopy(h.state))
+            return True
+
+        h.save_state = save  # type: ignore[method-assign]
+        put_operator_request(
+            h, operator_payload("block-current", "block", {"lane": "combat"})
+        )
+        self.assertEqual(h.process_operator_requests(), 1)
+        self.assertEqual(len(persisted), 1)
+        self.assertEqual(persisted[0]["lanes"]["combat"]["state"], "BLOCKED")
+
+    def test_duplicate_operator_request_is_not_executed_after_restart(self) -> None:
+        h = Harness()
+        h.state["lanes"]["combat"] = {"state": "READY", "review": {}}
+        payload = operator_payload("duplicate-block", "block", {"lane": "combat"})
+        put_operator_request(h, payload)
+        self.assertEqual(h.process_operator_requests(), 1)
+        event_count = len(h.state["events"])
+        put_operator_request(h, payload)
+        self.assertEqual(h.process_operator_requests(), 1)
+        self.assertEqual(len(h.state["events"]), event_count)
+
+        restarted = Harness()
+        restarted.config["operator_request_root"] = h.config["operator_request_root"]
+        restarted.state["lanes"]["combat"] = {"state": "READY", "review": {}}
+        restarted.state["processed_operator_requests"] = deepcopy(
+            h.state["processed_operator_requests"]
+        )
+        put_operator_request(restarted, payload)
+        self.assertEqual(restarted.process_operator_requests(), 1)
+        self.assertEqual(restarted.state["lanes"]["combat"]["state"], "READY")
+
+    def test_processed_operator_request_history_is_bounded(self) -> None:
+        h = Harness()
+        h.state["lanes"]["combat"] = {"state": "READY", "review": {}}
+        for index in range(20):
+            put_operator_request(
+                h,
+                operator_payload(
+                    f"bounded-{index}", "block", {"lane": "combat"}
+                ),
+            )
+            self.assertEqual(h.process_operator_requests(), 1)
+        self.assertLessEqual(
+            len(h.state["processed_operator_requests"]),
+            16,
+        )
+
+    def test_malformed_operator_request_fails_closed(self) -> None:
+        h = Harness()
+        paths = supervisor.ensure_operator_request_dirs(h.config)
+        supervisor.atomic_write_text(paths["inbox"] / "malformed.json", "{not-json", 0o600)
+        self.assertEqual(h.process_operator_requests(), 1)
+        receipt = supervisor.read_json(paths["receipts"] / "malformed.json", {})
+        self.assertEqual(receipt["status"], "FAILED")
+        self.assertEqual(h.state["lanes"], {})
+
+    def test_operator_mutation_dispatch_covers_task_control_milestone_and_sync(self) -> None:
+        h = Harness()
+        cases = [
+            ("retry", {"lane": "combat"}, "retry_review"),
+            ("block", {"lane": "combat"}, "block_lane"),
+            ("approve-task", {"task_id": "W01"}, "approve_task"),
+            ("approve-control-plane", {"sha": "a" * 40}, "approve_control_plane"),
+            ("accept-milestone", {"milestone_id": "M01", "evidence": {}}, "accept_milestone"),
+            ("sync-control-plane", {"force": True}, "sync_control_plane"),
+        ]
+        for command, args, method in cases:
+            return_value = True if command == "sync-control-plane" else 0
+            with self.subTest(command=command), patch.object(h, method, return_value=return_value) as called:
+                code, _out, _err = h._dispatch_operator_request(
+                    operator_payload("dispatch-" + command, command, args)
+                )
+                self.assertEqual(code, 0)
+                called.assert_called_once()
+
+    def test_daemon_inactive_operator_mutation_does_not_create_request(self) -> None:
+        h = Harness()
+        paths = supervisor.operator_request_paths(h.config)
+        with patch.object(supervisor, "daemon_is_active", return_value=(False, "inactive")):
+            self.assertEqual(
+                supervisor.submit_operator_request(
+                    "block", {"lane": "combat"}, request_id="offline-block", config=h.config
+                ),
+                1,
+            )
+        self.assertFalse(paths["inbox"].exists())
+
+    def test_cli_mutation_never_constructs_observer_state_writer(self) -> None:
+        with patch.object(supervisor, "submit_operator_request", return_value=0) as submit, \
+                patch.object(supervisor, "Supervisor") as constructor, \
+                patch.object(sys, "argv", ["supervisor.py", "block", "combat"]):
+            self.assertEqual(supervisor.main(), 0)
+        constructor.assert_not_called()
+        submit.assert_called_once_with(
+            "block", {"lane": "combat"}, config=supervisor.read_json(supervisor.CONFIG_PATH, {})
+        )
+
+    def test_complete_with_validation_gap_enters_local_validation_and_persists_reason(self) -> None:
+        h = Harness()
+        root = make_git_repo()
+        lane = configure_combat_lane(h, root, "CODING")
+        log = root / "worker.log"
+        log.write_text(
+            "implementation complete\nWORKER_RESULT: COMPLETE_WITH_VALIDATION_GAP\n"
+            "VALIDATION_GAP: xmake executable unavailable; TPTests not run locally\n",
+            encoding="utf-8",
+        )
+        lane["worker_log"] = str(log)
+        process = SimpleNamespace(returncode=0, poll=lambda: 0)
+        h.processes["combat"] = process
+        h.poll_workers()
+        self.assertEqual(lane["state"], "LOCAL_VALIDATION")
+        self.assertEqual(lane["worker_result"], "COMPLETE_WITH_VALIDATION_GAP")
+        self.assertIn("xmake executable unavailable", lane["validation_gap"]["reason"])
+
+    def test_validation_gap_without_reason_is_not_accepted(self) -> None:
+        h = Harness()
+        root = make_git_repo()
+        lane = configure_combat_lane(h, root, "CODING")
+        log = root / "worker.log"
+        log.write_text("WORKER_RESULT: COMPLETE_WITH_VALIDATION_GAP\n", encoding="utf-8")
+        lane["worker_log"] = str(log)
+        h.processes["combat"] = SimpleNamespace(returncode=0, poll=lambda: 0)
+        h.poll_workers()
+        self.assertEqual(lane["state"], "RECOVERING")
+        self.assertIn("without a bounded", lane["last_error"])
+
+    def test_real_failed_check_is_not_converted_to_validation_gap(self) -> None:
+        h = Harness()
+        root = make_git_repo()
+        lane = configure_combat_lane(h, root)
+        (root / "bad.txt").write_text("trailing-space \n", encoding="utf-8")
+        lane["worker_result"] = "COMPLETE_WITH_VALIDATION_GAP"
+        lane["validation_gap"] = {"status": "PRESENT", "reason": "tool absent", "at": supervisor.utc_now()}
+        self.assertFalse(h.local_validate("combat"))
+        self.assertEqual(lane["validation"]["status"], "FAIL")
+        self.assertEqual(lane["validation"]["validation_gap"]["status"], "INVALIDATED")
+
+    def test_review_lane_consumes_no_slot_while_two_ready_lanes_run(self) -> None:
+        h = SchedulingHarness(
+            {"combat": "NEEDS_SOL_REVIEW", "authority": "READY", "population": "READY", "ui": "READY"},
+            {"authority": "READY", "population": "READY", "ui": "READY"},
+        )
+        h.schedule()
+        self.assertEqual(set(h.processes), {"authority", "population"})
+        self.assertNotIn("combat", h.processes)
+
+    def test_waiting_checkpoint_does_not_block_unrelated_ready_lanes(self) -> None:
+        h = SchedulingHarness(
+            {"combat": "NEEDS_SOL_REVIEW", "authority": "WAITING_FOR_CI", "population": "READY", "ui": "READY"},
+            {"population": "READY", "ui": "READY"},
+        )
+        h.schedule()
+        self.assertEqual(set(h.processes), {"population", "ui"})
+        self.assertNotIn("authority", h.processes)
+
+    def test_all_review_gated_lanes_remain_healthy_and_idle(self) -> None:
+        h = SchedulingHarness(
+            {lane: "NEEDS_SOL_REVIEW" for lane in supervisor.LANE_ORDER},
+            {},
+        )
+        h.schedule()
+        summary = h.scheduler_idle_summary()
+        self.assertEqual(h.processes, {})
+        self.assertEqual(summary["runnable"], [])
+        self.assertEqual(summary["review_gated"], sorted(supervisor.LANE_ORDER))
+
+    def test_external_future_tasks_are_not_speculatively_started(self) -> None:
+        h = SchedulingHarness(
+            {lane: "NEEDS_SOL_REVIEW" for lane in supervisor.LANE_ORDER},
+            {},
+        )
+        for index in range(1, 11):
+            task_id = f"W{index:02d}"
+            h.state["scheduler"]["tasks"][task_id] = {
+                "task_id": task_id,
+                "source": "ROADMAP",
+                "state": "BLOCKED_EXTERNAL_GATE",
+                "lane": "combat",
+            }
+        h.schedule()
+        summary = h.scheduler_idle_summary()
+        self.assertEqual(h.processes, {})
+        self.assertEqual(summary["external_gated_future_tasks"], 10)
+        self.assertTrue(all(
+            h.state["scheduler"]["tasks"][f"W{index:02d}"]["state"] == "BLOCKED_EXTERNAL_GATE"
+            for index in range(1, 11)
+        ))
+
+    def test_status_idle_summary_explains_review_checkpoint_and_external_gate(self) -> None:
+        h = SchedulingHarness(
+            {"combat": "NEEDS_SOL_REVIEW", "authority": "NEEDS_SOL_REVIEW", "population": "READY", "ui": "READY"},
+            {},
+        )
+        h.state["lanes"]["authority"]["review"] = {"type": "POST_PHASE_CHECKPOINT"}
+        h.state["scheduler"]["tasks"]["W01"] = {
+            "task_id": "W01", "source": "ROADMAP", "state": "BLOCKED_EXTERNAL_GATE"
+        }
+        summary = h.scheduler_idle_summary()
+        self.assertEqual(summary["runnable"], [])
+        self.assertIn("authority", summary["waiting_checkpoint"])
+        self.assertEqual(summary["external_gated_future_tasks"], 1)
+
     def test_required_workflows_all_success(self) -> None:
         runs = [
             {"workflowName": "Build windows", "headSha": "abc", "status": "completed", "conclusion": "success", "databaseId": 2},
@@ -385,6 +715,56 @@ class SupervisorLogicTests(unittest.TestCase):
         self.assertIn("rename", kinds)
         self.assertIn("untracked", kinds)
         self.assertIn("modified", kinds)
+
+    def test_prospective_diff_accepts_tracked_edit_without_real_index_mutation(self) -> None:
+        root = make_git_repo()
+        (root / "tracked.txt").write_text("valid edit\n", encoding="utf-8")
+        h = Harness()
+        before = subprocess.check_output(["git", "-C", str(root), "ls-files", "--stage", "-z"])
+        result = h.prospective_commit_diff_check(str(root), ["tracked.txt"])
+        after = subprocess.check_output(["git", "-C", str(root), "ls-files", "--stage", "-z"])
+        self.assertEqual(result["status"], "PASS")
+        self.assertTrue(result["real_index_unchanged"])
+        self.assertEqual(before, after)
+
+    def test_prospective_diff_accepts_new_untracked_text_file(self) -> None:
+        root = make_git_repo()
+        (root / "new.txt").write_text("valid new file\n", encoding="utf-8")
+        h = Harness()
+        result = h.prospective_commit_diff_check(str(root), ["new.txt"])
+        self.assertEqual(result["status"], "PASS")
+        self.assertTrue(result["real_index_unchanged"])
+
+    def test_untracked_whitespace_fails_before_real_index_mutation(self) -> None:
+        root = make_git_repo()
+        (root / "bad.txt").write_text("line with trailing space \n", encoding="utf-8")
+        h = Harness()
+        before = subprocess.check_output(["git", "-C", str(root), "ls-files", "--stage", "-z"])
+        result = h.prospective_commit_diff_check(str(root), ["bad.txt"])
+        after = subprocess.check_output(["git", "-C", str(root), "ls-files", "--stage", "-z"])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertFalse(result["diff_check"])
+        self.assertTrue(result["real_index_unchanged"])
+        self.assertEqual(before, after)
+
+    def test_prospective_diff_represents_deletion_and_recovery_index_safely(self) -> None:
+        root = make_git_repo()
+        (root / "tracked.txt").unlink()
+        h = Harness()
+        result = h.prospective_commit_diff_check(str(root), ["tracked.txt"])
+        self.assertEqual(result["status"], "PASS")
+        self.assertTrue(result["real_index_unchanged"])
+
+        recovery_root = make_git_repo()
+        (recovery_root / "tracked.txt").write_text("staged version\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(recovery_root), "add", "tracked.txt"], check=True)
+        (recovery_root / "tracked.txt").write_text("unstaged recovery version\n", encoding="utf-8")
+        before = subprocess.check_output(["git", "-C", str(recovery_root), "ls-files", "--stage", "-z"])
+        result = h.prospective_commit_diff_check(str(recovery_root), ["tracked.txt"])
+        after = subprocess.check_output(["git", "-C", str(recovery_root), "ls-files", "--stage", "-z"])
+        self.assertEqual(result["status"], "PASS")
+        self.assertTrue(result["real_index_unchanged"])
+        self.assertEqual(before, after)
 
     def test_git_status_failure_is_dirty_and_status_files_is_not_clean(self) -> None:
         h = Harness()
@@ -741,6 +1121,26 @@ class SupervisorLogicTests(unittest.TestCase):
                 result = h.self_test()
         self.assertEqual(result, 0)
         self.assertEqual(ownership_snapshot(h), before)
+
+    def test_self_test_accepts_only_expected_conflict_free_review_diffs(self) -> None:
+        h = LiveWorkerObserverHarness()
+        for lane_name in supervisor.LANE_ORDER:
+            h.state["lanes"][lane_name]["worktree"] = lane_name
+            h.state["lanes"][lane_name]["state"] = "NEEDS_SOL_REVIEW"
+            h.state["lanes"][lane_name]["review"] = {
+                "type": "POST_PHASE_CHECKPOINT"
+                if lane_name == "authority" else "CURRENT_PHASE_REVIEW"
+            }
+            h.state["lanes"][lane_name]["worker_pid"] = None
+        h.git_dirty = lambda worktree: worktree != "authority"
+        h.git_status_details = lambda _worktree: (True, [], "")
+        with tempfile.TemporaryDirectory(prefix="skyrim-product-") as product_root, \
+                tempfile.TemporaryDirectory(prefix="skyrim-self-test-state-") as state_root:
+            for name in ("PRODUCT_VISION.md", "WORLD_RULES.md", "MILESTONE_01_CORE_WORLD.md"):
+                (Path(product_root) / name).write_text("test product context\n", encoding="utf-8")
+            h.config["product_root"] = product_root
+            with patch.object(supervisor, "STATE_DIR", Path(state_root)):
+                self.assertEqual(h.self_test(), 0)
 
     def test_observer_prepare_does_not_reconcile_persisted_coding_lanes(self) -> None:
         h = LiveWorkerObserverHarness()

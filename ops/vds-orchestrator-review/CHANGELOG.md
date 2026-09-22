@@ -1,5 +1,26 @@
 # Supervisor Hardening V2 changelog
 
+## V3 bounded infrastructure repair — 2026-09-22
+
+- Replaced observer-process runtime mutations with a daemon-owned, durable
+  operator request inbox, typed request validation, atomic receipts, bounded
+  processed-request history, replay-safe restart handling, and fail-closed
+  daemon-inactive behavior.
+- Added the `COMPLETE_WITH_VALIDATION_GAP` worker result and persisted bounded
+  gap evidence without weakening structural validation or required exact-SHA
+  GitHub CI gates.
+- Added temporary-index prospective commit validation for tracked, deleted,
+  renamed, staged-plus-unstaged, and untracked files before real index staging;
+  retained the real cached diff check before commit.
+- Strengthened cross-lane scheduler tests and idle status observability while
+  preserving dependency order and external gates.
+- Preserved C04/L03/U02 dirty recovery worktrees and A04's pending checkpoint;
+  no development lane was retried, approved, advanced, committed, pushed, or
+  merged.
+- Final VDS verification: 87 unit tests passed, self-test passed, healthcheck
+  passed, and the disposable worker smoke test proved the operator inbox was
+  blocked under `workspace-write`.
+
 ## Final scoped sandbox remediation — 2026-09-22
 
 - Installed only the required Ubuntu packages: `apparmor-profiles`,

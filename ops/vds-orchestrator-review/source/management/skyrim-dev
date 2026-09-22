@@ -17,6 +17,9 @@ run_service() {
     fi
 }
 
+# Mutating operator commands are submitted to the live daemon by supervisor.py;
+# this wrapper never edits runtime state directly.
+
 if [ "$#" -gt 0 ]; then
     command_name="$1"
 else
