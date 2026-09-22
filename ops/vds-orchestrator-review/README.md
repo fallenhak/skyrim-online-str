@@ -264,3 +264,15 @@ dispatch. A failed durable save restores both snapshots, retains the inbox
 request, emits no receipt, and stops the current request pass. The request is
 then safe to replay in the same daemon or after restart. See
 [verification/operator-request-durability.md](verification/operator-request-durability.md).
+
+## Bounded architect-directed correction — 2026-09-22
+
+The architect-directed recovery correction was applied only to the retained
+production L03 and U02 worktrees while global mode remained `PAUSED`.
+L03 now preserves the light namespace for every `.esl` file, promotes
+ESL-flagged `.esp` and `.esm` files, and falls back conservatively
+for malformed headers. Its focused tests include malformed TES4 headers and
+metadata-only loading. U02 has the accepted EOF and historical recovery-text
+corrections, with both working-tree and cached diff checks passing. No lane
+decision or development HEAD changed. Full evidence is in
+[verification/architect-review-20260922/bounded-correction-20260922.md](verification/architect-review-20260922/bounded-correction-20260922.md).

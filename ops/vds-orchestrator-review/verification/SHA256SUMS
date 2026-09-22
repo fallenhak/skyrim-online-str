@@ -1,5 +1,5 @@
 83c9bc6bb8fa0a863cff5558930fb0796c0da329f6e1526c603ed9c3e83df3ce  ./CHANGELOG.md
-23cfce155f5f0c8fca0177fc5c57c1e52299c28da2c46b486346c4b450804b49  ./README.md
+74cbf334497513e90ab6d6e216bda9ff23409f4194052717970fbae304608115  ./README.md
 6e2869ecaa51ea3a3e383a212062d4d425c3022238f2a822aa16656fd1ff1b5f  ./source/config/supervisor.json
 e55a1ec373a8ef3792b269c287c55ae29cbec86def41c27acb6dba7e7925cd0d  ./source/logrotate/skyrim-dev
 b33888cde571f2f5de77dc4e4568dfc0a722f99e036fca719e351ec56f87d8f6  ./source/management/skyrim-dev
@@ -18,6 +18,7 @@ e76e3ea7d80e45e92781aaf06aaef44f57b25bcadcc9bab98fc0b548821a2980  ./verification
 7d3d343a7dfa039333b95e64f6a3153750f903007996b82bd683e187a6bfdd47  ./verification/architect-review-20260922/A04-authority.md
 12ec694f137dc27b822a9fbd6003604d948b783013bdfdee427a8dacd835a314  ./verification/architect-review-20260922/C04-combat.md
 f3a150d6326847f04120defe33f2cbc5e0ca7e74a7f7cd21f50949c5ac24bf55  ./verification/architect-review-20260922/L03-population.md
+44ccde5134188bd56d1f1b1d5fa3736b7f4d2f792fa0613c51a8416bd4658639  ./verification/architect-review-20260922/bounded-correction-20260922.md
 d336c2a5c1efd9a1a21c0b524d630b3fb21e33748029f875c706ab0ab289f428  ./verification/architect-review-20260922/README.md
 6f188a7986a03bfc6e9f10006268f056e3c52b30b79d5c5973df5f8ca1f7789b  ./verification/architect-review-20260922/U02-ui.md
 5b14d1b124beb5ed265e66015f2550644f62f68501289c8b7f2d6241c4ae55d0  ./verification/architect-review-20260922/cross-lane.md
