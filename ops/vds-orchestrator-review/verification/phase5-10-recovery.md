@@ -144,3 +144,16 @@ UI:
 (empty)
 
 The bounded infrastructure source and verification record are committed locally to infra/vds-orchestrator-review. The commit is not pushed. No development branch was merged. No reset, clean, destructive checkout/restore, force-push, object deletion, repack, prune, or garbage collection occurred.
+
+## Final live snapshot captured at 2026-09-23 01:48 +03:00
+
+- GLOBAL RUNNING; supervisor service active; control plane VALID at 3e7e893b4018b488e158aa5cda977399c0e55a75.
+- Combat C05, Authority A06, Population L03, and UI U03 are all NEEDS_SOL_REVIEW; each reports worker PID none. The current ps -C codex snapshot was empty, so there were zero live Codex development workers. No review packet created after resume was approved.
+- Authority A06 Linux CI remains failed (run 35792965327); its Windows run 35792965343 is still in progress. Combat CI is PASS, Population CI is NOT_RUN with the recorded local tooling gap, and UI CI is PASS.
+- Final git status --short:
+  - Combat: staged additions Code/server/Services/CombatAttackerAuthorizationPolicy.h and Code/tests/CombatAttackerAuthorizationPolicyTests.cpp; staged modification docs/COMBAT_AUTHORITY.md.
+  - Authority: clean.
+  - Population: exactly six unstaged modifications: Code/components/es_loader/ESLoader.cpp, Code/components/es_loader/Records/Record.h, Code/components/es_loader/TESFile.cpp, Code/components/es_loader/TESFile.h, Code/tests/ActorPopulationTests.cpp, and docs/ACTOR_POPULATION.md.
+  - UI: clean.
+- Infrastructure review branch remains clean at local commit d1dcc1b93056719b931d940fb14a515da3f568e1, three commits ahead of origin. It has not been pushed.
+- No development branch was merged. No reset, clean, destructive checkout/restore, force-push, object deletion, repack, prune, or garbage collection occurred.
