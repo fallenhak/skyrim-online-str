@@ -1,5 +1,22 @@
 # Supervisor Hardening V2 changelog
 
+## V3.2 bounded supervisor concurrency repair — 2026-09-22
+
+- Made `schedule()` the sole development-worker admission authority by keeping
+  `RECOVERING` runnable but removing its direct launch from `advance_lane()`.
+- Added a shared worker-limit helper and a defense-in-depth cap check in
+  `start_worker()`, counting normal and recovery processes identically.
+- Added eight deterministic concurrency regressions covering resume with three
+  recoveries, scheduler bypass, direct admission, slot refill, review gating,
+  CI/non-worker states, rate-limit probes, and spawn failure.
+- Updated the observer self-test to recognize a paused current-review lane with
+  a preserved dirty recovery worktree without changing any development lane
+  decision.
+- Installed and verified the production source while globally paused: 101 tests,
+  self-test, healthcheck, disposable worker smoke, and all status paths passed.
+- No development lane was approved, retried, blocked, advanced, committed,
+  pushed, merged, reset, cleaned, checked out, restored, or discarded.
+
 ## V3.1 durability repair — 2026-09-22
 
 - Made each daemon-owned operator request transactional across dispatch and

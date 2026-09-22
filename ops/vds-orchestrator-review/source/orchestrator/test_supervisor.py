@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -285,6 +286,7 @@ class SchedulingHarness(Harness):
     def __init__(self, lane_states: dict[str, str], task_states: dict[str, str]) -> None:
         super().__init__()
         self.config["max_concurrent_workers"] = 2
+        self.start_calls: list[tuple[str, bool]] = []
         self.state["global_mode"] = "RUNNING"
         self.state["scheduler"] = {
             "cursor": 0,
@@ -328,8 +330,67 @@ class SchedulingHarness(Harness):
         return self.state["scheduler"]["tasks"].get(phase_id)
 
     def start_worker(self, lane_name: str, recovery: bool = False) -> bool:
+        self.start_calls.append((lane_name, recovery))
         self.processes[lane_name] = SimpleNamespace(pid=lane_name)
         return True
+
+
+class ProductionPathHarness(SchedulingHarness):
+    """Run the real control/advance/schedule/start admission path with fake PIDs."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            {lane_name: "PAUSED" for lane_name in supervisor.LANE_ORDER},
+            {lane_name: "READY" for lane_name in supervisor.LANE_ORDER},
+        )
+        self.worker_root = Path(tempfile.mkdtemp(prefix="skyrim-worker-admission-"))
+        self.state["global_mode"] = "PAUSED"
+        for lane_name in supervisor.LANE_ORDER:
+            lane = self.state["lanes"][lane_name]
+            lane.update({
+                "branch": f"parallel/{lane_name}",
+                "worktree": str(self.worker_root / lane_name),
+                "plan": "PLAN.md",
+                "phase_index": 0,
+                "plan_data": {
+                    "phases": [{"id": lane["phase_id"], "title": "test phase"}],
+                    "boundaries": [],
+                },
+                "recovery_attempts": 0,
+                "worker_attempt": 0,
+            })
+            if lane_name == "authority":
+                lane.pop("paused_from_state", None)
+            else:
+                lane["paused_from_state"] = "RECOVERING"
+        self.start_calls = []
+        self.verify_worker_worktree = lambda _lane_name, _recovery: (True, "")
+        self.worker_prompt = lambda _lane_name, recovery=False: "bounded test worker"
+        self._new_worker_log = lambda lane_name, _phase_id, attempt: (
+            self.worker_root / f"{lane_name}-{attempt}.log"
+        )
+        self._prune_worker_logs = lambda _lane_name: None
+        self.sync_control_plane = lambda force=False: True
+        self.periodic_guards = lambda: True
+        self.git_dirty = lambda _worktree: False
+        self._control_plane_valid = lambda: True
+
+    def start_worker(self, lane_name: str, recovery: bool = False) -> bool:
+        self.start_calls.append((lane_name, recovery))
+        return supervisor.Supervisor.start_worker(self, lane_name, recovery)
+
+
+class FakeWorkerProcess:
+    _next_pid = 10000
+
+    def __init__(self) -> None:
+        type(self)._next_pid += 1
+        self.pid = type(self)._next_pid
+        self.stdout = io.StringIO()
+        self.returncode = None
+
+    def poll(self):
+        return self.returncode
 
 
 class SupervisorLogicTests(unittest.TestCase):
@@ -683,6 +744,153 @@ class SupervisorLogicTests(unittest.TestCase):
         h.schedule()
         self.assertEqual(set(h.processes), {"population", "ui"})
         self.assertNotIn("authority", h.processes)
+
+    def test_resume_with_three_recoveries_uses_capped_real_run_once_path(self) -> None:
+        h = ProductionPathHarness()
+
+        def spawn(*_args, **_kwargs):
+            return FakeWorkerProcess()
+
+        with patch.object(
+            supervisor,
+            "read_json",
+            return_value={"desired_mode": "RUNNING", "reason": "operator resumed"},
+        ), patch.object(supervisor.subprocess, "Popen", side_effect=spawn):
+            h.run_once()
+
+        self.assertEqual(h.state["global_mode"], "RUNNING")
+        self.assertEqual(len(h.processes), 2)
+        self.assertLessEqual(len(h.processes), h.config["max_concurrent_workers"])
+        self.assertEqual(len(h.start_calls), 2)
+        self.assertTrue(any(recovery for _lane_name, recovery in h.start_calls))
+
+    def test_advance_lane_cannot_admit_recovery_workers_outside_schedule(self) -> None:
+        h = SchedulingHarness(
+            {lane_name: "RECOVERING" for lane_name in supervisor.LANE_ORDER},
+            {lane_name: "READY" for lane_name in supervisor.LANE_ORDER},
+        )
+        with patch.object(
+            supervisor,
+            "read_json",
+            return_value={"desired_mode": "RUNNING", "reason": "operator resumed"},
+        ):
+            for lane_name in ("combat", "population", "ui"):
+                h.advance_lane(lane_name)
+
+        self.assertEqual(h.start_calls, [])
+        self.assertEqual(h.processes, {})
+
+    def test_start_worker_defense_in_depth_rejects_third_live_process(self) -> None:
+        h = ProductionPathHarness()
+        h.state["global_mode"] = "RUNNING"
+        h.state["lanes"]["ui"]["state"] = "READY"
+        h.processes = {
+            "combat": SimpleNamespace(pid=1),
+            "authority": SimpleNamespace(pid=2),
+        }
+        with patch.object(supervisor.subprocess, "Popen") as spawn:
+            self.assertFalse(h.start_worker("ui"))
+
+        spawn.assert_not_called()
+        self.assertEqual(set(h.processes), {"combat", "authority"})
+
+    def test_scheduler_refills_one_finished_slot_without_exceeding_cap(self) -> None:
+        h = SchedulingHarness(
+            {lane_name: "READY" for lane_name in supervisor.LANE_ORDER},
+            {lane_name: "READY" for lane_name in supervisor.LANE_ORDER},
+        )
+        h.schedule()
+        self.assertEqual(len(h.processes), 2)
+        initial = set(h.processes)
+        finished = next(iter(initial))
+        h.processes.pop(finished)
+        calls_before_refill = len(h.start_calls)
+
+        h.schedule()
+
+        self.assertEqual(len(h.processes), 2)
+        self.assertLessEqual(len(h.processes), h.config["max_concurrent_workers"])
+        self.assertEqual(len(h.start_calls) - calls_before_refill, 1)
+        self.assertEqual(len(set(h.processes) - (initial - {finished})), 1)
+
+    def test_review_gated_lane_consumes_no_slot_while_recovery_fills_one(self) -> None:
+        h = SchedulingHarness(
+            {"combat": "NEEDS_SOL_REVIEW", "authority": "READY", "population": "RECOVERING", "ui": "READY"},
+            {"authority": "READY", "population": "READY", "ui": "READY"},
+        )
+
+        h.schedule()
+
+        self.assertNotIn("combat", h.processes)
+        self.assertEqual(len(h.processes), 2)
+        self.assertIn("population", h.processes)
+        self.assertIn(("population", True), h.start_calls)
+
+    def test_non_worker_lane_states_do_not_consume_worker_slots(self) -> None:
+        for non_worker_state in (
+            "WAITING_FOR_CI",
+            "LOCAL_VALIDATION",
+            "COMMITTING",
+            "PUSHING",
+            "NEEDS_SOL_REVIEW",
+        ):
+            h = SchedulingHarness(
+                {"combat": non_worker_state, "authority": "NEEDS_SOL_REVIEW", "population": "NEEDS_SOL_REVIEW", "ui": "NEEDS_SOL_REVIEW"},
+                {},
+            )
+            h.state["scheduler"]["tasks"]["C01"]["state"] = "READY"
+
+            h.schedule()
+
+            self.assertEqual(h.processes, {}, non_worker_state)
+
+    def test_rate_limit_probe_cannot_bypass_global_worker_cap(self) -> None:
+        h = SchedulingHarness(
+            {lane_name: "READY" for lane_name in supervisor.LANE_ORDER},
+            {lane_name: "READY" for lane_name in supervisor.LANE_ORDER},
+        )
+        h.state["codex_availability"] = {
+            "status": "RATE_LIMITED",
+            "next_retry_at": "1970-01-01T00:00:00+00:00",
+            "backoff_seconds": 900,
+            "retry_count": 1,
+            "probe_started_at": None,
+        }
+        h.processes = {
+            "combat": SimpleNamespace(pid=1),
+            "authority": SimpleNamespace(pid=2),
+        }
+
+        h.schedule()
+
+        self.assertEqual(h.start_calls, [])
+        self.assertEqual(len(h.processes), 2)
+
+    def test_failed_spawn_leaves_slot_for_another_eligible_lane(self) -> None:
+        h = ProductionPathHarness()
+        h.state["global_mode"] = "RUNNING"
+        for lane in h.state["lanes"].values():
+            lane["state"] = "READY"
+            lane.pop("paused_from_state", None)
+        spawn_count = 0
+
+        def spawn(*_args, **_kwargs):
+            nonlocal spawn_count
+            spawn_count += 1
+            if spawn_count == 1:
+                raise OSError("simulated spawn failure")
+            return FakeWorkerProcess()
+
+        with patch.object(supervisor.subprocess, "Popen", side_effect=spawn):
+            h.schedule()
+
+        failed_lane = h.start_calls[0][0]
+        self.assertEqual(h.state["lanes"][failed_lane]["state"], "RECOVERING")
+        self.assertNotIn(failed_lane, h.processes)
+        self.assertGreaterEqual(len(h.start_calls), 2)
+        self.assertTrue(any(lane != failed_lane for lane, _recovery in h.start_calls[1:]))
+        self.assertEqual(len(h.processes), 2)
+        self.assertLessEqual(len(h.processes), h.config["max_concurrent_workers"])
 
     def test_all_review_gated_lanes_remain_healthy_and_idle(self) -> None:
         h = SchedulingHarness(
@@ -1297,6 +1505,28 @@ class SupervisorLogicTests(unittest.TestCase):
         for lane_name in supervisor.LANE_ORDER:
             h.state["lanes"][lane_name]["worktree"] = lane_name
             h.state["lanes"][lane_name]["state"] = "NEEDS_SOL_REVIEW"
+            h.state["lanes"][lane_name]["review"] = {
+                "type": "POST_PHASE_CHECKPOINT"
+                if lane_name == "authority" else "CURRENT_PHASE_REVIEW"
+            }
+            h.state["lanes"][lane_name]["worker_pid"] = None
+        h.git_dirty = lambda worktree: worktree != "authority"
+        h.git_status_details = lambda _worktree: (True, [], "")
+        with tempfile.TemporaryDirectory(prefix="skyrim-product-") as product_root, \
+                tempfile.TemporaryDirectory(prefix="skyrim-self-test-state-") as state_root:
+            for name in ("PRODUCT_VISION.md", "WORLD_RULES.md", "MILESTONE_01_CORE_WORLD.md"):
+                (Path(product_root) / name).write_text("test product context\n", encoding="utf-8")
+            h.config["product_root"] = product_root
+            with patch.object(supervisor, "STATE_DIR", Path(state_root)):
+                self.assertEqual(h.self_test(), 0)
+
+    def test_self_test_accepts_paused_current_review_diffs(self) -> None:
+        h = LiveWorkerObserverHarness()
+        for lane_name in supervisor.LANE_ORDER:
+            h.state["lanes"][lane_name]["worktree"] = lane_name
+            h.state["lanes"][lane_name]["state"] = (
+                "NEEDS_SOL_REVIEW" if lane_name == "authority" else "PAUSED"
+            )
             h.state["lanes"][lane_name]["review"] = {
                 "type": "POST_PHASE_CHECKPOINT"
                 if lane_name == "authority" else "CURRENT_PHASE_REVIEW"

@@ -2649,8 +2649,17 @@ an actually failing command is not a validation gap.
             "worker_evidence": redact(worker_evidence)[:MAX_RECOVERY_WORKER_BYTES],
         }
 
+    def _worker_limit(self) -> int:
+        try:
+            return max(0, int(self.config.get("max_concurrent_workers", 2)))
+        except (TypeError, ValueError):
+            return 2
+
     def start_worker(self, lane_name: str, recovery: bool = False) -> bool:
-        if lane_name in self.processes:
+        # Worker admission is a hard invariant, including for callers outside
+        # schedule().  A process already tracked in self.processes occupies a
+        # slot whether it is a normal or recovery worker.
+        if lane_name in self.processes or len(self.processes) >= self._worker_limit():
             return False
         availability = self.state.get("codex_availability", {})
         if availability.get("status") == "RATE_LIMITED":
@@ -4102,13 +4111,14 @@ operator decision.
             self.poll_ci(lane_name)
         elif state == "NEXT_PHASE":
             self.complete_phase(lane_name)
-        elif state == "RECOVERING" and self.state.get("global_mode") == "RUNNING":
-            self.start_worker(lane_name, recovery=True)
+        # RECOVERING is runnable, but schedule() is the sole worker-admission
+        # authority.  Keeping this state transition-free prevents a lane from
+        # bypassing the global concurrency cap during resume.
 
     def schedule(self) -> None:
         if self.state.get("global_mode") != "RUNNING":
             return
-        limit = int(self.config.get("max_concurrent_workers", 2))
+        limit = self._worker_limit()
         availability = self.state.get("codex_availability", {})
         if "scheduler" in self.state:
             self._recompute_scheduler()
@@ -4557,7 +4567,7 @@ operator decision.
                     entry.get("kind") == "unmerged" for entry in entries
                 )
                 expected_recovery_diff = (
-                    lane.get("state") == "NEEDS_SOL_REVIEW"
+                    lane.get("state") in {"NEEDS_SOL_REVIEW", "PAUSED"}
                     and review.get("type") == "CURRENT_PHASE_REVIEW"
                     and not lane.get("worker_pid")
                 )

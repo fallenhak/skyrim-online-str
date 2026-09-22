@@ -1,5 +1,25 @@
 # Skyrim Supervisor Roadmap / Dependency Control Plane review snapshot
 
+## V3.2 bounded supervisor concurrency repair — 2026-09-22
+
+The production VDS was paused before this repair. `advance_lane()` no longer
+admits a `RECOVERING` worker; `schedule()` is the single admission authority
+for `READY` and `RECOVERING` lanes, and `start_worker()` independently rejects
+admission when the configured `max_concurrent_workers` cap is full. The cap
+remains `2` and normal/recovery workers share the same slots.
+
+The deterministic suite now passes 101 tests (baseline: 92), including the
+resume-with-three-recoveries regression through the real
+`run_once()`/`refresh_control()`/`advance_lane()`/`schedule()` path, direct
+`start_worker()` defense-in-depth, slot refill, review gating, non-worker
+states, rate-limit cap protection, and spawn-failure refill behavior. The
+installed VDS source and tests match the review worktree; `self-test`,
+`healthcheck`, and the disposable `worker-smoke-test` all pass. Production
+remains globally paused with no development Codex worker. See
+[verification/architect-review-20260922/v32-concurrency-repair.md](verification/architect-review-20260922/v32-concurrency-repair.md)
+for the root cause, exact preserved lane snapshot, bounded worker log evidence,
+and final service state.
+
 This is the secret-free architect-review snapshot of Supervisor V3.1 with the
 roadmap/dependency control plane, runtime-owner/worker-sandbox repair, and
 daemon request durability repair. It was captured on 2026-09-22 after
