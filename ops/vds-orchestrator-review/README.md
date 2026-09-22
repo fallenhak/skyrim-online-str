@@ -264,3 +264,12 @@ dispatch. A failed durable save restores both snapshots, retains the inbox
 request, emits no receipt, and stops the current request pass. The request is
 then safe to replay in the same daemon or after restart. See
 [verification/operator-request-durability.md](verification/operator-request-durability.md).
+
+
+## 2026-09-23 worker model and recovery verification
+
+The installed supervisor and the infra branch source now agree on the two-worker recovery cap. Future development workers use gpt-6-luna with maximum reasoning; the configured concurrency remains two. The Population temporary-index validation now passes under the supervisor identity without changing its real index or retained files.
+
+The three exact checkpoint approvals and the guarded Population retry completed while paused. After Phase 8 passed, a five-minute observation recorded no more than two workers. The 20 root-owned loose-object fan-out directories were corrected to the repository's skyrimdev owner, and the Population temporary-index check passes without changing its real index. In the 01:38 capture, GLOBAL was RUNNING with a valid control plane; Combat C05 and Population L03 awaited Sol review, UI U03 awaited Sol review after passing CI, and Authority A06 was retrying after a Linux CI failure with one live GPT-6 Luna/max worker. No new review packet was approved after resume.
+
+See [verification/phase5-10-recovery.md](verification/phase5-10-recovery.md) for source paths, hashes, tests, permission evidence, lane decisions, worker command evidence, and final worktree status.

@@ -1,5 +1,14 @@
 # Supervisor Hardening V2 changelog
 
+## Phases 5–10 worker-model and recovery maintenance — 2026-09-23
+
+- Changed only the future development worker model arguments to gpt-6-luna; max reasoning, review configuration, approval/sandbox arguments, and max_concurrent_workers=2 remain unchanged.
+- Synchronized the canonical infra snapshot with the installed hard two-worker recovery admission guard and its deterministic regression tests.
+- Corrected ownership of all 20 root-owned loose-object fan-out directories to skyrimdev:skyrimdev while preserving their modes and object files; the same fault had also surfaced in Authority A06. Population's isolated temporary-index check passed with the real index unchanged and all six retained file hashes unchanged.
+- Passed the 101-test supervisor/roadmap suite, self-test, MODEL_OK probe, and disposable worker smoke. Approved only the specified Combat, Authority, and UI checkpoints; retried Population L03 and did not approve it.
+- Resumed only after Phase 8 passed. Thirty-one samples over five minutes observed a maximum of two development workers with the expected model and reasoning. Combat's new C05 review packet remains unapproved.
+
+
 ## V3.1 durability repair — 2026-09-22
 
 - Made each daemon-owned operator request transactional across dispatch and
