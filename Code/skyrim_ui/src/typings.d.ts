@@ -94,6 +94,43 @@ declare namespace SkyrimTogetherTypes {
   type PartyLeftCallback = (inviterId: number) => void;
 
   type PartyInviteReceivedCallback = (inviterId: number) => void;
+
+  /** Server-owned character identifier encoded as canonical unsigned decimal. */
+  type CharacterId = string;
+
+  /** Opaque game form identifier components encoded as unsigned decimal strings. */
+  interface CharacterGameId {
+    baseId: string;
+    modId: string;
+  }
+
+  /** Character data returned by the server character-list protocol message. */
+  interface CharacterSummaryBridge {
+    characterId: CharacterId;
+    name: string;
+    race: CharacterGameId;
+    sex: number;
+    level: number;
+  }
+
+  /** Positional CefListValue row used to preserve uint64 and uint32 precision. */
+  type CharacterSummaryWireRow = [
+    characterId: CharacterId,
+    name: string,
+    raceBaseId: string,
+    raceModId: string,
+    sex: number,
+    level: number,
+  ];
+
+  /** Numeric CharacterSelectionStatus values from the existing protocol. */
+  type CharacterSelectionStatus = 0 | 1 | 2 | 3;
+
+  type CharacterListCallback = (rows: CharacterSummaryWireRow[]) => void;
+
+  type CharacterSelectionResultCallback = (
+    status: CharacterSelectionStatus,
+  ) => void;
 }
 
 /** Global Skyrim: Together object. */
@@ -130,6 +167,18 @@ interface SkyrimTogether {
 
   /** Add listener to when the player connects to a server. */
   on(event: 'connect', callback: SkyrimTogetherTypes.ConnectCallback): void;
+
+  /** Receive a complete server-owned character list. */
+  on(
+    event: 'characterList',
+    callback: SkyrimTogetherTypes.CharacterListCallback,
+  ): void;
+
+  /** Receive the server's character-selection result status. */
+  on(
+    event: 'characterSelectionResult',
+    callback: SkyrimTogetherTypes.CharacterSelectionResultCallback,
+  ): void;
 
   /** Add listener to when the player disconnects from a server. */
   on(
@@ -252,6 +301,16 @@ interface SkyrimTogether {
   /** Remove listener from when the player connects to a server. */
   off(event: 'connect', callback?: SkyrimTogetherTypes.ConnectCallback): void;
 
+  off(
+    event: 'characterList',
+    callback?: SkyrimTogetherTypes.CharacterListCallback,
+  ): void;
+
+  off(
+    event: 'characterSelectionResult',
+    callback?: SkyrimTogetherTypes.CharacterSelectionResultCallback,
+  ): void;
+
   /** Remove listener from when the player disconnects from a server. */
   off(
     event: 'disconnect',
@@ -362,6 +421,12 @@ interface SkyrimTogether {
    * Disconnect from server or cancel connection.
    */
   disconnect(): void;
+
+  /** Request the server-owned character list for this authenticated session. */
+  requestCharacterList(): void;
+
+  /** Ask the server to select a character by its opaque decimal ID. */
+  selectCharacter(characterId: SkyrimTogetherTypes.CharacterId): void;
 
   /**
    * Reveal other players in the immediate area.

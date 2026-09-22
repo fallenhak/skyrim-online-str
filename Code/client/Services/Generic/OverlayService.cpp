@@ -33,6 +33,8 @@
 #include <Events/UpdateEvent.h>
 #include <Events/PartyJoinedEvent.h>
 #include <Events/PartyLeftEvent.h>
+#include <Events/CharacterListReceivedEvent.h>
+#include <Events/CharacterSelectionResultEvent.h>
 
 #include <PlayerCharacter.h>
 #include <Forms/TESWorldSpace.h>
@@ -125,6 +127,8 @@ OverlayService::OverlayService(World& aWorld, TransportService& transport, entt:
     m_cellChangedConnection = aDispatcher.sink<NotifyPlayerCellChanged>().connect<&OverlayService::OnPlayerCellChanged>(this);
     m_teleportConnection = aDispatcher.sink<NotifyTeleport>().connect<&OverlayService::OnNotifyTeleport>(this);
     m_playerHealthConnection = aDispatcher.sink<NotifyPlayerHealthUpdate>().connect<&OverlayService::OnNotifyPlayerHealthUpdate>(this);
+    m_characterListConnection = aDispatcher.sink<CharacterListReceivedEvent>().connect<&OverlayService::OnCharacterListReceived>(this);
+    m_characterSelectionResultConnection = aDispatcher.sink<CharacterSelectionResultEvent>().connect<&OverlayService::OnCharacterSelectionResult>(this);
     m_partyJoinedConnection = aDispatcher.sink<PartyJoinedEvent>().connect<&OverlayService::OnPartyJoinedEvent>(this);
     m_partyLeftConnection = aDispatcher.sink<PartyLeftEvent>().connect<&OverlayService::OnPartyLeftEvent>(this);
 }
@@ -435,6 +439,41 @@ void OverlayService::OnNotifyPlayerHealthUpdate(const NotifyPlayerHealthUpdate& 
     pArguments->SetInt(0, acMessage.PlayerId);
     pArguments->SetDouble(1, static_cast<double>(percentage));
     m_pOverlay->ExecuteAsync("setHealth", pArguments);
+}
+
+void OverlayService::OnCharacterListReceived(const CharacterListReceivedEvent& acEvent) noexcept
+{
+    if (!m_pOverlay)
+        return;
+
+    auto pArguments = CefListValue::Create();
+    auto pCharacters = CefListValue::Create();
+
+    for (std::size_t index = 0; index < acEvent.Characters.size(); ++index)
+    {
+        const auto& character = acEvent.Characters[index];
+        auto pCharacter = CefListValue::Create();
+        pCharacter->SetString(0, std::to_string(character.CharacterId));
+        pCharacter->SetString(1, character.Name.c_str());
+        pCharacter->SetString(2, std::to_string(character.Race.BaseId));
+        pCharacter->SetString(3, std::to_string(character.Race.ModId));
+        pCharacter->SetInt(4, character.Sex);
+        pCharacter->SetInt(5, character.Level);
+        pCharacters->SetList(index, pCharacter);
+    }
+
+    pArguments->SetList(0, pCharacters);
+    m_pOverlay->ExecuteAsync("characterList", pArguments);
+}
+
+void OverlayService::OnCharacterSelectionResult(const CharacterSelectionResultEvent& acEvent) noexcept
+{
+    if (!m_pOverlay)
+        return;
+
+    auto pArguments = CefListValue::Create();
+    pArguments->SetInt(0, static_cast<int>(acEvent.Status));
+    m_pOverlay->ExecuteAsync("characterSelectionResult", pArguments);
 }
 
 void OverlayService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept

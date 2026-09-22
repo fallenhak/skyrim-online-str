@@ -46,6 +46,15 @@ export class ClientService implements OnDestroy {
   /** Connect player to server change. */
   public playerConnectedChange = new Subject<Player>();
 
+  /** Complete server-owned character list. */
+  public characterListChange = new Subject<
+    SkyrimTogetherTypes.CharacterSummaryBridge[]
+  >();
+
+  /** Server result for the most recent character-selection request. */
+  public characterSelectionResultChange =
+    new Subject<SkyrimTogetherTypes.CharacterSelectionStatus>();
+
   /** Connect party info change. */
   public partyInfoChange = new Subject<PartyInfo>();
 
@@ -123,6 +132,11 @@ export class ClientService implements OnDestroy {
     skyrimtogether.on('openingMenu', this.onOpeningMenu.bind(this));
     skyrimtogether.on('connect', this.onConnect.bind(this));
     skyrimtogether.on('disconnect', this.onDisconnect.bind(this));
+    skyrimtogether.on('characterList', this.onCharacterList.bind(this));
+    skyrimtogether.on(
+      'characterSelectionResult',
+      this.onCharacterSelectionResult.bind(this),
+    );
     skyrimtogether.on('setName', this.onSetName.bind(this)); //not wanted, we dont sync name changes
     skyrimtogether.on('setVersion', this.onSetVersion.bind(this));
     skyrimtogether.on('debug', this.onDebug.bind(this)); //not needed anymore
@@ -165,6 +179,8 @@ export class ClientService implements OnDestroy {
     skyrimtogether.off('openingMenu');
     skyrimtogether.off('connect');
     skyrimtogether.off('disconnect');
+    skyrimtogether.off('characterList');
+    skyrimtogether.off('characterSelectionResult');
     skyrimtogether.off('setName');
     skyrimtogether.off('setVersion');
     skyrimtogether.off('debug');
@@ -207,6 +223,18 @@ export class ClientService implements OnDestroy {
   public disconnect(): void {
     skyrimtogether.disconnect();
     this._remainingReconnectionAttempt = 0;
+  }
+
+  /** Request the server-owned character list. */
+  public requestCharacterList(): void {
+    skyrimtogether.requestCharacterList();
+  }
+
+  /** Send a selection request for a server-provided character ID. */
+  public selectCharacter(
+    characterId: SkyrimTogetherTypes.CharacterId,
+  ): void {
+    skyrimtogether.selectCharacter(characterId);
   }
 
   /**
@@ -363,6 +391,32 @@ export class ClientService implements OnDestroy {
       } else {
         this.chatService.pushSystemMessage('SERVICE.CLIENT.DISCONNECTED');
       }
+    });
+  }
+
+  private onCharacterList(
+    rows: SkyrimTogetherTypes.CharacterSummaryWireRow[],
+  ): void {
+    const characters: SkyrimTogetherTypes.CharacterSummaryBridge[] = rows.map(
+      ([characterId, name, raceBaseId, raceModId, sex, level]) => ({
+        characterId,
+        name,
+        race: { baseId: raceBaseId, modId: raceModId },
+        sex,
+        level,
+      }),
+    );
+
+    this.zone.run(() => {
+      this.characterListChange.next(characters);
+    });
+  }
+
+  private onCharacterSelectionResult(
+    status: SkyrimTogetherTypes.CharacterSelectionStatus,
+  ): void {
+    this.zone.run(() => {
+      this.characterSelectionResultChange.next(status);
     });
   }
 

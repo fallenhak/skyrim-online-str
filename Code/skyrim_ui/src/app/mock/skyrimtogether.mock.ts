@@ -16,6 +16,8 @@ import { MockPlayer } from './mock-player';
 
 let nextPlayerId = 1;
 
+type MockServerCharacterSummary = SkyrimTogetherTypes.CharacterSummaryBridge;
+
 const playerStore = createStore(
   { name: 'players' },
   withEntities<MockPlayer>(),
@@ -28,6 +30,15 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
   private playerName = 'Local Player';
   private showEvents = true;
   private localPlayerId: number;
+  private readonly mockServerCharacterList: MockServerCharacterSummary[] = [
+    {
+      characterId: '1',
+      name: 'Traveler',
+      race: { baseId: '0', modId: '0' },
+      sex: 0,
+      level: 1,
+    },
+  ];
   public readonly players$ = playerStore.pipe(selectAllEntities());
 
   connect(host: string, port: number, password: string): void {
@@ -73,8 +84,8 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
           break;
       }
       setTimeout(() => {
-        this.emit(!!error ? 'disconnect' : 'connect');
         this.connected = !error;
+        this.emit(!!error ? 'disconnect' : 'connect');
         if (error && typeof error !== 'boolean') {
           this.emit('triggerError', JSON.stringify(error));
         } else {
@@ -99,6 +110,38 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
       this.emit('disconnect');
       this.connected = false;
     }
+  }
+
+  requestCharacterList(): void {
+    if (this.connected) {
+      // This is a fixed mock server response fixture, not a local character store.
+      this.emit(
+        'characterList',
+        this.mockServerCharacterList.map(
+          (character): SkyrimTogetherTypes.CharacterSummaryWireRow => [
+            character.characterId,
+            character.name,
+            character.race.baseId,
+            character.race.modId,
+            character.sex,
+            character.level,
+          ],
+        ),
+      );
+    }
+  }
+
+  selectCharacter(characterId: SkyrimTogetherTypes.CharacterId): void {
+    if (!this.connected) {
+      return;
+    }
+
+    const hasServerCharacter = this.mockServerCharacterList.some(
+      character => character.characterId === characterId,
+    );
+    const status: SkyrimTogetherTypes.CharacterSelectionStatus =
+      hasServerCharacter ? 0 : 2;
+    this.emit('characterSelectionResult', status);
   }
 
   reconnect(): void {
