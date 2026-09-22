@@ -89,9 +89,9 @@ the replacement flow is functional.
 - Treat disconnect/reconnect as a new session: no character list or pending
   selection may be reused across connections.
 
-The next phase (U02) can turn this inventory into the precise UI state machine and
-bridge payload contract. U03 can then implement only the typed native/browser
-bridge identified above.
+The U02 state-machine and bridge payload contract is captured in
+[`CHARACTER_UI_STATE_MACHINE.md`](CHARACTER_UI_STATE_MACHINE.md). U03 can then
+implement only the typed native/browser bridge identified there.
 
 ## Validation
 
@@ -111,10 +111,10 @@ bridge identified above.
 ## Recovery status
 
 This document is the retained U01 work product from the interrupted iteration.
-The source inventory and rerun assertions support completing U01; no U02 or
-implementation work was started. Recovery could not complete lane bookkeeping:
+The source inventory and rerun assertions support completing U01; the U02
+design is now recorded separately. Recovery could not complete lane bookkeeping:
 `.codex/lane` is read-only in this worker mount, and the linked worktree
 metadata rejects Git's `index.lock` creation (`git restore` and `git add` both
-fail with permission denied). The tracked `STATE.md` deletion therefore remains
-for the lane supervisor to restore and mark after those mounts are writable.
-U02 remains the next queued phase.
+fail with permission denied). Earlier recovery notes referred to a tracked
+`STATE.md` deletion; current Git status has no such deletion. It reports only
+the retained U02 documentation paths, so no `STATE.md` restoration is required.
