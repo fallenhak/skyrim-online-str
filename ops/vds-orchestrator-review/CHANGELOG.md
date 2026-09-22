@@ -11,7 +11,7 @@
 - Added deterministic same-daemon retry, restart replay, duplicate suppression,
   stale-memory, and idempotent `sync-control-plane` replay coverage.
 - Updated the final service/timer and lane status evidence; the suite now
-  passes 91 tests while global mode remains `PAUSED`.
+  passes 92 tests while global mode remains `PAUSED`.
 
 ## V3 bounded infrastructure repair — 2026-09-22
 

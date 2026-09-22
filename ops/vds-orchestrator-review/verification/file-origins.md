@@ -35,7 +35,7 @@
   exactly-once processed ledger, validation-gap protocol, temporary-index
   prospective diff check, review-gated scheduler summary, and preserved review
   worktree self-test behavior.
-- `source/orchestrator/test_supervisor.py`: 91-test deterministic suite,
+- `source/orchestrator/test_supervisor.py`: 92-test deterministic suite,
   including operator ownership/replay, malformed/inactive requests,
   validation gaps, prospective Git checks, and cross-lane scheduling.
 - `source/config/supervisor.json`: private operator request root and bounded

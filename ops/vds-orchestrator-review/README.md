@@ -189,7 +189,7 @@ not itself authorize autonomous development.
 
 ## Verification
 
-- 91 deterministic unit tests passed, including the V3.1 request durability
+- 92 deterministic unit tests passed, including the V3.1 request durability
   rollback, same-daemon retry, restart replay, duplicate suppression, and
   idempotent control-plane replay regressions.
 - `skyrim-dev self-test` passed, including Codex/GitHub authentication checks,
@@ -252,7 +252,7 @@ Prospective commits are checked with an isolated temporary Git index before the
 real index is staged; the real cached diff check remains as defense in depth.
 See [verification/prospective-diff-validation.md](verification/prospective-diff-validation.md).
 
-The VDS suite passed 91 tests. The disposable Luna smoke test returned
+The VDS suite passed 92 tests. The disposable Luna smoke test returned
 `WORKER_SMOKE_OK` with the operator inbox probe `BLOCKED`. C04, A04, L03, and
 U02 remain pending exactly as captured, with protected heads and dirty-worktree
 bytes preserved. See [verification/final-verification.md](verification/final-verification.md),

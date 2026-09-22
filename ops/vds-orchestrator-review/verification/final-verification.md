@@ -4,7 +4,7 @@ Captured on 2026-09-22 after installation.
 
 | Check | Result |
 | --- | --- |
-| `python3 -B -m unittest discover` on VDS | 91 passed |
+| `python3 -B -m unittest discover` on VDS | 92 passed |
 | `skyrim-dev worker-smoke-test` | `WORKER_SMOKE_OK`; inbox probe `BLOCKED` |
 | `skyrim-dev self-test` | `SELF_TEST_OK` |
 | `skyrim-dev healthcheck` | all five checks passed |

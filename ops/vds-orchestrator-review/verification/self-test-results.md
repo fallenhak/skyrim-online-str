@@ -11,7 +11,7 @@ Command:
     cd /srv/services/skyrim-dev/orchestrator
     runuser -u skyrimdev -- env HOME=/home/skyrimdev PYTHONPATH=/srv/services/skyrim-dev/orchestrator PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s . -p 'test_*.py' -v
 
-Result: 91 tests passed. This includes the prior roadmap/supervisor tests and
+Result: 92 tests passed. This includes the prior roadmap/supervisor tests and
 new deterministic coverage for:
 
 - status, roadmap-status, milestone-status, review-status, healthcheck, and
@@ -132,5 +132,5 @@ the conflict-free dirty worktrees whose lane state is
 `CURRENT_PHASE_REVIEW`; authority remained clean. It also passed the operator
 inbox location/permission check and the negative worker-inbox contract. The
 full final command set is summarized in [final-verification.md](final-verification.md).
-The V3.1 durability regression suite passed 91 tests and proves failed saves
+The V3.1 durability regression suite passed 92 tests and proves failed saves
 cannot leave an in-memory processed marker eligible for receipt/archive replay.
