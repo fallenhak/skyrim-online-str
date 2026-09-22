@@ -1,4 +1,7 @@
 #include <Structs/Faction.h>
+#include <TiltedCore/Serialization.hpp>
+
+#include <limits>
 
 bool Faction::operator==(const Faction& acRhs) const noexcept
 {
@@ -16,11 +19,17 @@ void Faction::Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
     aWriter.WriteBits(Rank, 8);
 }
 
-void Faction::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
+bool Faction::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
 {
-    Id.Deserialize(aReader);
+    const auto baseId = TiltedPhoques::Serialization::ReadVarInt(aReader);
+    const auto modId = TiltedPhoques::Serialization::ReadVarInt(aReader);
+    if (baseId > std::numeric_limits<uint32_t>::max() || modId > std::numeric_limits<uint32_t>::max())
+        return false;
+
+    Id = GameId(static_cast<uint32_t>(modId), static_cast<uint32_t>(baseId));
 
     uint64_t tmp;
     aReader.ReadBits(tmp, 8);
     Rank = tmp & 0xFF;
+    return true;
 }

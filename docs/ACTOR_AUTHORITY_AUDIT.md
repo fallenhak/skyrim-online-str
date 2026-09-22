@@ -41,7 +41,7 @@ boundary. A client-side send restriction is not treated as authority.
 | `RequestActorMaxValueChanges` / `ActorValueService` | Canonical permanent/max values | server entity ID | yes | current epoch required | generated InWorld gate; no finite/value-key validation | B/E | Validate finite values and known keys | No |
 | `RequestHealthChangeBroadcast` / `ActorValueService` | Canonical current health plus broadcast | server entity ID | **yes** | **missing in baseline** | generated InWorld gate; no finite validation | E | Append epoch, require current owner, reject non-finite deltas, use non-inserting health lookup | Phase C |
 | `RequestDeathStateChange` / `ActorValueService` | Canonical death state | server entity ID | yes | current epoch required | generated InWorld gate | A | Keep; death observation is not attacker attribution | No |
-| `RequestFactionsChanges` / `CharacterService` | Canonical faction list | map of server entity IDs | yes | missing | generated InWorld gate; owner pointer check | B | Carry per-entity epoch when stale incarnation matters | No |
+| `RequestFactionsChanges` / `CharacterService` | Canonical faction list | map of server entity IDs | yes | per-entry current epoch | generated InWorld gate; owner check; bounded faction entries with valid unique IDs; persistent players have no non-owner exception | A | Keep per-entity epoch and owner-only mutation | A06 |
 | `DrawWeaponRequest` / `InventoryService` | Canonical weapon-drawn state | server entity ID | owner pointer only | missing | generated InWorld gate | B | Carry and validate current ownership epoch | No |
 | `NewPackageRequest` / `CharacterService` | Broadcast package assignment to clients | server actor ID | no check | missing | generated InWorld gate; `SendToPlayersInRange` only validates origin existence | E | Require current owner and validate package identity | No |
 | `RequestRespawn` / `CharacterService` | Owner appearance/death replay state, or observer spawn response | server actor ID | owner for mutation; non-owner request is a legacy observation path | missing | generated InWorld gate | B/C | Add an optional owner epoch; only owner+epoch may mutate, preserve observer response | No |
@@ -81,9 +81,9 @@ boundary. A client-side send restriction is not treated as authority.
    authority proof. Their legitimate non-owner/environmental semantics must be
    distinguished before adding blanket owner checks.
 4. `OwnerView` validates the current owner pointer, but it does not validate an
-   ownership epoch. A stale packet can remain relevant if the same client later
-   reacquires the actor. This is a concrete stale-incarnation risk for movement,
-   factions, and weapon state.
+   ownership epoch by itself. Movement and faction updates now check the current
+   epoch per actor. Draw-weapon state still has a stale-incarnation risk until
+   its separate follow-up adds an epoch.
 5. Inventory intentionally allows in-range non-owner NPC interaction. This is
    not equivalent to authority over a persistent player actor. `InventoryService`
    now uses a separate policy that rejects persistent players from the NPC

@@ -27,6 +27,7 @@ void CharacterSpawnRequest::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter)
 void CharacterSpawnRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept
 {
     ServerMessage::DeserializeRaw(aReader);
+    IsValid = true;
 
     ServerId = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
     FormId.Deserialize(aReader);
@@ -44,7 +45,11 @@ void CharacterSpawnRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReade
     InventoryContent.Deserialize(aReader);
 
     FactionsContent = {};
-    FactionsContent.Deserialize(aReader);
+    if (!FactionsContent.Deserialize(aReader))
+    {
+        IsValid = false;
+        return;
+    }
 
     ActionsToReplay = {};
     ActionsToReplay.Deserialize(aReader);

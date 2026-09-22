@@ -27,7 +27,7 @@ struct CharacterSpawnRequest final : ServerMessage
 
     bool operator==(const CharacterSpawnRequest& acRhs) const noexcept
     {
-        return ServerId == acRhs.ServerId && FormId == acRhs.FormId && BaseId == acRhs.BaseId &&
+        return IsValid == acRhs.IsValid && ServerId == acRhs.ServerId && FormId == acRhs.FormId && BaseId == acRhs.BaseId &&
                CellId == acRhs.CellId && Position == acRhs.Position && Rotation == acRhs.Rotation &&
                ChangeFlags == acRhs.ChangeFlags && AppearanceBuffer == acRhs.AppearanceBuffer &&
                InventoryContent == acRhs.InventoryContent && FactionsContent == acRhs.FactionsContent &&
@@ -37,6 +37,7 @@ struct CharacterSpawnRequest final : ServerMessage
     }
 
     uint32_t ServerId{};
+    bool IsValid{true};
     GameId FormId{};
     GameId BaseId{};
     GameId LeveledNpcPickId{};

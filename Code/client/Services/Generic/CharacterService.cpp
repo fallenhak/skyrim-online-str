@@ -62,6 +62,7 @@
 #include <Messages/NotifySubtitle.h>
 #include <Messages/NotifyActorTeleport.h>
 #include <Structs/MovementAuthorityPolicy.h>
+#include <Structs/FactionAuthorityPolicy.h>
 
 #include <World.h>
 #include <Games/TES.h>
@@ -521,6 +522,12 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
 
 void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) const noexcept
 {
+    if (!acMessage.IsValid || !FactionAuthorityPolicy::HasValidPayload(acMessage.FactionsContent))
+    {
+        spdlog::warn("Ignored spawn for actor {:X} because its faction payload is malformed", acMessage.ServerId);
+        return;
+    }
+
     if (acMessage.OwnershipEpoch == 0)
     {
         spdlog::warn("Ignored spawn for actor {:X} because the ownership epoch is invalid", acMessage.ServerId);
@@ -737,9 +744,15 @@ void CharacterService::OnFactionsChanges(const NotifyFactionsChanges& acEvent) c
 {
     auto view = m_world.view<RemoteComponent, FormIdComponent, CacheComponent>();
 
-    for (const auto& [id, factions] : acEvent.Changes)
+    for (const auto& [id, update] : acEvent.Changes)
     {
-        const auto itor = std::find_if(std::begin(view), std::end(view), [id = id, view](entt::entity entity) { return view.get<RemoteComponent>(entity).Id == id; });
+        if (update.OwnershipEpoch == 0 || !FactionAuthorityPolicy::HasValidPayload(update.FactionsContent))
+            continue;
+
+        const auto itor = std::find_if(std::begin(view), std::end(view), [id, epoch = update.OwnershipEpoch, view](entt::entity entity) {
+            const auto& remote = view.get<RemoteComponent>(entity);
+            return remote.Id == id && remote.OwnershipEpoch == epoch;
+        });
 
         if (itor != std::end(view))
         {
@@ -747,10 +760,10 @@ void CharacterService::OnFactionsChanges(const NotifyFactionsChanges& acEvent) c
 
             auto* const pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
             if (!pActor)
-                return;
+                continue;
 
             auto& cacheComponent = view.get<CacheComponent>(*itor);
-            cacheComponent.FactionsContent = factions;
+            cacheComponent.FactionsContent = update.FactionsContent;
 
             pActor->SetFactions(cacheComponent.FactionsContent);
         }
@@ -2076,6 +2089,9 @@ void CharacterService::RunFactionsUpdates() const noexcept
         auto& localComponent = factionedActors.get<LocalComponent>(entity);
         auto& cacheComponent = factionedActors.get<CacheComponent>(entity);
 
+        if (localComponent.OwnershipEpoch == 0)
+            continue;
+
         const auto* pForm = TESForm::GetById(formIdComponent.Id);
         const auto* pActor = Cast<Actor>(pForm);
         if (!pActor)
@@ -2090,7 +2106,9 @@ void CharacterService::RunFactionsUpdates() const noexcept
         cacheComponent.FactionsContent = factions;
 
         // If not send the current factions and replace the cached factions
-        message.Changes[localComponent.Id] = factions;
+        auto& change = message.Changes[localComponent.Id];
+        change.OwnershipEpoch = localComponent.OwnershipEpoch;
+        change.FactionsContent = factions;
     }
 
     if (!message.Changes.empty())

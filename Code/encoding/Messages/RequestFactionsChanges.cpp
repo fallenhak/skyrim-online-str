@@ -1,6 +1,8 @@
 #include <Messages/RequestFactionsChanges.h>
 #include <TiltedCore/Serialization.hpp>
 #include <cassert>
+#include <limits>
+#include <utility>
 
 void RequestFactionsChanges::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
 {
@@ -21,10 +23,28 @@ void RequestFactionsChanges::DeserializeRaw(TiltedPhoques::Buffer::Reader& aRead
 
     uint64_t count = 0;
     aReader.ReadBits(count, 8);
+    Changes.clear();
 
     for (auto i = 0u; i < count; ++i)
     {
-        auto& change = Changes[Serialization::ReadVarInt(aReader) & 0xFFFFFFFF];
-        change.Deserialize(aReader);
+        const auto serverId = Serialization::ReadVarInt(aReader);
+        if (serverId > std::numeric_limits<uint32_t>::max())
+        {
+            Changes.clear();
+            return;
+        }
+
+        FactionUpdate update;
+        if (!update.Deserialize(aReader))
+        {
+            Changes.clear();
+            return;
+        }
+
+        if (!Changes.emplace(static_cast<uint32_t>(serverId), std::move(update)).second)
+        {
+            Changes.clear();
+            return;
+        }
     }
 }

@@ -38,6 +38,7 @@
 #include <Messages/SubtitleRequest.h>
 #include <Messages/NotifySubtitle.h>
 #include <Messages/NotifyActorTeleport.h>
+#include <Structs/FactionAuthorityPolicy.h>
 #include <Structs/MovementAuthorityPolicy.h>
 
 namespace
@@ -188,6 +189,12 @@ void CharacterService::OnCharacterInteriorCellChange(const CharacterInteriorCell
 void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacterRequest>& acMessage) const noexcept
 {
     auto& message = acMessage.Packet;
+    if (!message.IsValid || !FactionAuthorityPolicy::HasValidPayload(message.FactionsContent))
+    {
+        spdlog::warn("Rejected assignment from player {:X} with a malformed faction payload", acMessage.pPlayer->GetId());
+        return;
+    }
+
     const auto& refId = message.ReferenceId;
 
     const auto isPlayer = (refId.ModId == 0 && refId.BaseId == 0x14);
@@ -496,19 +503,42 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
 
 void CharacterService::OnFactionsChanges(const PacketEvent<RequestFactionsChanges>& acMessage) const noexcept
 {
-    OwnerView<CharacterComponent> view(m_world, acMessage.GetSender());
+    auto view = m_world.view<OwnerComponent, CharacterComponent>();
 
     auto& message = acMessage.Packet;
 
-    for (auto& [id, factions] : message.Changes)
+    for (auto& [id, update] : message.Changes)
     {
-        auto it = view.find(static_cast<entt::entity>(id));
+        const auto entity = static_cast<entt::entity>(id);
+        auto it = view.find(entity);
 
-        if (it == std::end(view) || view.get<OwnerComponent>(*it).GetOwner() != acMessage.pPlayer)
+        if (it == std::end(view))
             continue;
 
+        const auto& ownerComponent = view.get<OwnerComponent>(*it);
+        const bool isPersistentCharacter = m_world.all_of<PersistentCharacterComponent>(*it);
+        if (!FactionAuthorityPolicy::IsAuthorized(
+                true,
+                true,
+                ownerComponent.GetOwner() == acMessage.pPlayer,
+                isPersistentCharacter,
+                ownerComponent.OwnershipEpoch,
+                update.OwnershipEpoch))
+        {
+            spdlog::debug(
+                "Rejected faction update from player {:X} for actor {:X}; requested epoch {} does not match current epoch {}",
+                acMessage.pPlayer->GetId(), id, update.OwnershipEpoch, ownerComponent.OwnershipEpoch);
+            continue;
+        }
+
+        if (!FactionAuthorityPolicy::HasValidPayload(update.FactionsContent))
+        {
+            spdlog::debug("Rejected malformed faction update from player {:X} for actor {:X}", acMessage.pPlayer->GetId(), id);
+            continue;
+        }
+
         auto& characterComponent = view.get<CharacterComponent>(*it);
-        characterComponent.FactionsContent = factions;
+        characterComponent.FactionsContent = update.FactionsContent;
         characterComponent.SetDirtyFactions(true);
     }
 }
@@ -1065,8 +1095,8 @@ void CharacterService::ProcessFactionsChanges() const noexcept
 
             auto& message = messages[pPlayer];
             auto& change = message.Changes[World::ToInteger(entity)];
-
-            change = characterComponent.FactionsContent;
+            change.OwnershipEpoch = ownerComponent.OwnershipEpoch;
+            change.FactionsContent = characterComponent.FactionsContent;
         }
 
         characterComponent.SetDirtyFactions(false);

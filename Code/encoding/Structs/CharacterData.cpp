@@ -23,7 +23,7 @@ void CharacterData::Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noex
     Serialization::WriteBool(aWriter, IsWeaponDrawn);
 }
 
-void CharacterData::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
+bool CharacterData::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
 {
     ReferenceId.Deserialize(aReader);
     FormId.Deserialize(aReader);
@@ -41,7 +41,8 @@ void CharacterData::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
     InventoryContent.Deserialize(aReader);
 
     FactionsContent = {};
-    FactionsContent.Deserialize(aReader);
+    if (!FactionsContent.Deserialize(aReader))
+        return false;
 
     LatestAction = ActionEvent{};
     LatestAction.ApplyDifferential(aReader);
@@ -52,4 +53,5 @@ void CharacterData::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
 
     IsDead = Serialization::ReadBool(aReader);
     IsWeaponDrawn = Serialization::ReadBool(aReader);
+    return true;
 }

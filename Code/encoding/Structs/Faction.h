@@ -11,7 +11,7 @@ struct Faction
     bool operator!=(const Faction& acRhs) const noexcept;
 
     void Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcept;
-    void Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept;
+    bool Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept;
 
     GameId Id;
     int8_t Rank;

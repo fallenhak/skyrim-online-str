@@ -28,7 +28,7 @@ struct CharacterData
     bool operator!=(const CharacterData& acRhs) const noexcept { return !this->operator==(acRhs); }
 
     void Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcept;
-    void Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept;
+    bool Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept;
 
     GameId ReferenceId{};
     GameId FormId{};
