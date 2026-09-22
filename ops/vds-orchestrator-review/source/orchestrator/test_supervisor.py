@@ -79,6 +79,32 @@ class Harness(supervisor.Supervisor):
         lane["review_reasons"] = reasons
 
 
+class DurableSaveHarness(Harness):
+    """Harness with a small persisted-state model for request durability tests."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.persisted_state = deepcopy(self.state)
+        self.persisted_roadmap_snapshot = None
+        self.fail_next_save = False
+        self.save_calls = 0
+
+    def save_state(self) -> bool:
+        if self._deferred_save_depth:
+            self._save_deferred = True
+            return True
+        self.save_calls += 1
+        if self.fail_next_save:
+            self.fail_next_save = False
+            raise OSError("simulated durable state save failure")
+        self.persisted_state = deepcopy(self.state)
+        self.persisted_roadmap_snapshot = deepcopy(
+            getattr(self, "roadmap_snapshot", None)
+        )
+        self._save_deferred = False
+        return True
+
+
 def make_git_repo() -> Path:
     root = Path(tempfile.mkdtemp(prefix="skyrim-supervisor-test-"))
     subprocess.run(["git", "init", "-q", "-b", "main", str(root)], check=True)
@@ -367,6 +393,150 @@ class SupervisorLogicTests(unittest.TestCase):
         self.assertEqual(h.process_operator_requests(), 1)
         self.assertEqual(len(persisted), 1)
         self.assertEqual(persisted[0]["lanes"]["combat"]["state"], "BLOCKED")
+        self.assertIn("block-current", persisted[0]["processed_operator_requests"])
+
+    def test_failed_request_save_rolls_back_memory_and_retries_same_daemon(self) -> None:
+        h = DurableSaveHarness()
+        h.state["lanes"]["combat"] = {"state": "READY", "review": {}}
+        h.persisted_state = deepcopy(h.state)
+        payload = operator_payload("save-failure-same-daemon", "block", {"lane": "combat"})
+        path = put_operator_request(h, payload)
+        paths = supervisor.operator_request_paths(h.config)
+        dispatches: list[str] = []
+        original_dispatch = h._dispatch_operator_request
+
+        def counted_dispatch(request: dict) -> tuple[int, str, str]:
+            dispatches.append(str(request["request_id"]))
+            return original_dispatch(request)
+
+        h._dispatch_operator_request = counted_dispatch  # type: ignore[method-assign]
+        h.fail_next_save = True
+        self.assertEqual(h.process_operator_requests(), 0)
+        self.assertEqual(dispatches, ["save-failure-same-daemon"])
+        self.assertEqual(h.state["lanes"]["combat"]["state"], "READY")
+        self.assertNotIn("save-failure-same-daemon", h.state["processed_operator_requests"])
+        self.assertTrue(path.exists())
+        self.assertFalse((paths["receipts"] / "save-failure-same-daemon.json").exists())
+
+        self.assertEqual(h.process_operator_requests(), 1)
+        self.assertEqual(dispatches, ["save-failure-same-daemon"] * 2)
+        self.assertEqual(h.state["lanes"]["combat"]["state"], "BLOCKED")
+        self.assertIn("save-failure-same-daemon", h.persisted_state["processed_operator_requests"])
+        self.assertFalse(path.exists())
+        self.assertEqual(
+            supervisor.read_json(paths["receipts"] / "save-failure-same-daemon.json", {})[
+                "status"
+            ],
+            "SUCCEEDED",
+        )
+
+    def test_failed_request_save_restart_replays_from_last_persisted_state(self) -> None:
+        h = DurableSaveHarness()
+        h.state["lanes"]["combat"] = {"state": "READY", "review": {}}
+        h.persisted_state = deepcopy(h.state)
+        payload = operator_payload("save-failure-restart", "block", {"lane": "combat"})
+        path = put_operator_request(h, payload)
+        h.fail_next_save = True
+        self.assertEqual(h.process_operator_requests(), 0)
+        self.assertEqual(h.state, h.persisted_state)
+        self.assertTrue(path.exists())
+
+        restarted = DurableSaveHarness()
+        restarted.config["operator_request_root"] = h.config["operator_request_root"]
+        restarted.state = deepcopy(h.persisted_state)
+        restarted.persisted_state = deepcopy(h.persisted_state)
+        dispatches: list[str] = []
+        original_dispatch = restarted._dispatch_operator_request
+
+        def counted_dispatch(request: dict) -> tuple[int, str, str]:
+            dispatches.append(str(request["request_id"]))
+            return original_dispatch(request)
+
+        restarted._dispatch_operator_request = counted_dispatch  # type: ignore[method-assign]
+        self.assertEqual(restarted.process_operator_requests(), 1)
+        self.assertEqual(dispatches, ["save-failure-restart"])
+        self.assertEqual(restarted.state["lanes"]["combat"]["state"], "BLOCKED")
+        self.assertIn("save-failure-restart", restarted.persisted_state["processed_operator_requests"])
+        self.assertFalse(path.exists())
+
+    def test_failed_malformed_request_save_does_not_leave_marker(self) -> None:
+        h = DurableSaveHarness()
+        payload = operator_payload("malformed-save-failure", "not-supported", {})
+        path = put_operator_request(h, payload)
+        h.fail_next_save = True
+        self.assertEqual(h.process_operator_requests(), 0)
+        self.assertNotIn("malformed-save-failure", h.state["processed_operator_requests"])
+        self.assertTrue(path.exists())
+        self.assertFalse(
+            (supervisor.operator_request_paths(h.config)["receipts"]
+             / "malformed-save-failure.json").exists()
+        )
+
+    def test_successful_request_duplicate_and_restart_dispatch_only_once(self) -> None:
+        h = DurableSaveHarness()
+        h.state["lanes"]["combat"] = {"state": "READY", "review": {}}
+        h.persisted_state = deepcopy(h.state)
+        payload = operator_payload("durable-duplicate", "block", {"lane": "combat"})
+        put_operator_request(h, payload)
+        dispatches: list[str] = []
+        original_dispatch = h._dispatch_operator_request
+
+        def counted_dispatch(request: dict) -> tuple[int, str, str]:
+            dispatches.append(str(request["request_id"]))
+            return original_dispatch(request)
+
+        h._dispatch_operator_request = counted_dispatch  # type: ignore[method-assign]
+        self.assertEqual(h.process_operator_requests(), 1)
+        put_operator_request(h, payload)
+        self.assertEqual(h.process_operator_requests(), 1)
+        self.assertEqual(dispatches, ["durable-duplicate"])
+
+        restarted = DurableSaveHarness()
+        restarted.config["operator_request_root"] = h.config["operator_request_root"]
+        restarted.state = deepcopy(h.persisted_state)
+        restarted.persisted_state = deepcopy(h.persisted_state)
+        restart_dispatches: list[str] = []
+        original_restart_dispatch = restarted._dispatch_operator_request
+
+        def counted_restart_dispatch(request: dict) -> tuple[int, str, str]:
+            restart_dispatches.append(str(request["request_id"]))
+            return original_restart_dispatch(request)
+
+        restarted._dispatch_operator_request = counted_restart_dispatch  # type: ignore[method-assign]
+        put_operator_request(restarted, payload)
+        self.assertEqual(restarted.process_operator_requests(), 1)
+        self.assertEqual(restart_dispatches, [])
+        self.assertEqual(restarted.state["lanes"]["combat"]["state"], "BLOCKED")
+
+    def test_sync_control_plane_precommit_replay_is_idempotent(self) -> None:
+        h = DurableSaveHarness()
+        h.state["control_plane"] = {"applied_sha": "old"}
+        h.roadmap_snapshot = SimpleNamespace(value="old")
+        h.persisted_state = deepcopy(h.state)
+        external = {"head": "old", "fetches": 0, "merges": 0}
+
+        def idempotent_sync(force: bool = False) -> bool:
+            external["fetches"] += 1
+            if external["head"] == "old":
+                external["head"] = "new"
+                external["merges"] += 1
+            h.state["control_plane"]["applied_sha"] = external["head"]
+            h.roadmap_snapshot = SimpleNamespace(value=external["head"])
+            return True
+
+        h.sync_control_plane = idempotent_sync  # type: ignore[method-assign]
+        payload = operator_payload("idempotent-sync", "sync-control-plane", {"force": True})
+        put_operator_request(h, payload)
+        h.fail_next_save = True
+        self.assertEqual(h.process_operator_requests(), 0)
+        self.assertEqual(h.state["control_plane"]["applied_sha"], "old")
+        self.assertEqual(h.roadmap_snapshot.value, "old")
+        self.assertEqual(external, {"head": "new", "fetches": 1, "merges": 1})
+
+        self.assertEqual(h.process_operator_requests(), 1)
+        self.assertEqual(h.state["control_plane"]["applied_sha"], "new")
+        self.assertEqual(h.roadmap_snapshot.value, "new")
+        self.assertEqual(external, {"head": "new", "fetches": 2, "merges": 1})
 
     def test_duplicate_operator_request_is_not_executed_after_restart(self) -> None:
         h = Harness()

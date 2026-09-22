@@ -24,6 +24,7 @@ import tempfile
 import threading
 import time
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -1277,6 +1278,19 @@ class Supervisor:
         )
         self.state["processed_operator_requests"] = dict(ordered[:limit])
 
+    def _restore_operator_request_snapshot(
+        self,
+        state_snapshot: dict[str, Any],
+        roadmap_snapshot: RoadmapSnapshot | None,
+        save_deferred: bool,
+        last_save: float,
+    ) -> None:
+        """Discard an uncommitted request after its durable save failed."""
+        self.state = state_snapshot
+        self.roadmap_snapshot = roadmap_snapshot
+        self._save_deferred = save_deferred
+        self.last_save = last_save
+
     def _operator_receipt(
         self,
         request_id: str,
@@ -1408,6 +1422,10 @@ class Supervisor:
                     self._archive_operator_request(path)
                     processed_count += 1
                     continue
+                state_snapshot = deepcopy(self.state)
+                roadmap_snapshot = deepcopy(getattr(self, "roadmap_snapshot", None))
+                save_deferred = self._save_deferred
+                last_save = self.last_save
                 self._deferred_save_depth += 1
                 try:
                     return_code, stdout, stderr = self._dispatch_operator_request(payload)
@@ -1419,11 +1437,17 @@ class Supervisor:
                 self._remember_operator_request(request_id, receipt)
                 try:
                     if not self.save_state():
+                        self._restore_operator_request_snapshot(
+                            state_snapshot, roadmap_snapshot, save_deferred, last_save
+                        )
                         self.log("operator request state save was refused; request retained")
-                        continue
-                except OSError as exc:
+                        break
+                except Exception as exc:
+                    self._restore_operator_request_snapshot(
+                        state_snapshot, roadmap_snapshot, save_deferred, last_save
+                    )
                     self.log(f"operator request state save failed; request retained: {exc}")
-                    continue
+                    break
                 self._write_operator_receipt(receipt)
                 self._archive_operator_request(path)
                 processed_count += 1
@@ -1439,14 +1463,24 @@ class Supervisor:
                 stderr=f"operator request rejected: {validation_error}",
             )
             if _valid_operator_request_id(request_id):
+                state_snapshot = deepcopy(self.state)
+                roadmap_snapshot = deepcopy(getattr(self, "roadmap_snapshot", None))
+                save_deferred = self._save_deferred
+                last_save = self.last_save
                 self._remember_operator_request(request_id, receipt)
                 try:
                     if not self.save_state():
+                        self._restore_operator_request_snapshot(
+                            state_snapshot, roadmap_snapshot, save_deferred, last_save
+                        )
                         self.log("malformed operator request state save was refused; request retained")
-                        continue
-                except OSError as exc:
+                        break
+                except Exception as exc:
+                    self._restore_operator_request_snapshot(
+                        state_snapshot, roadmap_snapshot, save_deferred, last_save
+                    )
                     self.log(f"malformed operator request state save failed: {exc}")
-                    continue
+                    break
             self._write_operator_receipt(receipt)
             self._archive_operator_request(path)
             processed_count += 1

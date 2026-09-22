@@ -1,7 +1,8 @@
 # Supervisor repair verification results
 
-Captured on the VDS on 2026-09-22. The orchestrator and healthcheck timer
-remained inactive and disabled throughout. No development worker was started.
+Captured on the VDS on 2026-09-22. The orchestrator service remained active in
+global `PAUSED` mode and the healthcheck timer remained active and enabled. No
+development worker was started.
 
 ## Unit tests
 
@@ -10,8 +11,8 @@ Command:
     cd /srv/services/skyrim-dev/orchestrator
     runuser -u skyrimdev -- env HOME=/home/skyrimdev PYTHONPATH=/srv/services/skyrim-dev/orchestrator PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s . -p 'test_*.py' -v
 
-Result: 65 tests passed. This includes the prior 51 roadmap/supervisor tests
-and new deterministic coverage for:
+Result: 91 tests passed. This includes the prior roadmap/supervisor tests and
+new deterministic coverage for:
 
 - status, roadmap-status, milestone-status, review-status, healthcheck, and
   self-test observer ownership preservation;
@@ -20,7 +21,11 @@ and new deterministic coverage for:
 - live `RATE_LIMITED` probe preservation versus legitimate restart cleanup;
 - local worktree source-access prompt policy;
 - worker GitHub/SSH environment isolation; and
-- disposable worker smoke-command construction.
+- disposable worker smoke-command construction;
+- failed operator-request save rollback and inbox retention;
+- same-daemon retry and restart replay from the last persisted state;
+- duplicate suppression after a successful save; and
+- idempotent `sync-control-plane` replay after a pre-commit failure.
 
 ## Observer and runtime-owner behavior
 
@@ -106,14 +111,14 @@ affected. The scratch directory was removed after the test.
 ## Protected state
 
     global mode: PAUSED
-    orchestrator: inactive / disabled
-    healthcheck timer: inactive / disabled
+    orchestrator: active / enabled
+    healthcheck timer: active / enabled
     development workers: none
 
 Protected heads remain unchanged:
 
-    combat:     905cf71c55200509702fb299aaa953ae46dcb374
-    authority:  caf7dcc31ca4b6d0912f31b151408ba24c13938c
+    combat:     500bf5ea5e04341f565776ed5263119c1cf06893
+    authority:  b8fc40415fceee88ae6424d25bd68a2a0ddeb70a
     population: 52c97ba4d5da993e6ef2fa4bdf398f13c22b456a
     ui:         a473531ad16a82cecc8a4cdecc460934ba7efcfa
 
@@ -127,3 +132,5 @@ the conflict-free dirty worktrees whose lane state is
 `CURRENT_PHASE_REVIEW`; authority remained clean. It also passed the operator
 inbox location/permission check and the negative worker-inbox contract. The
 full final command set is summarized in [final-verification.md](final-verification.md).
+The V3.1 durability regression suite passed 91 tests and proves failed saves
+cannot leave an in-memory processed marker eligible for receipt/archive replay.

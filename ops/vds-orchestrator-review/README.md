@@ -1,11 +1,11 @@
 # Skyrim Supervisor Roadmap / Dependency Control Plane review snapshot
 
-This is the secret-free architect-review snapshot of Supervisor V2.1 extended
-with the roadmap/dependency control plane and the runtime-owner/worker-sandbox
-repair. It was captured on 2026-09-22 after installation and verification.
-Autonomous development remains disabled: the orchestrator unit and healthcheck
-timer are both inactive and disabled, global mode is `PAUSED`, and no worker
-was launched during this pass.
+This is the secret-free architect-review snapshot of Supervisor V3.1 with the
+roadmap/dependency control plane, runtime-owner/worker-sandbox repair, and
+daemon request durability repair. It was captured on 2026-09-22 after
+installation and verification. Autonomous development remains disabled: the
+orchestrator service is active in global `PAUSED` mode, the healthcheck timer
+is active and enabled, and no worker is running.
 
 ## Installed layout
 
@@ -152,8 +152,8 @@ renewable encounters, and the first playable core-world milestone. Validated
 copies are cached with the applied SHA; worker prompts receive only bounded
 context plus the task identity and SHA.
 
-The current C/A/L/U queues remain intact and start at C03, A04, L03, and U02.
-They are normalized as `EXISTING_PLAN` tasks. M01-WORLD W01-W10 are
+The final captured C/A/L/U queues remain intact at C04, A04, L03, and U02.
+They are normalized as `EXISTING_PLAN` tasks and remain review-gated. M01-WORLD W01-W10 are
 `ROADMAP` tasks and remain visibly `BLOCKED_EXTERNAL_GATE` until the architect
 provides the reviewed integration branch. M02-M05 are product direction only
 with `executable: false` and can never be scheduled.
@@ -189,9 +189,9 @@ not itself authorize autonomous development.
 
 ## Verification
 
-- 65 deterministic unit tests passed: the original 51 tests plus runtime-owner,
-  observer-safety, lock-ordering, prompt-policy, credential-isolation, and
-  disposable-smoke-workspace regressions.
+- 91 deterministic unit tests passed, including the V3.1 request durability
+  rollback, same-daemon retry, restart replay, duplicate suppression, and
+  idempotent control-plane replay regressions.
 - `skyrim-dev self-test` passed, including Codex/GitHub authentication checks,
   safe push dry-runs, four clean worktrees, product context, credential
   isolation, and GitHub Actions polling.
@@ -205,22 +205,20 @@ not itself authorize autonomous development.
 - `skyrim-dev worker-smoke-test` passed with the explicit `WORKER_SMOKE_OK`
   result; both direct bwrap probes passed and no development worktree or branch
   changed.
-- C03/A04 remain `NEEDS_SOL_REVIEW`; C03 had no actual result marker in the
-  complete log and was stopped by the operator pause, while A04's complete log
-  records the `DrawWeaponRequest`/`OwnershipEpoch` finding before the same
-  sandbox failure.
+- C04/A04/L03/U02 remain `NEEDS_SOL_REVIEW`; no lane decision was issued in
+  this pass.
 - UI readiness was verified from the repository workflow and the minimal
   supported Node 20/pnpm 9 tooling was installed; no UI dependencies were
   installed.
 - No development worker was started, no development branch was pushed, and no
   development branch head changed.
 - Protected development heads remain:
-  `combat=905cf71c55200509702fb299aaa953ae46dcb374`,
-  `authority=caf7dcc31ca4b6d0912f31b151408ba24c13938c`,
+  `combat=500bf5ea5e04341f565776ed5263119c1cf06893`,
+  `authority=b8fc40415fceee88ae6424d25bd68a2a0ddeb70a`,
   `population=52c97ba4d5da993e6ef2fa4bdf398f13c22b456a`,
   `ui=a473531ad16a82cecc8a4cdecc460934ba7efcfa`.
-- The orchestrator and healthcheck timer remain inactive and disabled, global
-  mode remains `PAUSED`, and no Luna worker was started.
+- The orchestrator remains active in global `PAUSED` mode, the healthcheck
+  timer remains active and enabled, and no Luna worker was started.
 
 See [CHANGELOG.md](CHANGELOG.md), [verification/self-test-results.md](verification/self-test-results.md),
 [verification/security-scan.md](verification/security-scan.md),
@@ -254,9 +252,15 @@ Prospective commits are checked with an isolated temporary Git index before the
 real index is staged; the real cached diff check remains as defense in depth.
 See [verification/prospective-diff-validation.md](verification/prospective-diff-validation.md).
 
-The VDS suite passed 87 tests. The disposable Luna smoke test returned
+The VDS suite passed 91 tests. The disposable Luna smoke test returned
 `WORKER_SMOKE_OK` with the operator inbox probe `BLOCKED`. C04, A04, L03, and
 U02 remain pending exactly as captured, with protected heads and dirty-worktree
 bytes preserved. See [verification/final-verification.md](verification/final-verification.md),
 [verification/current-state-redacted.json](verification/current-state-redacted.json),
 and [verification/dirty-worktrees-v3.md](verification/dirty-worktrees-v3.md).
+
+The V3.1 durability repair snapshots daemon state and the active roadmap before
+dispatch. A failed durable save restores both snapshots, retains the inbox
+request, emits no receipt, and stops the current request pass. The request is
+then safe to replay in the same daemon or after restart. See
+[verification/operator-request-durability.md](verification/operator-request-durability.md).

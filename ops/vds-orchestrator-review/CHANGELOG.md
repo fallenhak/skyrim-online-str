@@ -1,5 +1,18 @@
 # Supervisor Hardening V2 changelog
 
+## V3.1 durability repair — 2026-09-22
+
+- Made each daemon-owned operator request transactional across dispatch and
+  durable state commit: state, processed-request ledger, and active roadmap
+  snapshot roll back on save refusal or exception.
+- Failed saves retain the inbox request, emit no receipt, archive nothing, and
+  stop the current request pass so a later tick cannot trust an in-memory
+  processed marker.
+- Added deterministic same-daemon retry, restart replay, duplicate suppression,
+  stale-memory, and idempotent `sync-control-plane` replay coverage.
+- Updated the final service/timer and lane status evidence; the suite now
+  passes 91 tests while global mode remains `PAUSED`.
+
 ## V3 bounded infrastructure repair — 2026-09-22
 
 - Replaced observer-process runtime mutations with a daemon-owned, durable

@@ -30,6 +30,25 @@ then records the request ID and bounded result in
 `state.json`, atomically persists the resulting state, writes the durable
 receipt, and archives the inbox file.
 
+## Pre-commit durability failure
+
+Before dispatching a valid request, the daemon snapshots the JSON state and
+the active roadmap snapshot. Intermediate `event()` saves remain deferred.
+If the final atomic state save returns false or raises, the daemon restores
+both snapshots, clears the uncommitted save bookkeeping, leaves the request in
+the inbox, emits no receipt, archives nothing, and stops processing further
+requests in that tick. The next tick therefore cannot mistake an in-memory
+processed-request record for a persisted one. A restart loads the last
+persisted state and safely retries the retained request.
+
+`sync-control-plane` is the one request with an external side effect. Its
+pre-commit actions are safe to replay: fetch is repeatable, fast-forward-only
+merge converges on the same remote SHA, and the control-plane cache writes are
+content-addressed/idempotent. The daemon still rolls back its in-memory state
+and roadmap snapshot when the state commit fails; the regression suite proves
+the external merge is performed only once while a retry simply observes the
+already-advanced external head.
+
 On restart, a request left in the inbox whose ID is already in
 `processed_operator_requests` causes the saved receipt to be re-emitted and is
 never dispatched again. A crash before the state commit leaves the request in

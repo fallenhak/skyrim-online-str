@@ -37,5 +37,6 @@ production smoke command passed. Both direct bwrap probes also returned `rc=0`
 with empty output; see `sandbox-diagnosis.md`.
 
 This result validates the worker sandbox only. It is not permission to start
-autonomous development; the service remains inactive/disabled and the global
-mode remains `PAUSED`.
+autonomous development; the supervisor service remains `active` while global
+mode remains `PAUSED`, and the healthcheck timer remains `active` and
+`enabled`.

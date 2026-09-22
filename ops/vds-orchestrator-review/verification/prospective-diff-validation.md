@@ -16,7 +16,7 @@ current explicit status set, runs the trusted `git add -- <files>`, runs
 `git diff --cached --check` again, and commits only after that second check.
 There is no `git add -A` path.
 
-The 87-test suite proves valid tracked and untracked files pass, an untracked
+The 91-test suite proves valid tracked and untracked files pass, an untracked
 trailing-whitespace file fails before real staging, deletions are represented,
 staged-plus-unstaged recovery is safe, the logical real index is unchanged,
 and the real cached recheck remains in the commit path.
