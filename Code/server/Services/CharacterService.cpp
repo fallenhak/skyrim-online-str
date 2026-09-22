@@ -38,6 +38,7 @@
 #include <Messages/SubtitleRequest.h>
 #include <Messages/NotifySubtitle.h>
 #include <Messages/NotifyActorTeleport.h>
+#include <Structs/MovementAuthorityPolicy.h>
 
 namespace
 {
@@ -425,7 +426,7 @@ void CharacterService::OnCharacterSpawned(const CharacterSpawnedEvent& acEvent) 
 
 void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReferencesMoveRequest>& acMessage) const noexcept
 {
-    OwnerView<AnimationComponent, MovementComponent, CellIdComponent> view(m_world, acMessage.GetSender());
+    OwnerView<CharacterComponent, AnimationComponent, MovementComponent, CellIdComponent> view(m_world, acMessage.GetSender());
 
     auto& message = acMessage.Packet;
 
@@ -440,6 +441,23 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
             continue;
         }
 
+        auto& update = entry.second;
+        auto& ownerComponent = view.get<OwnerComponent>(*itor);
+        if (!MovementAuthorityPolicy::IsAuthorized(
+                true, true, ownerComponent.IsCurrentOwner(acMessage.pPlayer, update.OwnershipEpoch), update.OwnershipEpoch))
+        {
+            spdlog::debug(
+                "Rejected movement update from player {:X} for actor {:X}; requested epoch {} does not match current epoch {}",
+                acMessage.pPlayer->GetId(), entry.first, update.OwnershipEpoch, ownerComponent.OwnershipEpoch);
+            continue;
+        }
+
+        if (!MovementAuthorityPolicy::HasValidPayload(update))
+        {
+            spdlog::debug("Rejected malformed movement update from player {:X} for actor {:X}", acMessage.pPlayer->GetId(), entry.first);
+            continue;
+        }
+
         auto& movementComponent = view.get<MovementComponent>(*itor);
         auto& cellIdComponent = view.get<CellIdComponent>(*itor);
         auto& animationComponent = view.get<AnimationComponent>(*itor);
@@ -448,7 +466,6 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
 
         const auto movementCopy = movementComponent;
 
-        auto& update = entry.second;
         auto& movement = update.UpdatedMovement;
 
         movementComponent.Position = movement.Position;
@@ -1108,6 +1125,8 @@ void CharacterService::ProcessMovementChanges() const noexcept
             auto& update = message.Updates[World::ToInteger(entity)];
             auto& movement = update.UpdatedMovement;
 
+            update.OwnershipEpoch = ownerComponent.OwnershipEpoch;
+
             movement.Position = movementComponent.Position;
 
             movement.Rotation.x = movementComponent.Rotation.x;
@@ -1117,6 +1136,12 @@ void CharacterService::ProcessMovementChanges() const noexcept
             movement.Variables = movementComponent.Variables;
 
             update.ActionEvents = animationComponent.Actions;
+
+            if (!MovementAuthorityPolicy::HasValidPayload(update))
+            {
+                spdlog::warn("Skipped malformed server movement update for actor {:X}", World::ToInteger(entity));
+                message.Updates.erase(World::ToInteger(entity));
+            }
         }
     }
 

@@ -17,7 +17,7 @@ struct Movement
     bool operator!=(const Movement& acRhs) const noexcept;
 
     void Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcept;
-    void Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept;
+    bool Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept;
 
     GameId CellId{};
     GameId WorldSpaceId{};

@@ -431,6 +431,7 @@ TEST_CASE("Packets", "[encoding.packets]")
     {
         ClientReferencesMoveRequest sendMessage, recvMessage;
         auto& update = sendMessage.Updates[1];
+        update.OwnershipEpoch = 17;
         auto& move = update.UpdatedMovement;
 
         AnimationVariables vars;
@@ -465,6 +466,7 @@ TEST_CASE("Packets", "[encoding.packets]")
 
         recvMessage.DeserializeRaw(reader);
 
+        REQUIRE(recvMessage.Updates[1].OwnershipEpoch == sendMessage.Updates[1].OwnershipEpoch);
         REQUIRE(recvMessage.Updates[1].UpdatedMovement == sendMessage.Updates[1].UpdatedMovement);
     }
 }

@@ -61,6 +61,7 @@
 #include <Messages/SubtitleRequest.h>
 #include <Messages/NotifySubtitle.h>
 #include <Messages/NotifyActorTeleport.h>
+#include <Structs/MovementAuthorityPolicy.h>
 
 #include <World.h>
 #include <Games/TES.h>
@@ -677,6 +678,15 @@ void CharacterService::OnReferencesMoveRequest(const ServerReferencesMoveRequest
 
         if (itor == std::end(view))
             continue;
+
+        const auto& remoteComponent = view.get<RemoteComponent>(*itor);
+        if (remoteComponent.OwnershipEpoch != update.OwnershipEpoch || !MovementAuthorityPolicy::HasValidPayload(update))
+        {
+            spdlog::debug(
+                "Discarded movement update for actor {:X} because its ownership epoch or payload is invalid (received epoch {}, current epoch {})",
+                serverId, update.OwnershipEpoch, remoteComponent.OwnershipEpoch);
+            continue;
+        }
 
         auto& interpolationComponent = view.get<InterpolationComponent>(*itor);
         auto& animationComponent = view.get<RemoteAnimationComponent>(*itor);

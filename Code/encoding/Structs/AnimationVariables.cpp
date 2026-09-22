@@ -1,5 +1,6 @@
 #include <Structs/AnimationVariables.h>
 #include <TiltedCore/Serialization.hpp>
+#include <cmath>
 #include <iostream>
 
 bool AnimationVariables::operator==(const AnimationVariables& acRhs) const noexcept
@@ -10,6 +11,25 @@ bool AnimationVariables::operator==(const AnimationVariables& acRhs) const noexc
 bool AnimationVariables::operator!=(const AnimationVariables& acRhs) const noexcept
 {
     return !this->operator==(acRhs);
+}
+
+bool AnimationVariables::HasValidSizes() const noexcept
+{
+    return Booleans.size() <= kMaxBooleanCount && Integers.size() <= kMaxIntegerCount && Floats.size() <= kMaxFloatCount;
+}
+
+bool AnimationVariables::HasFiniteValues() const noexcept
+{
+    if (!HasValidSizes())
+        return false;
+
+    for (const auto value : Floats)
+    {
+        if (!std::isfinite(value))
+            return false;
+    }
+
+    return true;
 }
 
 // std::vector<bool> implementation is unspecified, but often packed reasonably.
@@ -74,6 +94,12 @@ void AnimationVariables::Save(std::ostream& aOutput) const
 //
 void AnimationVariables::GenerateDiff(const AnimationVariables& aPrevious, TiltedPhoques::Buffer::Writer& aWriter) const
 {
+    if (!HasValidSizes() || !aPrevious.HasValidSizes())
+    {
+        AnimationVariables{}.GenerateDiff(AnimationVariables{}, aWriter);
+        return;
+    }
+
     const size_t sizeChangedVector = Booleans.size() + Integers.size() + Floats.size();
     auto changedVector = Booleans;
     changedVector.reserve(sizeChangedVector);
@@ -108,27 +134,42 @@ void AnimationVariables::GenerateDiff(const AnimationVariables& aPrevious, Tilte
 // The Changed? table is scanned and for each true bit, the corresponsing Integer
 // or Float is deserialized.
 // 
-void AnimationVariables::ApplyDiff(TiltedPhoques::Buffer::Reader& aReader)
+bool AnimationVariables::ApplyDiff(TiltedPhoques::Buffer::Reader& aReader)
 {
-    size_t booleansSize = TiltedPhoques::Serialization::ReadVarInt(aReader);
-    size_t integersSize = TiltedPhoques::Serialization::ReadVarInt(aReader);
-    size_t floatsSize   = TiltedPhoques::Serialization::ReadVarInt(aReader);
+    const auto booleansSize = TiltedPhoques::Serialization::ReadVarInt(aReader);
+    const auto integersSize = TiltedPhoques::Serialization::ReadVarInt(aReader);
+    const auto floatsSize = TiltedPhoques::Serialization::ReadVarInt(aReader);
+
+    if (booleansSize > kMaxBooleanCount || integersSize > kMaxIntegerCount || floatsSize > kMaxFloatCount)
+        return false;
+
     if (Integers.size() != integersSize)
-        Integers.assign(integersSize, 0);
+        Integers.assign(static_cast<size_t>(integersSize), 0);
     if (Floats.size() != floatsSize)
-        Floats.assign(floatsSize, 0.f);
-    
-    TiltedPhoques::Vector<bool> changedVector(booleansSize + integersSize + floatsSize);
+        Floats.assign(static_cast<size_t>(floatsSize), 0.f);
+
+    const auto changedValueCount = booleansSize + integersSize + floatsSize;
+    const auto expectedChangedBytes = static_cast<size_t>((changedValueCount + 7) / 8);
     auto chars = TiltedPhoques::Serialization::ReadString(aReader);
+    if (chars.size() != expectedChangedBytes)
+        return false;
+
+    TiltedPhoques::Vector<bool> changedVector(static_cast<size_t>(changedValueCount));
     String_to_VectorBool(chars, changedVector);
 
-    Booleans.assign(changedVector.begin(), changedVector.begin() + booleansSize);
+    Booleans.assign(changedVector.begin(), changedVector.begin() + static_cast<size_t>(booleansSize));
 
-    auto biter = changedVector.begin() + booleansSize;
-    for (size_t i = 0; i < integersSize; i++)
+    auto biter = changedVector.begin() + static_cast<size_t>(booleansSize);
+    for (size_t i = 0; i < static_cast<size_t>(integersSize); i++)
         if (*biter++)
             Integers[i] = TiltedPhoques::Serialization::ReadVarInt(aReader);
-    for (size_t i = 0; i < floatsSize; i++)
+    bool valid = true;
+    for (size_t i = 0; i < static_cast<size_t>(floatsSize); i++)
         if (*biter++)
+        {
             Floats[i] = TiltedPhoques::Serialization::ReadFloat(aReader);
+            valid = valid && std::isfinite(Floats[i]);
+        }
+
+    return valid;
 }
