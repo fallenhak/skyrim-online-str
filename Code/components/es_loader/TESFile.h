@@ -34,13 +34,14 @@ public:
     bool LoadFile(const std::filesystem::path& acPath) noexcept;
     bool IndexRecords(RecordCollection& aRecordCollection) noexcept;
 
-    [[nodiscard]] static uint32_t GetFormIdPrefix(uint32_t aFormId, TiltedPhoques::Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept;
+    [[nodiscard]] static std::optional<uint32_t> GetFormIdPrefix(
+        uint32_t aFormId, TiltedPhoques::Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept;
 
 private:
     bool InitializeFormIdPrefixes() noexcept;
     bool ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aRecordCollection) noexcept;
 
-    template <class T> T CopyAndParseRecord(Record* pRecordHeader);
+    template <class T> T CopyAndParseRecord(Record* pRecordHeader, uint32_t aResolvedFormIdPrefix);
 
     template <class T> void ParseGRUP(Record* pRecordHeader, T& aRecord);
 

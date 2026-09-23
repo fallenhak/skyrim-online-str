@@ -67,7 +67,9 @@ ActorPopulationClassification ActorPopulationPolicy::ClassifyNpcBase(uint32_t aR
     ActorPopulationClassification classification;
     classification.NpcFormId = aResolvedNpcBaseFormId;
 
-    if (m_recordCollection == nullptr)
+    // Zero is the Form ID null sentinel used when a referenced prefix cannot
+    // be resolved. Never let an invalid record at zero turn that into a class.
+    if (aResolvedNpcBaseFormId == 0 || m_recordCollection == nullptr)
         return classification;
 
     const NPC* const pNpc = m_recordCollection->FindNpcById(aResolvedNpcBaseFormId);

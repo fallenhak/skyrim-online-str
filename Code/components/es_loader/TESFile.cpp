@@ -197,6 +197,16 @@ bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aReco
     else // Records
     {
         Record* pRecord = reinterpret_cast<Record*>(m_buffer.GetWriteData() + aReader.GetBytePosition());
+        const auto formIdPrefix = GetFormIdPrefix(pRecord->GetFormId(), m_parentToFormIdPrefix);
+
+        if ((pRecord->GetType() == FormEnum::ACHR || pRecord->GetType() == FormEnum::NPC_ || pRecord->GetType() == FormEnum::RACE) &&
+            !formIdPrefix)
+        {
+            spdlog::warn("Plugin {} has an unresolved actor-population record prefix for form {:X}; skipping record", m_filename, pRecord->GetFormId());
+            aReader.Advance(sizeof(Record) + size);
+            return true;
+        }
+        const uint32_t resolvedFormIdPrefix = formIdPrefix.value_or(0);
 
         switch (pRecord->GetType())
         {
@@ -206,55 +216,55 @@ bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aReco
         }
         case FormEnum::ACHR:
         {
-            ACHR parsedRecord = CopyAndParseRecord<ACHR>(pRecord);
+            ACHR parsedRecord = CopyAndParseRecord<ACHR>(pRecord, resolvedFormIdPrefix);
             aRecordCollection.m_actorReferences[parsedRecord.GetFormId()] = parsedRecord;
             break;
         }
         case FormEnum::REFR:
         {
-            REFR parsedRecord = CopyAndParseRecord<REFR>(pRecord);
+            REFR parsedRecord = CopyAndParseRecord<REFR>(pRecord, resolvedFormIdPrefix);
             aRecordCollection.m_objectReferences[parsedRecord.GetFormId()] = parsedRecord;
             break;
         }
         case FormEnum::CELL: break;
         case FormEnum::CLMT:
         {
-            CLMT parsedRecord = CopyAndParseRecord<CLMT>(pRecord);
+            CLMT parsedRecord = CopyAndParseRecord<CLMT>(pRecord, resolvedFormIdPrefix);
             aRecordCollection.m_climates[parsedRecord.GetFormId()] = parsedRecord;
             break;
         }
         case FormEnum::NPC_:
         {
-            NPC parsedRecord = CopyAndParseRecord<NPC>(pRecord);
+            NPC parsedRecord = CopyAndParseRecord<NPC>(pRecord, resolvedFormIdPrefix);
             aRecordCollection.m_npcs[parsedRecord.GetFormId()] = parsedRecord;
             break;
         }
         case FormEnum::RACE:
         {
-            RACE parsedRecord = CopyAndParseRecord<RACE>(pRecord);
+            RACE parsedRecord = CopyAndParseRecord<RACE>(pRecord, resolvedFormIdPrefix);
             aRecordCollection.m_races[parsedRecord.GetFormId()] = parsedRecord;
             break;
         }
         case FormEnum::CONT:
         {
-            CONT parsedRecord = CopyAndParseRecord<CONT>(pRecord);
+            CONT parsedRecord = CopyAndParseRecord<CONT>(pRecord, resolvedFormIdPrefix);
             aRecordCollection.m_containers[parsedRecord.GetFormId()] = parsedRecord;
             break;
         }
         case FormEnum::GMST:
         {
-            GMST parsedRecord = CopyAndParseRecord<GMST>(pRecord);
+            GMST parsedRecord = CopyAndParseRecord<GMST>(pRecord, resolvedFormIdPrefix);
             aRecordCollection.m_gameSettings[parsedRecord.GetFormId()] = parsedRecord;
             break;
         }
         case FormEnum::WRLD:
         {
-            WRLD parsedRecord = CopyAndParseRecord<WRLD>(pRecord);
+            WRLD parsedRecord = CopyAndParseRecord<WRLD>(pRecord, resolvedFormIdPrefix);
             aRecordCollection.m_worlds[parsedRecord.GetFormId()] = parsedRecord;
         }
         case FormEnum::NAVM:
         {
-            NAVM parsedRecord = CopyAndParseRecord<NAVM>(pRecord);
+            NAVM parsedRecord = CopyAndParseRecord<NAVM>(pRecord, resolvedFormIdPrefix);
             aRecordCollection.m_navMeshes[parsedRecord.GetFormId()] = parsedRecord;
         }
         }
@@ -265,7 +275,7 @@ bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aReco
         {
             Record record;
             record.CopyRecordData(*pRecord);
-            record.SetBaseId(GetFormIdPrefix(pRecord->GetFormId(), m_parentToFormIdPrefix));
+            record.SetBaseId(resolvedFormIdPrefix);
             aRecordCollection.m_allRecords[pRecord->GetFormId()] = *pRecord;
         }
 
@@ -278,13 +288,13 @@ bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aReco
 template <typename T>
 concept ExpectsGRUP = requires(T t) { &T::ParseGRUP; };
 
-template <class T> T TESFile::CopyAndParseRecord(Record* pRecordHeader)
+template <class T> T TESFile::CopyAndParseRecord(Record* pRecordHeader, const uint32_t aResolvedFormIdPrefix)
 {
     T* pRecord = reinterpret_cast<T*>(pRecordHeader);
 
     T parsedRecord;
     parsedRecord.CopyRecordData(*pRecord);
-    parsedRecord.SetBaseId(TESFile::GetFormIdPrefix(pRecord->GetFormId(), m_parentToFormIdPrefix));
+    parsedRecord.SetBaseId(aResolvedFormIdPrefix);
     parsedRecord.ParseChunks(*pRecord, m_parentToFormIdPrefix);
 
     // If the record expects a subgroup right after, parse it? Or do we not care since we load everything?
@@ -301,7 +311,7 @@ template <class T> void TESFile::ParseGRUP(Record* pRecordHeader, T& aRecord)
     // aRecord.ParseGRUP();
 }
 
-uint32_t TESFile::GetFormIdPrefix(uint32_t aFormId, Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept
+std::optional<uint32_t> TESFile::GetFormIdPrefix(uint32_t aFormId, Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept
 {
     auto baseId = (uint8_t)(aFormId >> 24);
     const auto masterId = aParentToFormIdPrefix.find(baseId);
@@ -311,7 +321,7 @@ uint32_t TESFile::GetFormIdPrefix(uint32_t aFormId, Map<uint8_t, uint32_t>& aPar
         // TODO: this is weird, but for some reason, in Skyrim.esm,
         // the GMST record with EDID "iDaysToRespawnVendor" has a base id of 0x01
         spdlog::warn("Form id prefix not found: {:X}", baseId);
-        return 0;
+        return std::nullopt;
     }
 
     return masterId->second;

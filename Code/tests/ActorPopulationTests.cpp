@@ -687,7 +687,11 @@ TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
     constexpr uint32_t masterARaceId = 0x00001000;
     constexpr uint32_t masterARawNpcRaceId = 0x00001000;
     constexpr uint32_t masterBRawRaceId = 0x00001000;
-    const Bytes priorPlugin = MakePluginHeaderWithMasters({});
+    Bytes priorPlugin = MakePluginHeaderWithMasters({});
+    AppendRecord(priorPlugin, FormEnum::RACE, 0x00001000, MakeRaceData("NordRace"));
+    AppendRecord(priorPlugin, FormEnum::NPC_, 0x00002000, MakeNpcData("PriorNordNpc", &masterARaceId));
+    AppendRecord(priorPlugin, FormEnum::NPC_, 0, MakeNpcData("NullFormNordNpc", &masterARaceId));
+    AppendRecord(priorPlugin, FormEnum::ACHR, 0x00009004, MakeActorReferenceData(0x00002000));
     Bytes masterA = MakePluginHeaderWithMasters({});
     AppendRecord(masterA, FormEnum::RACE, masterARaceId, MakeRaceData("MasterARace"));
     AppendRecord(masterA, FormEnum::NPC_, 0x00002000, MakeNpcData("MasterANpc", &masterARawNpcRaceId));
@@ -711,6 +715,13 @@ TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
     AppendRecord(overridePlugin, FormEnum::RACE, 0x01001000, MakeRaceData("OverriddenMasterBRace"));
     AppendRecord(overridePlugin, FormEnum::ACHR, 0x00003000, MakeActorReferenceData(0x01002000));
     AppendRecord(overridePlugin, FormEnum::ACHR, 0x03009002, MakeActorReferenceData(0x02008000));
+    constexpr uint32_t unresolvedRaceRawId = 0x7F001000;
+    constexpr uint32_t unresolvedNpcRawId = 0x7F002000;
+    AppendRecord(overridePlugin, FormEnum::NPC_, 0x03008003, MakeNpcData("UnresolvedRaceNpc", &unresolvedRaceRawId));
+    AppendRecord(overridePlugin, FormEnum::ACHR, 0x03009003, MakeActorReferenceData(unresolvedNpcRawId));
+    AppendRecord(overridePlugin, FormEnum::NPC_, unresolvedNpcRawId, MakeNpcData("UnresolvedPrefixNpc", &masterARaceId));
+    AppendRecord(overridePlugin, FormEnum::ACHR, 0x7F009004, MakeActorReferenceData(0x7F003003));
+    AppendRecord(overridePlugin, FormEnum::RACE, unresolvedRaceRawId, MakeRaceData("UnresolvedPrefixRace"));
 
     ASSERT_TRUE(writePlugin("PriorPlugin.esm", priorPlugin));
     ASSERT_TRUE(writePlugin("MasterA.esm", masterA));
@@ -766,6 +777,40 @@ TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
     const auto* const pOverrideActorReferenceToDependentMaster = records->FindActorReferenceById(0x04009002);
     ASSERT_NE(pOverrideActorReferenceToDependentMaster, nullptr);
     EXPECT_EQ(pOverrideActorReferenceToDependentMaster->m_baseObject.m_baseId, 0x03008000);
+
+    const auto* const pPriorNordRace = records->FindRaceById(0x00001000);
+    ASSERT_NE(pPriorNordRace, nullptr);
+    EXPECT_EQ(pPriorNordRace->m_editorId, "NordRace");
+
+    const auto* const pPriorNordNpc = records->FindNpcById(0x00002000);
+    ASSERT_NE(pPriorNordNpc, nullptr);
+    EXPECT_EQ(pPriorNordNpc->m_editorId, "PriorNordNpc");
+
+    const auto* const pPriorActorReference = records->FindActorReferenceById(0x00009004);
+    ASSERT_NE(pPriorActorReference, nullptr);
+    EXPECT_EQ(pPriorActorReference->m_baseObject.m_baseId, 0x00002000u);
+
+    const auto* const pUnresolvedRaceNpc = records->FindNpcById(0x04008003);
+    ASSERT_NE(pUnresolvedRaceNpc, nullptr);
+    EXPECT_EQ(pUnresolvedRaceNpc->m_raceId, 0u);
+    ActorPopulationPolicy policy(records.get());
+    EXPECT_EQ(policy.ClassifyNpcBase(0x04008003).Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(policy.ClassifyNpcBase(0).Class, ActorPopulationClass::kUnknown);
+
+    const auto* const pUnresolvedBaseActorReference = records->FindActorReferenceById(0x04009003);
+    ASSERT_NE(pUnresolvedBaseActorReference, nullptr);
+    EXPECT_EQ(pUnresolvedBaseActorReference->m_baseObject.m_baseId, 0u);
+
+    ModsComponent mods;
+    ESLoader::PluginData overridePluginData{};
+    overridePluginData.m_filename = "Override.esp";
+    overridePluginData.m_standardId = 4;
+    mods.AddServerMod(overridePluginData);
+    const uint32_t networkModId = mods.AddStandard("Override.esp");
+    ActorPopulationIdentityResolver resolver(mods, records.get(), policy);
+    const auto unresolvedActor = resolver.Resolve(GameId(networkModId, 0x009003));
+    EXPECT_EQ(unresolvedActor.Source, ActorPopulationIdentitySource::kServerPlacedReference);
+    EXPECT_EQ(unresolvedActor.Classification.Class, ActorPopulationClass::kUnknown);
 }
 
 TEST(ESLoader, MissingLoadOrderClearsPreviouslyLoadedMetadata)
