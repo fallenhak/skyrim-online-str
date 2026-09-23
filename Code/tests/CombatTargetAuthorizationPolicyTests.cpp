@@ -1,4 +1,4 @@
-#include <gtest/gtest.h>
+#include <catch2/catch.hpp>
 
 #include <Components.h>
 #include <Services/CombatTargetAuthorizationPolicy.h>
@@ -20,7 +20,7 @@ struct CombatTargetAuthorizationFixture
     ActorLifecycleComponent TargetLifecycle{17};
     ActorPopulationIdentityComponent TargetIdentity{MakeIdentity(ActorPopulationIdentitySource::kServerNpcBase, ActorPopulationClass::kCreature)};
     CellIdComponent AttackerCell{GameId{1, 0x101}};
-    CellIdComponent TargetCell{GameId{1, 0x102}};
+    CellIdComponent TargetCell{GameId{1, 0x101}};
 
     [[nodiscard]] CombatTargetAuthorizationInput MakeInput() const noexcept
     {
@@ -36,116 +36,116 @@ struct CombatTargetAuthorizationFixture
     }
 };
 
-TEST(CombatTargetAuthorizationPolicy, AcceptsCurrentTrustedCreatureInSameInteriorCell)
+TEST_CASE("Combat target authorization accepts a current trusted Creature in the same interior cell", "[combat_authority]")
 {
     CombatTargetAuthorizationFixture fixture;
 
-    EXPECT_TRUE(CombatTargetAuthorizationPolicy::IsAuthorized(fixture.MakeInput()));
+    REQUIRE(CombatTargetAuthorizationPolicy::IsAuthorized(fixture.MakeInput()));
 }
 
-TEST(CombatTargetAuthorizationPolicy, RejectsMissingEntityAndInvalidTargetIds)
+TEST_CASE("Combat target authorization rejects missing entities and invalid target IDs", "[combat_authority]")
 {
     CombatTargetAuthorizationFixture fixture;
     auto input = fixture.MakeInput();
 
     input.TargetEntityExists = false;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     input = fixture.MakeInput();
     input.TargetServerId = 0;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 }
 
-TEST(CombatTargetAuthorizationPolicy, RejectsMissingStaleOrInvalidLifecycle)
+TEST_CASE("Combat target authorization requires the current valid lifecycle", "[combat_authority]")
 {
     CombatTargetAuthorizationFixture fixture;
     auto input = fixture.MakeInput();
 
     input.ObservedTargetLifecycleGeneration++;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     input = fixture.MakeInput();
     input.ObservedTargetLifecycleGeneration = ActorLifecycleComponent::kInvalidGeneration;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     input = fixture.MakeInput();
     input.pCurrentTargetLifecycle = nullptr;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     input = fixture.MakeInput();
     ActorLifecycleComponent invalidLifecycle{ActorLifecycleComponent::kInvalidGeneration};
     input.pCurrentTargetLifecycle = &invalidLifecycle;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 }
 
-TEST(CombatTargetAuthorizationPolicy, RejectsUntrustedCreatureClaims)
+TEST_CASE("Combat target authorization rejects missing or untrusted Creature identity", "[combat_authority]")
 {
     CombatTargetAuthorizationFixture fixture;
     auto input = fixture.MakeInput();
     input.pTargetPopulationIdentity = nullptr;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     input = fixture.MakeInput();
     auto claimedCreature = MakeIdentity(ActorPopulationIdentitySource::kClientClaimedTemporaryBase, ActorPopulationClass::kCreature);
     input.pTargetPopulationIdentity = &claimedCreature;
 
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 }
 
-TEST(CombatTargetAuthorizationPolicy, RejectsPlayerHumanoidAndUnknownPopulationClasses)
+TEST_CASE("Combat target authorization rejects players, humanoids, and unknown population classes", "[combat_authority]")
 {
     CombatTargetAuthorizationFixture fixture;
     auto input = fixture.MakeInput();
 
     auto player = MakeIdentity(ActorPopulationIdentitySource::kPlayer, ActorPopulationClass::kPlayer);
     input.pTargetPopulationIdentity = &player;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     auto playerMisclassifiedAsCreature = MakeIdentity(ActorPopulationIdentitySource::kPlayer, ActorPopulationClass::kCreature);
     input = fixture.MakeInput();
     input.pTargetPopulationIdentity = &playerMisclassifiedAsCreature;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     auto humanoid = MakeIdentity(ActorPopulationIdentitySource::kServerNpcBase, ActorPopulationClass::kHumanoidNpc);
     input = fixture.MakeInput();
     input.pTargetPopulationIdentity = &humanoid;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     auto unknown = MakeIdentity(ActorPopulationIdentitySource::kServerNpcBase, ActorPopulationClass::kUnknown);
     input = fixture.MakeInput();
     input.pTargetPopulationIdentity = &unknown;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 }
 
-TEST(CombatTargetAuthorizationPolicy, RejectsMissingOrImplausibleCells)
+TEST_CASE("Combat target authorization requires plausible canonical cells", "[combat_authority]")
 {
     CombatTargetAuthorizationFixture fixture;
     auto input = fixture.MakeInput();
 
     input.pAttackerCell = nullptr;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     input = fixture.MakeInput();
     input.pTargetCell = nullptr;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     input = fixture.MakeInput();
     CellIdComponent otherInteriorCell{GameId{1, 0x103}};
     input.pTargetCell = &otherInteriorCell;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     input = fixture.MakeInput();
     CellIdComponent missingCell{};
     input.pAttackerCell = &missingCell;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     input = fixture.MakeInput();
     CellIdComponent exteriorCell{GameId{1, 0x104}, GameId{1, 0x200}, GridCellCoords{0, 0}};
     input.pTargetCell = &exteriorCell;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 }
 
-TEST(CombatTargetAuthorizationPolicy, UsesOrdinaryExteriorGridWindowAndRequiresMatchingWorldspace)
+TEST_CASE("Combat target authorization uses the ordinary exterior grid window and matching worldspace", "[combat_authority]")
 {
     ActorLifecycleComponent lifecycle{31};
     auto identity = MakeIdentity(ActorPopulationIdentitySource::kServerPlacedReference, ActorPopulationClass::kCreature);
@@ -161,18 +161,18 @@ TEST(CombatTargetAuthorizationPolicy, UsesOrdinaryExteriorGridWindowAndRequiresM
         &targetCell,
     };
 
-    EXPECT_TRUE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     CellIdComponent outsideLoadedWindow{GameId{1, 0x203}, GameId{1, 0x300}, GridCellCoords{13, -8}};
     input.pTargetCell = &outsideLoadedWindow;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     CellIdComponent otherWorldspace{GameId{1, 0x204}, GameId{1, 0x301}, GridCellCoords{10, -10}};
     input.pTargetCell = &otherWorldspace;
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 }
 
-TEST(CombatTargetAuthorizationPolicy, RejectsInvalidExteriorCoordinates)
+TEST_CASE("Combat target authorization rejects invalid exterior coordinates", "[combat_authority]")
 {
     ActorLifecycleComponent lifecycle{32};
     auto identity = MakeIdentity(ActorPopulationIdentitySource::kServerNpcBase, ActorPopulationClass::kCreature);
@@ -188,10 +188,10 @@ TEST(CombatTargetAuthorizationPolicy, RejectsInvalidExteriorCoordinates)
         &targetCell,
     };
 
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 }
 
-TEST(CombatTargetAuthorizationPolicy, RejectsExtremeExteriorCoordinatesWithoutNarrowSubtraction)
+TEST_CASE("Combat target authorization handles extreme exterior coordinates without narrow subtraction", "[combat_authority]")
 {
     ActorLifecycleComponent lifecycle{33};
     auto identity = MakeIdentity(ActorPopulationIdentitySource::kServerNpcBase, ActorPopulationClass::kCreature);
@@ -215,6 +215,6 @@ TEST(CombatTargetAuthorizationPolicy, RejectsExtremeExteriorCoordinatesWithoutNa
         &targetCell,
     };
 
-    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+    REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 }
 } // namespace
