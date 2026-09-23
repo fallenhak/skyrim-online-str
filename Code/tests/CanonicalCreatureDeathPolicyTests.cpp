@@ -18,10 +18,14 @@ TEST_CASE("canonical Creature death requires a new alive-to-dead transition and 
 {
     const auto identity = MakeTrustedCreature();
     const ActorLifecycleComponent lifecycle{17};
+    CharacterComponent character;
+    character.SetDead(true);
 
-    REQUIRE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, true, &identity, &lifecycle));
-    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(true, true, &identity, &lifecycle));
-    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, false, &identity, &lifecycle));
+    REQUIRE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, &identity, &lifecycle));
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(true, &character, &identity, &lifecycle));
+
+    character.SetDead(false);
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, &identity, &lifecycle));
 }
 
 TEST_CASE("canonical Creature death rejects missing or untrusted target identity", "[combat_authority]")
@@ -30,15 +34,38 @@ TEST_CASE("canonical Creature death rejects missing or untrusted target identity
     const ActorLifecycleComponent lifecycle{18};
     const ActorLifecycleComponent invalidLifecycle{ActorLifecycleComponent::kInvalidGeneration};
     const ActorPopulationIdentityComponent unknownIdentity;
+    CharacterComponent character;
+    character.SetDead(true);
     auto playerIdentity = MakeTrustedCreature();
     playerIdentity.Source = ActorPopulationIdentitySource::kPlayer;
     auto clientClaimedIdentity = MakeTrustedCreature();
     clientClaimedIdentity.Source = ActorPopulationIdentitySource::kClientClaimedTemporaryBase;
 
-    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, true, nullptr, &lifecycle));
-    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, true, &identity, nullptr));
-    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, true, &identity, &invalidLifecycle));
-    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, true, &unknownIdentity, &lifecycle));
-    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, true, &playerIdentity, &lifecycle));
-    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, true, &clientClaimedIdentity, &lifecycle));
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, nullptr, &lifecycle));
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, &identity, nullptr));
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, &identity, &invalidLifecycle));
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, &unknownIdentity, &lifecycle));
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, &playerIdentity, &lifecycle));
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, &clientClaimedIdentity, &lifecycle));
+}
+
+TEST_CASE("canonical Creature death excludes players, mounts, and player summons", "[combat_authority]")
+{
+    const auto identity = MakeTrustedCreature();
+    const ActorLifecycleComponent lifecycle{19};
+    CharacterComponent character;
+    character.SetDead(true);
+
+    character.SetPlayer(true);
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, &identity, &lifecycle));
+
+    character.SetPlayer(false);
+    character.SetMount(true);
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, &identity, &lifecycle));
+
+    character.SetMount(false);
+    character.SetPlayerSummon(true);
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, &identity, &lifecycle));
+
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, nullptr, &identity, &lifecycle));
 }

@@ -23,8 +23,9 @@ apply hit damage, award XP, grant loot, or establish kill attribution.
 - Death state is reported by the current simulation owner with its epoch. The
   server records and relays state changes while ignoring duplicate reports. A
   trusted Creature's accepted alive-to-dead transition emits an internal event
-  for its server ID and lifecycle generation only; the sender is not treated
-  as a killer identity.
+  only when its canonical character flags also show that it is not a player,
+  mount, or player summon. The event contains its server ID and lifecycle
+  generation only; the sender is not treated as a killer identity.
 
 ## Authority boundaries
 

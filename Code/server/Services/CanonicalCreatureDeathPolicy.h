@@ -10,11 +10,12 @@ struct CanonicalCreatureDeathPolicy final
 {
     [[nodiscard]] static bool IsEligibleTransition(
         const bool aWasDead,
-        const bool aIsDead,
+        const CharacterComponent* apCharacter,
         const ActorPopulationIdentityComponent* apPopulationIdentity,
         const ActorLifecycleComponent* apLifecycle) noexcept
     {
-        return !aWasDead && aIsDead && apPopulationIdentity != nullptr &&
+        return !aWasDead && apCharacter != nullptr && apCharacter->IsDead() && !apCharacter->IsPlayer() &&
+               !apCharacter->IsMount() && !apCharacter->IsPlayerSummon() && apPopulationIdentity != nullptr &&
                apPopulationIdentity->Source != ActorPopulationIdentitySource::kPlayer && apPopulationIdentity->IsTrustedCreature() &&
                apLifecycle != nullptr && apLifecycle->IsValid();
     }

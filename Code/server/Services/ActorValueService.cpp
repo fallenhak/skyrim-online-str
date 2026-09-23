@@ -192,7 +192,7 @@ void ActorValueService::OnDeathStateChange(const PacketEvent<RequestDeathStateCh
     const auto* const pPopulationIdentity = m_world.try_get<ActorPopulationIdentityComponent>(entity);
     const auto* const pLifecycle = m_world.try_get<ActorLifecycleComponent>(entity);
     if (CanonicalCreatureDeathPolicy::IsEligibleTransition(
-            wasDead, message.IsDead, pPopulationIdentity, pLifecycle))
+            wasDead, &characterComponent, pPopulationIdentity, pLifecycle))
     {
         m_dispatcher.trigger(AcceptedCanonicalCreatureDeathEvent{
             World::ToInteger(entity), pLifecycle->GetGeneration()});
