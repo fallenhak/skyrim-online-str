@@ -3051,12 +3051,23 @@ class Supervisor(ArchitectReviewMixin):
                 if diff_check not in {0, 1}:
                     return {"kind": "unknown", "reason_code": "WORKTREE_DIFF_UNAVAILABLE", "head": head}
             files, _diff, _stat, metrics = self.changed_diff(lane_name)
-            if (
+            if metrics.get("untracked_review_issues") or self.forbidden_change_reasons(lane_name, files):
+                return {"kind": "unknown", "reason_code": "RECOVERY_DIFF_UNSAFE", "head": head}
+            oversized = (
                 metrics.get("changed_files", len(files)) > int(self.config.get("max_changed_files", 40))
                 or metrics.get("total_diff_bytes", 0) > int(self.config.get("max_total_diff_bytes", 524288))
-                or metrics.get("untracked_review_issues")
-                or self.forbidden_change_reasons(lane_name, files)
-            ):
+            )
+            if oversized:
+                # local_validate routes size-bound overflow to a hard review; a finished,
+                # uninterrupted current-phase worker is exactly what that review must judge.
+                # The review bundle keeps its own fail-closed size bound.
+                if (
+                    worker_is_current
+                    and not worker_interrupted
+                    and isinstance(lane.get("worker_exit_code"), int)
+                ):
+                    return {"kind": "reviewable", "head": head, "dirty": True,
+                            "reason_code": "CURRENT_PHASE_OVERSIZED_DIFF"}
                 return {"kind": "unknown", "reason_code": "RECOVERY_DIFF_UNSAFE", "head": head}
             if committed_diff:
                 return {"kind": "reviewable", "head": head, "dirty": True,

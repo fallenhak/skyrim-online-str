@@ -1991,6 +1991,37 @@ class V35EmptyCurrentPhaseReviewTests(unittest.TestCase):
         self.assertEqual(lane["review"]["selected_model"], "gpt-6-luna")
         self.assertEqual(lane["review"]["selected_reasoning_effort"], "max")
 
+    def test_oversized_finished_worker_diff_is_reviewable(self) -> None:
+        root = make_git_repo()
+        harness, lane, head = self._current_lane(root, "LOCAL_VALIDATION")
+        (root / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        harness.config["max_changed_files"] = 0
+        lane.update({
+            "worker_phase_id": "C08", "worker_start_head": head,
+            "worker_exit_code": 0, "worker_interrupted": False,
+            "worker_result": "COMPLETE_WITH_VALIDATION_GAP",
+        })
+
+        evidence = harness._current_phase_review_evidence("combat")
+
+        self.assertEqual(evidence["kind"], "reviewable")
+        self.assertEqual(evidence["reason_code"], "CURRENT_PHASE_OVERSIZED_DIFF")
+
+    def test_oversized_interrupted_worker_diff_stays_fail_closed(self) -> None:
+        root = make_git_repo()
+        harness, lane, head = self._current_lane(root, "LOCAL_VALIDATION")
+        (root / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        harness.config["max_changed_files"] = 0
+        lane.update({
+            "worker_phase_id": "C08", "worker_start_head": head,
+            "worker_exit_code": -15, "worker_interrupted": True,
+        })
+
+        evidence = harness._current_phase_review_evidence("combat")
+
+        self.assertEqual(evidence["kind"], "unknown")
+        self.assertEqual(evidence["reason_code"], "RECOVERY_DIFF_UNSAFE")
+
 
 class V34ReviewerRoutingTests(unittest.TestCase):
     def test_ordinary_review_routes_to_luna_max(self) -> None:
