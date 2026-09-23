@@ -136,6 +136,10 @@ keep the null form ID and therefore classify as `Unknown` when their target
 cannot be found.
 When full record loading is enabled, absent plugin files are warned about and
 skipped while the parsed metadata remains available.
+The Data directory is owned by and trusted from the server operator. Symlink
+containment is checked when a plugin path is resolved, but files are opened
+later by path, so a concurrent symlink replacement during startup is outside the
+loader's protection.
 
 With it enabled, `World`
 asks ESLoader to parse server plugin files and build references. If the Data
