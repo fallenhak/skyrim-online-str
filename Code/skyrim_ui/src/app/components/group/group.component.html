@@ -1,4 +1,8 @@
-<div [@fadeInOutActive]="isShown | async" class="group-container-wrapper">
+<div
+  *ngIf="isInWorld"
+  [@fadeInOutActive]="isShown | async"
+  class="group-container-wrapper"
+>
   <div
     *ngIf="group$ | async"
     class="group-container"
