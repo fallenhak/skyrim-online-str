@@ -2,7 +2,6 @@
 
 #include "ESLoader.h"
 #include <algorithm>
-#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -18,11 +17,6 @@ namespace ESLoader
 {
 namespace
 {
-bool IsWhitespace(const char aCharacter) noexcept
-{
-    return std::isspace(static_cast<unsigned char>(aCharacter)) != 0;
-}
-
 String NormalizeLoadOrderLine(String aLine, const bool aFirstLine)
 {
     // loadorder.txt is commonly written as UTF-8 without a BOM, but accepting
@@ -35,11 +29,11 @@ String NormalizeLoadOrderLine(String aLine, const bool aFirstLine)
     }
 
     auto first = aLine.begin();
-    while (first != aLine.end() && IsWhitespace(*first))
+    while (first != aLine.end() && IsAsciiWhitespace(*first))
         ++first;
 
     auto last = aLine.end();
-    while (last != first && IsWhitespace(*(last - 1)))
+    while (last != first && IsAsciiWhitespace(*(last - 1)))
         --last;
 
     return String(first, last);
@@ -61,7 +55,7 @@ PluginType GetPluginType(const String& acFilename) noexcept
 
     String extension = acFilename.substr(extensionStart);
     std::transform(
-        extension.begin(), extension.end(), extension.begin(), [](const char aCharacter) { return static_cast<char>(std::tolower(static_cast<unsigned char>(aCharacter))); });
+        extension.begin(), extension.end(), extension.begin(), [](const char aCharacter) { return ToAsciiLower(aCharacter); });
 
     if (extension == ".esm")
         return PluginType::kMaster;
@@ -148,22 +142,25 @@ UniquePtr<RecordCollection> ESLoader::BuildRecordCollection(bool aLoadRecords) n
         m_masterFiles.clear();
         if (directoryError)
         {
-            spdlog::warn("ESLoader load-order metadata unavailable: Data directory '{}' is inaccessible: {}", m_directory.string(), directoryError.message());
+            spdlog::warn(
+                "ESLoader load-order metadata unavailable: Data directory '{}' is inaccessible: {}", PathToUtf8String(m_directory), directoryError.message());
         }
         else
         {
             spdlog::warn(
-                "ESLoader load-order metadata unavailable: Data directory '{}' does not exist or is not a directory", m_directory.string());
+                "ESLoader load-order metadata unavailable: Data directory '{}' does not exist or is not a directory", PathToUtf8String(m_directory));
         }
         if (aLoadRecords)
-            spdlog::warn("Actor population record loading unavailable because ESLoader cannot read Data directory '{}'", m_directory.string());
+            spdlog::warn(
+                "Actor population record loading unavailable because ESLoader cannot read Data directory '{}'", PathToUtf8String(m_directory));
         return nullptr;
     }
 
     if (!LoadLoadOrder(!aLoadRecords))
     {
         if (aLoadRecords)
-            spdlog::warn("Actor population record loading unavailable: ESLoader could not establish valid load-order metadata from '{}'", m_directory.string());
+            spdlog::warn(
+                "Actor population record loading unavailable: ESLoader could not establish valid load-order metadata from '{}'", PathToUtf8String(m_directory));
         return nullptr;
     }
 
@@ -194,9 +191,9 @@ bool ESLoader::LoadLoadOrder(const bool aReportUnresolvedPluginFiles)
         std::error_code existsError;
         const bool loadOrderExists = fs::exists(loadOrderPath, existsError);
         if (!existsError && !loadOrderExists)
-            spdlog::warn("ESLoader load-order metadata unavailable: loadorder.txt is missing at '{}'", loadOrderPath.string());
+            spdlog::warn("ESLoader load-order metadata unavailable: loadorder.txt is missing at '{}'", PathToUtf8String(loadOrderPath));
         else
-            spdlog::warn("ESLoader could not open loadorder.txt at '{}'", loadOrderPath.string());
+            spdlog::warn("ESLoader could not open loadorder.txt at '{}'", PathToUtf8String(loadOrderPath));
         return false;
     }
 
@@ -302,21 +299,22 @@ bool ESLoader::LoadLoadOrder(const bool aReportUnresolvedPluginFiles)
 
     if (loadOrderFile.bad())
     {
-        spdlog::warn("Failed while reading loadorder.txt at '{}'", loadOrderPath.string());
+        spdlog::warn("Failed while reading loadorder.txt at '{}'", PathToUtf8String(loadOrderPath));
         m_loadOrder.clear();
         m_masterFiles.clear();
         return false;
     }
 
     if (m_loadOrder.empty())
-        spdlog::warn("ESLoader loadorder.txt at '{}' contains no usable plugin entries; load-order metadata is empty", loadOrderPath.string());
+        spdlog::warn(
+            "ESLoader loadorder.txt at '{}' contains no usable plugin entries; load-order metadata is empty", PathToUtf8String(loadOrderPath));
 
     if (aReportUnresolvedPluginFiles && unresolvedPluginFileCount != 0)
     {
         spdlog::warn(
             "ESLoader could not resolve {} plugin file(s) listed in loadorder.txt under Data directory '{}'; filename-based namespace metadata is retained, but TES4 flags and records are unavailable (examples: {})",
             unresolvedPluginFileCount,
-            m_directory.string(),
+            PathToUtf8String(m_directory),
             unresolvedPluginFileExamples);
     }
 
@@ -366,7 +364,7 @@ fs::path ESLoader::GetPath(const String& acFilename) const
     if (!GetPluginFilenameKey(acFilename, filenameKey))
         return {};
 
-    const fs::path pluginPath = m_directory / fs::path(acFilename);
+    const fs::path pluginPath = m_directory / PathFromUtf8(acFilename);
     std::error_code error;
     const auto status = fs::symlink_status(pluginPath, error);
     if (error && error != std::errc::no_such_file_or_directory)
@@ -392,8 +390,7 @@ fs::path ESLoader::GetPath(const String& acFilename) const
     while (it != end)
     {
         String entryKey;
-        const auto entryFilenameValue = it->path().filename().string();
-        const String entryFilename(entryFilenameValue.c_str());
+        const String entryFilename = PathToUtf8String(it->path().filename());
         if (GetPluginFilenameKey(entryFilename, entryKey) && entryKey == filenameKey)
         {
             // Distinct names that compare equal by case are ambiguous. Do not

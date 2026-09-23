@@ -468,6 +468,42 @@ TEST(ESLoader, ParsesLoadOrderMetadataSafelyWithoutPluginFiles)
     EXPECT_FALSE(records->HasAnyRecords());
 }
 
+TEST(ESLoader, ResolvesUtf8PluginPathsAndKeepsFilenameKeysDeterministic)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    const String pluginFilename = "M\xC3\xB3" "d.esp";
+    String pluginFilenameKey;
+    ASSERT_TRUE(ESLoader::GetPluginFilenameKey(pluginFilename, pluginFilenameKey));
+    EXPECT_EQ(pluginFilenameKey, "m\xC3\xB3" "d.esp");
+    EXPECT_FALSE(ESLoader::GetPluginFilenameKey("Bad\xFF.esp", pluginFilenameKey));
+
+    const auto pluginPath = dataDirectory.Path() / ESLoader::PathFromUtf8(pluginFilename);
+    EXPECT_EQ(ESLoader::PathToUtf8String(pluginPath.filename()), pluginFilename);
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt", std::ios::binary);
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << pluginFilename << '\n';
+    }
+
+    {
+        std::ofstream plugin(pluginPath, std::ios::binary);
+        ASSERT_TRUE(plugin.good());
+        const Bytes data = MakePluginHeader(0);
+        plugin.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        ASSERT_TRUE(plugin.good());
+    }
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto metadataOnly = loader.BuildRecordCollection();
+    ASSERT_NE(metadataOnly, nullptr);
+    ASSERT_EQ(loader.GetLoadOrder().size(), 1U);
+    EXPECT_EQ(loader.GetLoadOrder().front().m_filename, pluginFilename);
+    EXPECT_FALSE(metadataOnly->HasAnyRecords());
+}
+
 TEST(ESLoader, MissingDataDirectoryReportsUnavailableLoadOrderMetadata)
 {
     TemporaryDirectory temporaryDirectory;

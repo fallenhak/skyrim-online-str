@@ -86,7 +86,7 @@ std::optional<uint32_t> TESFile::ReadHeaderFlags(const std::filesystem::path& ac
 
 bool TESFile::LoadFile(const std::filesystem::path& acPath) noexcept
 {
-    m_filename = acPath.filename().string();
+    m_filename = PathToUtf8String(acPath.filename());
 
     std::error_code fileSizeError;
     const uintmax_t fileSize = std::filesystem::file_size(acPath, fileSizeError);

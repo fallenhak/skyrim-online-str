@@ -1,5 +1,7 @@
 #pragma once
 
+#include <filesystem>
+
 #include <PluginFilename.h>
 #include <TESFile.h>
 
@@ -44,7 +46,7 @@ private:
 
     fs::path GetPath(const String& acFilename) const;
 
-    fs::path m_directory = "";
+    fs::path m_directory{};
     Vector<PluginData> m_loadOrder{};
     // Server form prefixes keyed by the filenames records use in MAST.
     TiltedPhoques::Map<String, uint32_t> m_masterFiles{};
