@@ -710,6 +710,7 @@ TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
     AppendRecord(overridePlugin, FormEnum::NPC_, 0x00002000, MakeNpcData("OverriddenMasterANpc", &dependentRaceRawId));
     AppendRecord(overridePlugin, FormEnum::RACE, 0x01001000, MakeRaceData("OverriddenMasterBRace"));
     AppendRecord(overridePlugin, FormEnum::ACHR, 0x00003000, MakeActorReferenceData(0x01002000));
+    AppendRecord(overridePlugin, FormEnum::ACHR, 0x03009002, MakeActorReferenceData(0x02008000));
 
     ASSERT_TRUE(writePlugin("PriorPlugin.esm", priorPlugin));
     ASSERT_TRUE(writePlugin("MasterA.esm", masterA));
@@ -761,6 +762,10 @@ TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
     const auto* const pDependentMasterAActorReference = records->FindActorReferenceById(0x03009001);
     ASSERT_NE(pDependentMasterAActorReference, nullptr);
     EXPECT_EQ(pDependentMasterAActorReference->m_baseObject.m_baseId, 0x01002000);
+
+    const auto* const pOverrideActorReferenceToDependentMaster = records->FindActorReferenceById(0x04009002);
+    ASSERT_NE(pOverrideActorReferenceToDependentMaster, nullptr);
+    EXPECT_EQ(pOverrideActorReferenceToDependentMaster->m_baseObject.m_baseId, 0x03008000);
 }
 
 TEST(ESLoader, MissingLoadOrderClearsPreviouslyLoadedMetadata)
