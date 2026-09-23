@@ -5,10 +5,12 @@ void RemoveSpellRequest::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) co
 {
     Serialization::WriteVarInt(aWriter, TargetId);
     SpellId.Serialize(aWriter);
+    Serialization::WriteVarInt(aWriter, OwnershipEpoch);
 }
 
 void RemoveSpellRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept
 {
     TargetId = Serialization::ReadVarInt(aReader);
     SpellId.Deserialize(aReader);
+    OwnershipEpoch = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
 }

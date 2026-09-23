@@ -54,6 +54,24 @@ std::optional<entt::entity> FindEntityByServerId(const uint32_t aServerId) noexc
     return std::nullopt;
 }
 
+std::optional<ActorOwnershipToken> GetOwnershipToken(const entt::entity aEntity) noexcept
+{
+    if (const auto* pLocalComponent = World::Get().try_get<LocalComponent>(aEntity))
+    {
+        if (pLocalComponent->OwnershipEpoch != 0)
+            return ActorOwnershipToken{pLocalComponent->Id, pLocalComponent->OwnershipEpoch};
+        return std::nullopt;
+    }
+
+    if (const auto* pRemoteComponent = World::Get().try_get<RemoteComponent>(aEntity))
+    {
+        if (pRemoteComponent->OwnershipEpoch != 0)
+            return ActorOwnershipToken{pRemoteComponent->Id, pRemoteComponent->OwnershipEpoch};
+    }
+
+    return std::nullopt;
+}
+
 std::optional<ActorOwnershipToken> GetLocalOwnershipToken(const uint32_t aFormId) noexcept
 {
     auto view = World::Get().view<FormIdComponent, LocalComponent>();

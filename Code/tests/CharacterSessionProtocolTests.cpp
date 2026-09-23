@@ -20,6 +20,10 @@
 #include <Messages/RequestCharacterList.h>
 #include <Messages/RequestHealthChangeBroadcast.h>
 #include <Messages/InterruptCastRequest.h>
+#include <Messages/AddTargetRequest.h>
+#include <Messages/RemoveSpellRequest.h>
+#include <Messages/NotifyAddTarget.h>
+#include <Messages/NotifyRemoveSpell.h>
 #include <Messages/NewPackageRequest.h>
 #include <Messages/NotifyInterruptCast.h>
 #include <Messages/NotifyNewPackage.h>
@@ -173,6 +177,7 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
 
         SpellCastRequest spellRequest{};
         spellRequest.CasterId = 0x3456;
+        spellRequest.DesiredTarget = 0x5678;
         spellRequest.OwnershipEpoch = 37;
         TiltedPhoques::Buffer spellBuffer(256);
         TiltedPhoques::Buffer::Writer spellWriter(&spellBuffer);
@@ -196,6 +201,38 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(interruptMessage);
         auto parsedInterruptRequest = TiltedPhoques::CastUnique<InterruptCastRequest>(std::move(interruptMessage));
         REQUIRE(*parsedInterruptRequest == interruptRequest);
+
+        AddTargetRequest addTargetRequest{};
+        addTargetRequest.TargetId = 0x6789;
+        addTargetRequest.CasterId = 0x789A;
+        addTargetRequest.SpellId = GameId(0x01, 0x0000002A);
+        addTargetRequest.EffectId = GameId(0x02, 0x00000035);
+        addTargetRequest.Magnitude = 12.5f;
+        addTargetRequest.TargetOwnershipEpoch = 43;
+        addTargetRequest.CasterOwnershipEpoch = 47;
+        TiltedPhoques::Buffer addTargetBuffer(256);
+        TiltedPhoques::Buffer::Writer addTargetWriter(&addTargetBuffer);
+        addTargetRequest.Serialize(addTargetWriter);
+
+        TiltedPhoques::Buffer::Reader addTargetReader(&addTargetBuffer);
+        auto addTargetMessage = clientFactory.Extract(addTargetReader);
+        REQUIRE(addTargetMessage);
+        auto parsedAddTargetRequest = TiltedPhoques::CastUnique<AddTargetRequest>(std::move(addTargetMessage));
+        REQUIRE(*parsedAddTargetRequest == addTargetRequest);
+
+        RemoveSpellRequest removeSpellRequest{};
+        removeSpellRequest.TargetId = 0x89AB;
+        removeSpellRequest.SpellId = GameId(0x03, 0x00000046);
+        removeSpellRequest.OwnershipEpoch = 53;
+        TiltedPhoques::Buffer removeSpellBuffer(256);
+        TiltedPhoques::Buffer::Writer removeSpellWriter(&removeSpellBuffer);
+        removeSpellRequest.Serialize(removeSpellWriter);
+
+        TiltedPhoques::Buffer::Reader removeSpellReader(&removeSpellBuffer);
+        auto removeSpellMessage = clientFactory.Extract(removeSpellReader);
+        REQUIRE(removeSpellMessage);
+        auto parsedRemoveSpellRequest = TiltedPhoques::CastUnique<RemoveSpellRequest>(std::move(removeSpellMessage));
+        REQUIRE(*parsedRemoveSpellRequest == removeSpellRequest);
 
         RequestRespawn respawnRequest{};
         respawnRequest.ActorId = 0x5678;
@@ -356,6 +393,38 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(interruptNotificationMessage);
         auto parsedInterruptNotification = TiltedPhoques::CastUnique<NotifyInterruptCast>(std::move(interruptNotificationMessage));
         REQUIRE(*parsedInterruptNotification == interruptNotification);
+
+        NotifyAddTarget addTargetNotification{};
+        addTargetNotification.TargetId = 0x9ABC;
+        addTargetNotification.CasterId = 0xABCD;
+        addTargetNotification.SpellId = GameId(0x01, 0x00000057);
+        addTargetNotification.EffectId = GameId(0x02, 0x00000068);
+        addTargetNotification.Magnitude = -2.5f;
+        addTargetNotification.TargetOwnershipEpoch = 67;
+        addTargetNotification.CasterOwnershipEpoch = 71;
+        TiltedPhoques::Buffer addTargetNotificationBuffer(256);
+        TiltedPhoques::Buffer::Writer addTargetNotificationWriter(&addTargetNotificationBuffer);
+        addTargetNotification.Serialize(addTargetNotificationWriter);
+
+        TiltedPhoques::Buffer::Reader addTargetNotificationReader(&addTargetNotificationBuffer);
+        auto addTargetNotificationMessage = serverFactory.Extract(addTargetNotificationReader);
+        REQUIRE(addTargetNotificationMessage);
+        auto parsedAddTargetNotification = TiltedPhoques::CastUnique<NotifyAddTarget>(std::move(addTargetNotificationMessage));
+        REQUIRE(*parsedAddTargetNotification == addTargetNotification);
+
+        NotifyRemoveSpell removeSpellNotification{};
+        removeSpellNotification.TargetId = 0xBCDE;
+        removeSpellNotification.SpellId = GameId(0x03, 0x00000079);
+        removeSpellNotification.OwnershipEpoch = 73;
+        TiltedPhoques::Buffer removeSpellNotificationBuffer(256);
+        TiltedPhoques::Buffer::Writer removeSpellNotificationWriter(&removeSpellNotificationBuffer);
+        removeSpellNotification.Serialize(removeSpellNotificationWriter);
+
+        TiltedPhoques::Buffer::Reader removeSpellNotificationReader(&removeSpellNotificationBuffer);
+        auto removeSpellNotificationMessage = serverFactory.Extract(removeSpellNotificationReader);
+        REQUIRE(removeSpellNotificationMessage);
+        auto parsedRemoveSpellNotification = TiltedPhoques::CastUnique<NotifyRemoveSpell>(std::move(removeSpellNotificationMessage));
+        REQUIRE(*parsedRemoveSpellNotification == removeSpellNotification);
 
         NotifyRespawn respawnNotification{};
         respawnNotification.ActorId = 0x9ABC;
