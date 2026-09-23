@@ -1,5 +1,16 @@
 # Skyrim Supervisor Roadmap / Dependency Control Plane review snapshot
 
+## V3.5 empty current-phase review recovery — 2026-09-23
+
+Current-phase review gates now require evidence tied to the active phase: a
+current worker result or a committed diff after the trusted accepted phase
+HEAD. Restart reconciliation retires empty stale review records and their
+evidence errors. Clean untouched phases return to `READY`; structurally safe
+interrupted work remains on disk and returns to one bounded `RECOVERING`
+attempt. Ambiguous Git state fails closed. Normal review/development routing,
+the two-worker/one-reviewer caps, exact-SHA CI, and the applied control-plane
+SHA remain unchanged. See the [V3.5 repair record](verification/v35-empty-current-phase-review.md).
+
 ## V3.4 quota-aware reviewer routing — 2026-09-23
 
 Ordinary current-phase and post-phase reviews use GPT-6 Luna/max. Only

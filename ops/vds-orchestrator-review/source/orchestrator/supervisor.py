@@ -1048,10 +1048,14 @@ class Supervisor(ArchitectReviewMixin):
                 "ci_poll_failures": 0,
                  "review_packet": None,
                  "review_reasons": [],
-                 "worker_attempt": 0,
-                 "worker_result": None,
-                 "validation_gap": {"status": "NONE", "reason": "", "at": None},
-             })
+                "worker_attempt": 0,
+                "worker_result": None,
+                "worker_phase_id": None,
+                "worker_start_head": None,
+                "worker_exit_code": None,
+                "worker_interrupted": False,
+                "validation_gap": {"status": "NONE", "reason": "", "at": None},
+            })
             lane.update({
                 "branch": spec["branch"],
                 "worktree": spec["worktree"],
@@ -1098,6 +1102,10 @@ class Supervisor(ArchitectReviewMixin):
                 review_metadata["review_tier"] = "architect"
             lane.setdefault("worker_attempt", 0)
             lane.setdefault("worker_result", None)
+            lane.setdefault("worker_phase_id", None)
+            lane.setdefault("worker_start_head", None)
+            lane.setdefault("worker_exit_code", None)
+            lane.setdefault("worker_interrupted", False)
             if not isinstance(lane.get("validation_gap"), dict):
                 lane["validation_gap"] = {"status": "NONE", "reason": "", "at": None}
             self._refresh_plan(lane_name, lane)
@@ -1106,15 +1114,15 @@ class Supervisor(ArchitectReviewMixin):
                 # restart.  Never treat it as a live worker process.
                 lane["worker_pid"] = None
             if self.runtime_owner and lane.get("state") == "CODING":
-                lane["state"] = "RECOVERING" if self.state.get("global_mode") == "RUNNING" else "PAUSED"
-                lane["recovery_attempts"] = min(1, int(lane.get("recovery_attempts", 0)) + 1)
-                lane["last_error"] = "supervisor restart interrupted worker; recovery required"
+                self._reconcile_interrupted_worker(lane_name, lane)
             if lane.get("last_commit") is None:
                 lane["last_commit"] = self.git_head(spec["worktree"])
         self._prepare_control_state()
         self._prepare_scheduler_state()
         self._prepare_architect_review_state()
         self._load_active_roadmap()
+        if self.runtime_owner:
+            self.reconcile_invalid_empty_current_phase_reviews()
         self._recompute_scheduler()
         self.save_state()
 
@@ -2984,6 +2992,398 @@ class Supervisor(ArchitectReviewMixin):
             return False, "normal worker requires a clean worktree"
         return True, ""
 
+    def _current_phase_review_evidence(self, lane_name: str) -> dict[str, Any]:
+        """Classify current-phase review evidence from trusted state and Git only."""
+        lane = self.state.get("lanes", {}).get(lane_name, {})
+        phase_id = str(lane.get("phase_id") or "")
+        lane_config = self.config.get("lanes", {}).get(lane_name, {})
+        worktree = str(lane.get("worktree") or lane_config.get("worktree") or "")
+        if not phase_id or not worktree:
+            return {"kind": "unknown", "reason_code": "PHASE_OR_WORKTREE_MISSING"}
+
+        head = self.git_head(worktree)
+        expected_branch = str(lane.get("branch") or lane_config.get("branch") or "")
+        actual_branch = self.git_branch(worktree)
+        okay, entries, _ = self.git_status_details(worktree)
+        if not head or not okay or actual_branch != expected_branch:
+            return {"kind": "unknown", "reason_code": "GIT_STATE_UNAVAILABLE", "head": head}
+        if any(entry.get("kind") in {"unknown", "unmerged"} for entry in entries):
+            return {"kind": "unknown", "reason_code": "GIT_STATUS_UNSAFE", "head": head}
+
+        dirty = bool(entries)
+        worker_is_current = lane.get("worker_phase_id") == phase_id
+        worker_result = lane.get("worker_result") if worker_is_current else None
+        worker_interrupted = bool(lane.get("worker_interrupted"))
+
+        base = self._trusted_previous_accepted_head(lane, phase_id)
+        committed_diff = False
+        if base and re.fullmatch(r"[0-9a-f]{40,64}", base):
+            if base != head:
+                ancestor, _, _ = self.command(
+                    ["git", "-C", worktree, "merge-base", "--is-ancestor", base, head],
+                    cwd=worktree, timeout=30,
+                )
+                if ancestor != 0:
+                    return {"kind": "unknown", "reason_code": "TRUSTED_BASE_NOT_ANCESTOR", "head": head}
+                diff_code, _, _ = self.command(
+                    ["git", "-C", worktree, "diff", "--quiet", base, head],
+                    cwd=worktree, timeout=90,
+                )
+                if diff_code == 1:
+                    committed_diff = True
+                elif diff_code != 0:
+                    return {"kind": "unknown", "reason_code": "COMMITTED_DIFF_UNAVAILABLE", "head": head}
+            elif str(lane.get("last_commit") or head) != head:
+                return {"kind": "unknown", "reason_code": "LANE_HEAD_MISMATCH", "head": head}
+        else:
+            return {"kind": "unknown", "reason_code": "TRUSTED_PHASE_BASE_MISSING", "head": head}
+
+        if dirty:
+            safe, reason = self.verify_worker_worktree(lane_name, recovery=True)
+            if not safe:
+                return {"kind": "unknown", "reason_code": "RECOVERY_WORKTREE_UNSAFE", "head": head,
+                        "detail": reason}
+            for extra in ([], ["--cached"]):
+                diff_check, _, _ = self.command(
+                    ["git", "-C", worktree, "diff", "--quiet", *extra],
+                    cwd=worktree, timeout=90,
+                )
+                if diff_check not in {0, 1}:
+                    return {"kind": "unknown", "reason_code": "WORKTREE_DIFF_UNAVAILABLE", "head": head}
+            files, _diff, _stat, metrics = self.changed_diff(lane_name)
+            if (
+                metrics.get("changed_files", len(files)) > int(self.config.get("max_changed_files", 40))
+                or metrics.get("total_diff_bytes", 0) > int(self.config.get("max_total_diff_bytes", 524288))
+                or metrics.get("untracked_review_issues")
+                or self.forbidden_change_reasons(lane_name, files)
+            ):
+                return {"kind": "unknown", "reason_code": "RECOVERY_DIFF_UNSAFE", "head": head}
+            if committed_diff:
+                return {"kind": "reviewable", "head": head, "dirty": True,
+                        "reason_code": "CURRENT_PHASE_COMMITTED_DIFF"}
+            if worker_is_current and not worker_interrupted and worker_result in {"NEEDS_SOL_REVIEW", "BLOCKED"}:
+                return {"kind": "reviewable", "head": head, "dirty": True,
+                        "reason_code": "CURRENT_PHASE_WORKER_RESULT"}
+            if (
+                worker_is_current
+                and not worker_interrupted
+                and isinstance(lane.get("worker_exit_code"), int)
+            ):
+                return {"kind": "reviewable", "head": head, "dirty": True,
+                        "reason_code": "CURRENT_PHASE_FAILURE_WITH_DIFF"}
+            return {"kind": "recoverable", "head": head, "dirty": True,
+                    "reason_code": "PRESERVED_CURRENT_PHASE_WORK"}
+
+        if committed_diff:
+            return {"kind": "reviewable", "head": head, "dirty": False,
+                    "reason_code": "CURRENT_PHASE_COMMITTED_DIFF"}
+        if worker_is_current and not worker_interrupted and worker_result in {"NEEDS_SOL_REVIEW", "BLOCKED"}:
+            return {"kind": "reviewable", "head": head, "dirty": False,
+                    "reason_code": "CURRENT_PHASE_WORKER_RESULT"}
+        if worker_is_current and worker_result in {"COMPLETE", "COMPLETE_WITH_VALIDATION_GAP"}:
+            return {"kind": "empty", "head": head, "dirty": False,
+                    "reason_code": "COMPLETION_WITHOUT_CURRENT_PHASE_DIFF"}
+        return {"kind": "empty", "head": head, "dirty": False,
+                "reason_code": "NO_CURRENT_PHASE_EVIDENCE"}
+
+    def _reset_phase_transient_metadata(self, lane: dict[str, Any], head: str | None) -> None:
+        lane.update({
+            "worker_pid": None,
+            "worker_started_at": None,
+            "worker_finished_at": None,
+            "last_progress_at": None,
+            "worker_phase_id": None,
+            "worker_start_head": None,
+            "worker_exit_code": None,
+            "worker_interrupted": False,
+            "worker_recovery": False,
+            "worker_result": None,
+            "validation": {},
+            "validation_gap": {"status": "NONE", "reason": "", "at": None},
+            "ci": {"status": "NOT_RUN", "sha": head, "run_id": None, "url": None},
+            "ci_started_at": None,
+            "ci_poll_failures": 0,
+            "push_attempts": 0,
+            "review_reasons": [],
+            "review_packet": None,
+            "recovery_context": {},
+            "last_error": "",
+        })
+
+    def _reconcile_interrupted_worker(self, lane_name: str, lane: dict[str, Any]) -> None:
+        """Recover an interrupted worker from exact Git state without dropping its diff."""
+        evidence = self._current_phase_review_evidence(lane_name)
+        if evidence.get("kind") == "unknown":
+            lane["worker_pid"] = None
+            lane["state"] = "BLOCKED"
+            lane["last_error"] = "interrupted worker state could not be reconciled safely"
+            lane["worker_interrupted"] = True
+            self.event(
+                f"interrupted worker reconciliation failed closed ({evidence.get('reason_code')})",
+                lane_name,
+            )
+            return
+
+        interrupted = {
+            "phase_id": lane.get("worker_phase_id") or lane.get("phase_id"),
+            "attempt": lane.get("worker_attempt"),
+            "worker_log": lane.get("worker_log"),
+            "worker_start_head": lane.get("worker_start_head"),
+            "worker_exit_code": lane.get("worker_exit_code"),
+            "worker_result": lane.get("worker_result"),
+            "worker_recovery": lane.get("worker_recovery"),
+            "interrupted_at": utc_now(),
+        }
+        target = "RECOVERING" if evidence.get("dirty") or evidence.get("kind") == "reviewable" else "READY"
+        recovery_context = self._capture_recovery_context(lane_name) if target == "RECOVERING" else {}
+        self._reset_phase_transient_metadata(lane, evidence.get("head"))
+        lane["last_interrupted_worker"] = interrupted
+        self._mark_worker_task_stopped(lane_name)
+        if target == "RECOVERING":
+            lane["recovery_context"] = recovery_context
+            lane["recovery_attempts"] = 1
+            lane["last_error"] = "supervisor restart interrupted current-phase work; bounded recovery required"
+        else:
+            lane["recovery_attempts"] = 0
+            lane["recovery_context"] = {}
+            lane["last_error"] = ""
+        if self.state.get("global_mode") == "RUNNING":
+            lane["state"] = target
+        else:
+            lane["paused_from_state"] = target
+            lane["state"] = "PAUSED"
+        self.event(f"interrupted worker reconciled to {target}; worktree bytes preserved", lane_name)
+
+    def _mark_worker_task_stopped(self, lane_name: str) -> None:
+        scheduler = self.state.get("scheduler", {})
+        tasks = scheduler.get("tasks", {}) if isinstance(scheduler, dict) else {}
+        lane = self.state.get("lanes", {}).get(lane_name, {})
+        task_id = lane.get("scheduler_task_id") or lane.get("phase_id")
+        record = tasks.get(task_id) if isinstance(tasks, dict) else None
+        if isinstance(record, dict):
+            record["worker_pid"] = None
+
+    def _finish_unreviewable_current_phase(
+        self, lane_name: str, evidence: dict[str, Any], reasons: list[str], *,
+        existing_review: bool,
+    ) -> None:
+        lane = self.state["lanes"][lane_name]
+        review_state = self.state.setdefault("architect_review", {})
+        phase_id = str(lane.get("phase_id") or "")
+        head = evidence.get("head")
+        old_review = lane.get("review", {})
+        old_review = old_review if isinstance(old_review, dict) else {}
+        record = {
+            "lane": lane_name,
+            "phase": phase_id,
+            "reviewed_sha": old_review.get("commit_sha") or lane.get("last_commit"),
+            "head": head,
+            "review": dict(old_review) if isinstance(old_review, dict) else {},
+            "review_reasons": list(lane.get("review_reasons") or reasons),
+            "suppressed_reasons": list(reasons),
+            "review_packet": lane.get("review_packet"),
+            "existing_review": existing_review,
+            "worker_phase_id": lane.get("worker_phase_id"),
+            "worker_result": lane.get("worker_result"),
+            "worker_attempt": lane.get("worker_attempt"),
+            "classification": evidence.get("kind"),
+            "reason_code": evidence.get("reason_code"),
+            "retired_at": utc_now(),
+        }
+        items = review_state.setdefault("items", {})
+        active_ids = {
+            str(value) for value in (
+                review_state.get("active_review_id"), getattr(self, "active_review_id", None)
+            ) if value
+        }
+        active_items = [items.get(review_id) for review_id in active_ids] if isinstance(items, dict) else []
+        active_for_lane = any(
+            isinstance(item, dict) and item.get("lane") == lane_name and item.get("phase") == phase_id
+            for item in active_items
+        )
+        reviewer_process = getattr(self, "review_process", None)
+        active_state_resolves = any(isinstance(item, dict) for item in active_items)
+        if active_for_lane or (reviewer_process is not None and not active_state_resolves):
+            # Leave an in-flight reviewer and its exact evidence untouched.
+            lane["last_error"] = "active reviewer prevents stale review reconciliation"
+            self.event("empty review reconciliation failed closed with active reviewer", lane_name)
+            return
+
+        queue = review_state.get("queue", [])
+        evidence_errors = review_state.get("evidence_errors", {})
+        bundle_failures = review_state.get("bundle_failures", {})
+        if (
+            not isinstance(items, dict) or not isinstance(queue, list)
+            or not isinstance(evidence_errors, dict) or not isinstance(bundle_failures, dict)
+        ):
+            lane["state"] = "BLOCKED"
+            lane["last_error"] = "review queue state is malformed; reconciliation failed closed"
+            self.event("empty review reconciliation failed closed with malformed queue state", lane_name)
+            return
+
+        stale_reviews = review_state.setdefault("stale_current_phase_reviews", [])
+        if not isinstance(stale_reviews, list):
+            lane["state"] = "BLOCKED"
+            lane["last_error"] = "stale review archive is malformed; reconciliation failed closed"
+            self.event("empty review reconciliation failed closed with malformed archive", lane_name)
+            return
+        if not any(
+            item.get("lane") == lane_name and item.get("phase") == phase_id
+            and item.get("reviewed_sha") == record["reviewed_sha"]
+            and item.get("reason_code") == record["reason_code"]
+            for item in stale_reviews if isinstance(item, dict)
+        ):
+            stale_reviews.append(record)
+
+        for error in evidence_errors.values():
+            if not isinstance(error, dict):
+                continue
+            if (
+                error.get("lane") == lane_name and error.get("phase") == phase_id
+                and error.get("review_type") == "CURRENT_PHASE_REVIEW"
+                and error.get("reviewed_sha") in {record["reviewed_sha"], head}
+                and error.get("status") in {"EVIDENCE_ERROR", "REQUIRES_INFRA_REVIEW"}
+            ):
+                error.update({
+                    "status": "STALE",
+                    "stale_at": utc_now(),
+                    "stale_reason_code": evidence.get("reason_code"),
+                })
+
+        if isinstance(items, dict):
+            for review_id, item in items.items():
+                if not isinstance(item, dict) or item.get("lane") != lane_name or item.get("phase") != phase_id:
+                    continue
+                if item.get("reviewed_sha") not in {record["reviewed_sha"], head}:
+                    continue
+                if item.get("status") in {
+                    "QUEUED", "WAITING_FOR_ARCHITECT_MODEL", "WAITING_FOR_LUNA_MODEL",
+                    "STARTING", "RUNNING", "EVIDENCE_ERROR",
+                }:
+                    item.update({"status": "STALE", "stale_at": utc_now(),
+                                 "stale_reason_code": evidence.get("reason_code")})
+                    queue[:] = [queued for queued in queue if str(queued) != str(review_id)]
+
+        bundle_failure = bundle_failures.get(lane_name)
+        if isinstance(bundle_failure, dict) and bundle_failure.get("phase") == phase_id:
+            bundle_failure.update({"status": "STALE", "stale_at": utc_now(),
+                                   "stale_reason_code": evidence.get("reason_code")})
+
+        dirty = evidence.get("kind") == "recoverable"
+        recovery_context = self._capture_recovery_context(lane_name) if dirty else {}
+        self._reset_phase_transient_metadata(lane, head if isinstance(head, str) else None)
+        if existing_review or (isinstance(old_review, dict) and old_review.get("type") == "CURRENT_PHASE_REVIEW"):
+            lane["review"] = {
+                "type": None, "reviewed_phase": None, "commit_sha": None, "next_phase": None,
+                "created_at": None, "decision": None, "review_tier": None, "selected_model": None,
+                "selected_reasoning_effort": None, "escalation_reason": None,
+            }
+        lane["recovery_context"] = recovery_context
+        if dirty:
+            lane["recovery_attempts"] = 1
+            lane["last_error"] = "preserved current-phase work requires one bounded recovery attempt"
+            target = "RECOVERING"
+        else:
+            lane["recovery_attempts"] = 0
+            lane["last_error"] = ""
+            target = "READY"
+        if self.state.get("global_mode") == "RUNNING":
+            lane["state"] = target
+        else:
+            lane["paused_from_state"] = target
+            lane["state"] = "PAUSED"
+        self._mark_worker_task_stopped(lane_name)
+        self.event(
+            f"retired empty CURRENT_PHASE_REVIEW as stale infrastructure state; lane restored to {target}",
+            lane_name,
+        )
+        self._audit(
+            "empty_current_phase_review_retired",
+            task_id=lane.get("scheduler_task_id") or phase_id,
+            lane=lane_name,
+            phase=phase_id,
+            classification=evidence.get("kind"),
+            reason_code=evidence.get("reason_code"),
+        )
+
+    def reconcile_invalid_empty_current_phase_reviews(self) -> int:
+        """Retire only current-phase gates that Git and structured worker state prove empty."""
+        if not self.runtime_owner:
+            return 0
+        changed = 0
+        waiting_states = {"NEEDS_SOL_REVIEW", "WAITING_FOR_ARCHITECT_MODEL", "WAITING_FOR_LUNA_MODEL"}
+        for lane_name, lane in self.state.get("lanes", {}).items():
+            if not isinstance(lane, dict) or lane.get("state") not in waiting_states:
+                continue
+            review = lane.get("review", {})
+            if not isinstance(review, dict) or review.get("type") != "CURRENT_PHASE_REVIEW":
+                continue
+            phase_id = str(lane.get("phase_id") or "")
+            reviewed_phase = review.get("reviewed_phase") or {}
+            if reviewed_phase and reviewed_phase.get("id") not in (None, phase_id):
+                evidence = {"kind": "unknown", "reason_code": "REVIEW_PHASE_MISMATCH"}
+            else:
+                evidence = self._current_phase_review_evidence(lane_name)
+                reviewed_sha = str(review.get("commit_sha") or lane.get("last_commit") or "")
+                if reviewed_sha and reviewed_sha != evidence.get("head"):
+                    evidence = {"kind": "unknown", "reason_code": "REVIEW_HEAD_MISMATCH",
+                                "head": evidence.get("head")}
+
+            if evidence.get("kind") == "reviewable":
+                continue
+            if evidence.get("kind") == "unknown":
+                lane["state"] = "BLOCKED"
+                lane["last_error"] = "current-phase review evidence reconciliation failed closed"
+                review_state = self.state.setdefault("architect_review", {})
+                failures = review_state.setdefault("reconciliation_errors", {})
+                key = f"{lane_name}:{phase_id}:{evidence.get('reason_code')}"
+                failures[key] = {
+                    "lane": lane_name, "phase": phase_id,
+                    "status": "REQUIRES_INFRA_REVIEW",
+                    "reason_code": evidence.get("reason_code"), "recorded_at": utc_now(),
+                }
+                self.event(
+                    f"current-phase review reconciliation failed closed ({evidence.get('reason_code')})",
+                    lane_name,
+                )
+                changed += 1
+                continue
+
+            self._finish_unreviewable_current_phase(
+                lane_name, evidence, list(lane.get("review_reasons") or []), existing_review=True,
+            )
+            changed += 1
+        if changed and "scheduler" in self.state and getattr(self, "roadmap_snapshot", None) is not None:
+            self._recompute_scheduler()
+        return changed
+
+    def _suppress_unreviewable_current_phase_request(
+        self, lane_name: str, reasons: list[str], evidence: dict[str, Any],
+    ) -> None:
+        if evidence.get("kind") in {"empty", "recoverable"}:
+            self._finish_unreviewable_current_phase(
+                lane_name, evidence, reasons, existing_review=False,
+            )
+            if "scheduler" in self.state and getattr(self, "roadmap_snapshot", None) is not None:
+                self._recompute_scheduler()
+            return
+        lane = self.state["lanes"][lane_name]
+        lane["state"] = "BLOCKED"
+        lane["worker_pid"] = None
+        lane["last_error"] = "current-phase review evidence is ambiguous; state preserved"
+        review_state = self.state.setdefault("architect_review", {})
+        failures = review_state.setdefault("reconciliation_errors", {})
+        phase_id = str(lane.get("phase_id") or "")
+        reason_code = str(evidence.get("reason_code") or "UNKNOWN")
+        failures[f"{lane_name}:{phase_id}:{reason_code}"] = {
+            "lane": lane_name, "phase": phase_id,
+            "status": "REQUIRES_INFRA_REVIEW", "reason_code": reason_code,
+            "reasons": list(reasons), "recorded_at": utc_now(),
+        }
+        self.event(f"suppressed current-phase review and failed closed ({reason_code})", lane_name)
+        if "scheduler" in self.state and getattr(self, "roadmap_snapshot", None) is not None:
+            self._recompute_scheduler()
+
     def resource_guard(self) -> tuple[bool, str]:
         usage = os.statvfs("/")
         free_bytes = usage.f_bavail * usage.f_frsize
@@ -3446,6 +3846,10 @@ an actually failing command is not a validation gap.
             "last_progress_at": utc_now(),
             "worker_recovery": recovery,
             "worker_attempt": attempt,
+            "worker_phase_id": phase["id"],
+            "worker_start_head": self.git_head(lane["worktree"]),
+            "worker_exit_code": None,
+            "worker_interrupted": False,
             "worker_result": None,
             "validation_gap": {"status": "NONE", "reason": "", "at": None},
             "last_error": "",
@@ -3610,6 +4014,11 @@ an actually failing command is not a validation gap.
             lane["worker_pid"] = None
             lane["worker_finished_at"] = utc_now()
             lane["last_progress_at"] = utc_now()
+            lane["worker_exit_code"] = return_code
+            lane["worker_interrupted"] = return_code in {-15, 143}
+            if result in {"COMPLETE", "COMPLETE_WITH_VALIDATION_GAP", "NEEDS_SOL_REVIEW", "BLOCKED"}:
+                lane["worker_phase_id"] = lane.get("worker_phase_id") or lane.get("phase_id")
+                lane["worker_result"] = result
             architect_state = self.state.setdefault("architect_review", {})
             architect_state["last_progress_at"] = utc_now()
             architect_state["last_worker_completion_at"] = utc_now()
@@ -4166,6 +4575,10 @@ an actually failing command is not a validation gap.
             "diffstat": stat.strip()[:12000] if stat_code == 0 else "",
             "tests": lane.get("validation", {}).get("tests", []),
             "worker_result": lane.get("validation", {}).get("worker_result"),
+            "worker_phase_id": lane.get("worker_phase_id"),
+            "worker_attempt": lane.get("worker_attempt"),
+            "worker_log": lane.get("worker_log"),
+            "worker_exit_code": lane.get("worker_exit_code"),
             "validation_gap": lane.get("validation", {}).get("validation_gap"),
             "prospective_commit": lane.get("validation", {}).get("structural", {}).get(
                 "prospective_commit"
@@ -4366,10 +4779,9 @@ an actually failing command is not a validation gap.
         lane["phase_index"] = int(lane.get("phase_index", 0)) + 1
         lane.update({
             "phase_failure_count": 0, "recovery_attempts": 0,
-            "push_attempts": 0, "ci_poll_failures": 0, "validation": {},
-            "ci": {"status": "NOT_RUN", "sha": lane.get("last_commit"),
-                   "run_id": None, "url": None},
+            "push_attempts": 0,
         })
+        self._reset_phase_transient_metadata(lane, lane.get("last_commit"))
         self._refresh_plan(lane_name, lane)
         if lane.get("phase_id") is None:
             self.review(
@@ -4502,6 +4914,13 @@ an actually failing command is not a validation gap.
                 review_type = "FINAL_MILESTONE_OR_QUEUE_REVIEW"
             else:
                 review_type = "CURRENT_PHASE_REVIEW"
+        if review_type == "CURRENT_PHASE_REVIEW":
+            evidence = self._current_phase_review_evidence(lane_name)
+            if evidence.get("kind") != "reviewable":
+                self._suppress_unreviewable_current_phase_request(
+                    lane_name, lane["review_reasons"], evidence,
+                )
+                return
         current_phase = reviewed_phase or {
             "id": lane.get("phase_id"),
             "title": lane.get("phase_title"),
@@ -4590,9 +5009,9 @@ an actually failing command is not a validation gap.
         lane["success_since_review"] = 0
         lane["phase_failure_count"] = 0
         lane["recovery_attempts"] = 0
-        lane["review_reasons"] = []
         review["decision"] = "APPROVED_ADVANCE_ONCE"
         review["decided_at"] = utc_now()
+        self._reset_phase_transient_metadata(lane, lane.get("last_commit"))
         self._refresh_plan(lane_name, lane)
         if lane.get("phase_id") is None:
             lane["state"] = "BLOCKED"
@@ -5115,6 +5534,7 @@ operator decision.
         self.poll_workers()
         self.sync_control_plane()
         self.periodic_guards()
+        self.reconcile_invalid_empty_current_phase_reviews()
         self._recompute_scheduler()
         for lane_name in LANE_ORDER:
             self.advance_lane(lane_name)
@@ -5131,7 +5551,19 @@ operator decision.
 
     def shutdown(self) -> None:
         for lane_name in list(self.processes):
+            process = self.processes.get(lane_name)
             self.terminate_worker(lane_name, "supervisor stopping")
+            if process is None:
+                continue
+            thread = self.output_threads.pop(lane_name, None)
+            if thread:
+                thread.join(timeout=5)
+            lane = self.state["lanes"][lane_name]
+            lane["worker_exit_code"] = process.returncode
+            lane["worker_interrupted"] = True
+            self.processes.pop(lane_name, None)
+            self._reconcile_interrupted_worker(lane_name, lane)
+        self._recompute_scheduler()
         self.save_state()
 
     def run(self) -> int:

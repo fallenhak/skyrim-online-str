@@ -1,3 +1,11 @@
+## V3.5 empty current-phase review recovery — 2026-09-23
+
+- Require structured evidence from the active phase before creating a `CURRENT_PHASE_REVIEW`; the previously accepted HEAD alone is not current-phase evidence.
+- On restart and before reviewer queueing, retire empty current-phase gates and mark matching evidence errors/queued items stale. Restore clean untouched phases to `READY`; preserve structurally safe interrupted diffs and allow one central-scheduler recovery attempt; fail closed on ambiguous Git or review state.
+- Persist phase-bound worker identity, start HEAD, exit status, and interruption state. Reset worker, CI, and review transients when a phase advances or a stale gate is retired; retain history and completed review routing metadata.
+- Add deterministic regressions for empty/stale gates, approval advancement, dirty and clean interruption, committed current-phase diffs, and explicit worker review results. The full supervisor/reviewer/roadmap suite passes 215 tests; Python compilation passes.
+- Preserve Luna/max development and ordinary review, Sol/medium architect escalation, worker/reviewer caps of 2/1, exact-SHA CI, and control-plane gates.
+
 ## V3.4 quota-aware reviewer routing — 2026-09-23
 
 - Route ordinary current-phase and post-phase reviews to GPT-6 Luna/high; reserve GPT-6 Sol/medium for deterministic architect escalation and disallow automatic Sol/max.

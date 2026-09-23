@@ -1117,6 +1117,9 @@ class ArchitectReviewMixin:
         review_state["idle_reason"] = f"{tier} reviewer unavailable; lane is waiting for the bounded retry"
 
     def queue_sol_reviews(self) -> int:
+        reconcile = getattr(self, "reconcile_invalid_empty_current_phase_reviews", None)
+        if callable(reconcile) and getattr(self, "runtime_owner", False):
+            reconcile()
         review_state = self.state.setdefault("architect_review", {})
         if not review_state.get("enabled") or not self._control_plane_valid():
             return 0

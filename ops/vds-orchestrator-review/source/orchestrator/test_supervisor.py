@@ -412,6 +412,7 @@ class ProductionPathHarness(SchedulingHarness):
             self.worker_root / f"{lane_name}-{attempt}.log"
         )
         self._prune_worker_logs = lambda _lane_name: None
+        self.git_head = lambda _worktree: "a" * 40
         self.sync_control_plane = lambda force=False: True
         self.periodic_guards = lambda: True
         self.git_dirty = lambda _worktree: False
@@ -1678,15 +1679,27 @@ class SupervisorLogicTests(unittest.TestCase):
         self.assertEqual(after, before)
         self.assertEqual(h.state["codex_availability"]["probe_started_at"], probe_before)
 
-    def test_runtime_owner_startup_reconciles_stale_coding_lanes(self) -> None:
+    def test_runtime_owner_startup_reconciles_untouched_stale_coding_lanes(self) -> None:
         h = LiveWorkerObserverHarness()
         h.runtime_owner = True
         h._state_write_enabled = True
+        for lane_name, lane in h.state["lanes"].items():
+            worktree = f"/tmp/{lane_name}"
+            lane["worktree"] = worktree
+            lane["history"] = [{"phase": "PREVIOUS", "commit": "a" * 40}]
+            lane["last_commit"] = "a" * 40
+            h.config["lanes"][lane_name]["worktree"] = worktree
+        h.git_head = lambda _worktree: "a" * 40
+        h.git_branch = lambda worktree: next(
+            config["branch"] for config in h.config["lanes"].values()
+            if config["worktree"] == worktree
+        )
+        h.git_status_details = lambda _worktree: (True, [], "")
         supervisor.Supervisor._prepare_state(h)
-        self.assertEqual(h.state["lanes"]["combat"]["state"], "RECOVERING")
-        self.assertIsNone(h.state["lanes"]["combat"]["worker_pid"])
-        self.assertEqual(h.state["lanes"]["combat"]["recovery_attempts"], 1)
-        self.assertEqual(h.state["lanes"]["authority"]["state"], "RECOVERING")
+        for lane in h.state["lanes"].values():
+            self.assertEqual(lane["state"], "READY")
+            self.assertIsNone(lane["worker_pid"])
+            self.assertEqual(lane["recovery_attempts"], 0)
 
     def test_daemon_lock_is_acquired_before_runtime_owner_construction(self) -> None:
         with tempfile.TemporaryDirectory(prefix="skyrim-lock-test-") as root:
@@ -1776,6 +1789,207 @@ class SupervisorLogicTests(unittest.TestCase):
         before = ownership_snapshot(h)
         self.assertEqual(h.config["lanes"]["combat"]["worktree"], "")
         self.assertEqual(ownership_snapshot(h), before)
+
+
+class V35EmptyCurrentPhaseReviewTests(unittest.TestCase):
+    def _current_lane(self, root: Path, state: str = "NEEDS_SOL_REVIEW") -> tuple[Harness, dict, str]:
+        harness = Harness()
+        lane = configure_combat_lane(harness, root, state)
+        head = subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+        ).strip()
+        lane.update({
+            "phase_id": "C08", "phase_title": "current phase", "phase_index": 7,
+            "last_commit": head, "history": [{"phase": "C07", "commit": head}],
+            "scheduler_task_id": "C08", "worker_phase_id": None,
+            "worker_start_head": None, "worker_exit_code": None,
+            "worker_interrupted": False, "worker_result": None,
+            "review": {
+                "type": "CURRENT_PHASE_REVIEW",
+                "reviewed_phase": {"id": "C08", "title": "current phase"},
+                "commit_sha": head, "next_phase": {"id": "C08", "action": "retry_current_phase"},
+            },
+            "review_reasons": ["empty current-phase evidence"],
+            "ci": {"status": "NOT_RUN", "sha": head},
+        })
+        harness.state["architect_review"] = {
+            "enabled": True, "active_review_id": None, "queue": [], "items": {},
+            "evidence_errors": {}, "bundle_failures": {},
+        }
+        return harness, lane, head
+
+    def _patch_review_packet(self, harness: Harness, root: Path) -> None:
+        harness.make_review_packet = lambda *_args, **_kwargs: root / "review-packet.md"
+
+    def test_prior_phase_head_is_empty_and_stale_gate_is_retired(self) -> None:
+        root = make_git_repo()
+        harness, lane, head = self._current_lane(root)
+        harness.state["architect_review"]["queue"] = ["stale-review"]
+        harness.state["architect_review"]["items"] = {
+            "stale-review": {
+                "lane": "combat", "phase": "C08", "reviewed_sha": head,
+                "status": "EVIDENCE_ERROR", "review_type": "CURRENT_PHASE_REVIEW",
+            },
+        }
+        harness.state["architect_review"]["evidence_errors"] = {
+            "combat:C08": {
+                "lane": "combat", "phase": "C08", "reviewed_sha": head,
+                "review_type": "CURRENT_PHASE_REVIEW", "status": "REQUIRES_INFRA_REVIEW",
+            },
+        }
+
+        evidence = harness._current_phase_review_evidence("combat")
+        self.assertEqual(evidence["kind"], "empty")
+        self.assertEqual(evidence["reason_code"], "NO_CURRENT_PHASE_EVIDENCE")
+        self.assertEqual(harness.reconcile_invalid_empty_current_phase_reviews(), 1)
+
+        self.assertEqual(lane["state"], "READY")
+        self.assertEqual(lane["ci"], {
+            "status": "NOT_RUN", "sha": head, "run_id": None, "url": None,
+        })
+        self.assertIsNone(lane["worker_result"])
+        self.assertIsNone(lane["review"]["type"])
+        self.assertEqual(harness.state["architect_review"]["queue"], [])
+        self.assertEqual(harness.state["architect_review"]["items"]["stale-review"]["status"], "STALE")
+        self.assertEqual(harness.state["architect_review"]["evidence_errors"]["combat:C08"]["status"], "STALE")
+        self.assertEqual(harness.state["architect_review"]["stale_current_phase_reviews"][0]["head"], head)
+
+    def test_untouched_phase_cannot_create_or_queue_current_phase_review(self) -> None:
+        root = make_git_repo()
+        harness, lane, _head = self._current_lane(root, "LOCAL_VALIDATION")
+        harness._control_plane_valid = lambda: True
+
+        supervisor.Supervisor.review(
+            harness, "combat", ["validation requires a review"], notify_external=False,
+        )
+
+        self.assertEqual(lane["state"], "READY")
+        self.assertIsNone(lane["review"].get("type"))
+        self.assertEqual(harness.queue_sol_reviews(), 0)
+        self.assertEqual(harness.state["architect_review"]["queue"], [])
+
+    def test_completed_checkpoint_approval_advances_next_phase_ready_and_keeps_history(self) -> None:
+        root = make_git_repo()
+        harness, lane, head = self._current_lane(root)
+        lane.update({
+            "state": "NEEDS_SOL_REVIEW", "phase_id": "C07", "phase_index": 6,
+            "worker_phase_id": "C07", "worker_start_head": head,
+            "worker_exit_code": 0, "worker_result": "COMPLETE",
+            "review": {
+                "type": "POST_PHASE_CHECKPOINT",
+                "reviewed_phase": {"id": "C07", "title": "completed phase"},
+                "commit_sha": head, "next_phase": {"id": "C08", "title": "current phase"},
+                "selected_model": "gpt-6-luna", "selected_reasoning_effort": "high",
+            },
+        })
+        harness._refresh_plan = lambda _name, target: target.update({
+            "phase_id": "C08", "phase_title": "current phase",
+        })
+
+        self.assertEqual(supervisor.Supervisor.approve_review(harness, "combat"), 0)
+
+        self.assertEqual(lane["state"], "READY")
+        self.assertEqual(lane["phase_id"], "C08")
+        self.assertIsNone(lane["worker_result"])
+        self.assertIsNone(lane["worker_phase_id"])
+        self.assertFalse(lane["worker_interrupted"])
+        self.assertEqual(lane["ci"]["status"], "NOT_RUN")
+        self.assertEqual(lane["review"]["decision"], "APPROVED_ADVANCE_ONCE")
+        self.assertEqual(lane["review"]["selected_reasoning_effort"], "high")
+
+    def test_interrupted_dirty_worker_is_recoverable_and_preserves_bytes(self) -> None:
+        root = make_git_repo()
+        harness, lane, head = self._current_lane(root, "CODING")
+        changed = root / "tracked.txt"
+        changed.write_text("preserved interrupted work\n", encoding="utf-8")
+        before = changed.read_bytes()
+        lane.update({
+            "worker_phase_id": "C08", "worker_start_head": head,
+            "worker_exit_code": -15, "worker_interrupted": True,
+            "worker_log": str(root / "worker.log"),
+        })
+        lane["review"]["type"] = None
+
+        class TerminatedProcess:
+            pid = 10
+            returncode = None
+
+            def terminate(self):
+                self.returncode = -15
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+        harness.processes["combat"] = TerminatedProcess()
+        harness._recompute_scheduler = lambda: None
+        harness.shutdown()
+
+        self.assertEqual(lane["state"], "RECOVERING")
+        self.assertEqual(lane["recovery_attempts"], 1)
+        self.assertEqual(changed.read_bytes(), before)
+        self.assertNotIn("combat", harness.processes)
+
+    def test_interrupted_clean_worker_returns_untouched_phase_to_ready(self) -> None:
+        root = make_git_repo()
+        harness, lane, head = self._current_lane(root, "CODING")
+        lane.update({
+            "worker_phase_id": "C08", "worker_start_head": head,
+            "worker_exit_code": -15, "worker_interrupted": True,
+        })
+
+        harness._reconcile_interrupted_worker("combat", lane)
+
+        self.assertEqual(lane["state"], "READY")
+        self.assertEqual(lane["recovery_attempts"], 0)
+        self.assertIsNone(lane["worker_result"])
+
+    def test_current_phase_committed_diff_can_still_request_review(self) -> None:
+        root = make_git_repo()
+        harness, lane, base = self._current_lane(root, "LOCAL_VALIDATION")
+        (root / "phase.txt").write_text("current phase implementation\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "phase.txt"], check=True)
+        subprocess.run([
+            "git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-qm", "C08 implementation",
+        ], check=True)
+        head = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+        lane["last_commit"] = head
+        self._patch_review_packet(harness, root)
+
+        evidence = harness._current_phase_review_evidence("combat")
+        supervisor.Supervisor.review(
+            harness, "combat", ["committed current-phase work needs review"], notify_external=False,
+        )
+
+        self.assertEqual(evidence["kind"], "reviewable")
+        self.assertEqual(evidence["reason_code"], "CURRENT_PHASE_COMMITTED_DIFF")
+        self.assertEqual(lane["state"], "NEEDS_SOL_REVIEW")
+        self.assertEqual(lane["review"]["commit_sha"], head)
+        self.assertEqual(lane["review"]["selected_model"], "gpt-6-luna")
+        self.assertEqual(lane["review"]["selected_reasoning_effort"], "max")
+        self.assertEqual(len(lane["history"]), 1)
+        self.assertNotEqual(base, head)
+
+    def test_current_phase_worker_result_can_still_request_review_without_diff(self) -> None:
+        root = make_git_repo()
+        harness, lane, head = self._current_lane(root, "LOCAL_VALIDATION")
+        lane.update({
+            "worker_phase_id": "C08", "worker_start_head": head,
+            "worker_exit_code": 0, "worker_interrupted": False,
+            "worker_result": "NEEDS_SOL_REVIEW",
+        })
+        self._patch_review_packet(harness, root)
+
+        evidence = harness._current_phase_review_evidence("combat")
+        supervisor.Supervisor.review(
+            harness, "combat", ["worker explicitly requested a decision"], notify_external=False,
+        )
+
+        self.assertEqual(evidence["kind"], "reviewable")
+        self.assertEqual(evidence["reason_code"], "CURRENT_PHASE_WORKER_RESULT")
+        self.assertEqual(lane["state"], "NEEDS_SOL_REVIEW")
+        self.assertEqual(lane["review"]["selected_model"], "gpt-6-luna")
+        self.assertEqual(lane["review"]["selected_reasoning_effort"], "max")
 
 
 class V34ReviewerRoutingTests(unittest.TestCase):
