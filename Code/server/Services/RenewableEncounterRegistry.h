@@ -57,6 +57,15 @@ public:
         return it->second;
     }
 
+    [[nodiscard]] std::optional<RenewableEncounterId> FindEncounter(const SpawnSlotId aSlot) const noexcept
+    {
+        const auto it = m_encounterBySlot.find(aSlot);
+        if (it == m_encounterBySlot.end())
+            return std::nullopt;
+
+        return it->second;
+    }
+
     [[nodiscard]] bool BindIncarnation(const RenewableEncounterId aId, const SpawnSlotId aSlot, const EncounterIncarnation aIncarnation, const std::uint64_t aSpawnEpoch)
     {
         auto* pEncounter = FindMutable(aId);

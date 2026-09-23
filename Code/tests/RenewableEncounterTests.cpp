@@ -181,3 +181,40 @@ TEST_CASE("W02: a spawn requested before a reset cannot bind after it", "[renewa
     REQUIRE(state.GetSlotStatus(kSlotA) == RenewableEncounterState::SlotStatus::Unbound);
     REQUIRE(state.BindIncarnation(kSlotA, {9, 12}, state.GetEpoch()));
 }
+
+TEST_CASE("W02: a cleared encounter cannot gain an empty slot", "[renewable_encounter]")
+{
+    auto state = MakeTwoSlotEncounter();
+    REQUIRE(state.BindIncarnation(kSlotA, {7, 10}, state.GetEpoch()));
+    REQUIRE(state.BindIncarnation(kSlotB, {8, 11}, state.GetEpoch()));
+    REQUIRE(state.RecordVerifiedDeath({7, 10}, 50) == RenewableEncounterState::DeathResult::Recorded);
+    REQUIRE(state.RecordVerifiedDeath({8, 11}, 70) == RenewableEncounterState::DeathResult::Recorded);
+    REQUIRE(state.IsCleared());
+
+    // Otherwise the encounter would read as cleared while a slot was never populated.
+    REQUIRE_FALSE(state.AddSlot(SpawnSlotId{0x0010F00Fu}));
+    REQUIRE(state.GetSlotCount() == 2);
+}
+
+TEST_CASE("W02: membership counts slots by status", "[renewable_encounter]")
+{
+    auto state = MakeTwoSlotEncounter();
+    auto membership = state.GetMembership();
+    REQUIRE(membership.Unbound == 2);
+    REQUIRE(membership.Alive == 0);
+    REQUIRE(membership.Dead == 0);
+
+    REQUIRE(state.BindIncarnation(kSlotA, {7, 10}, state.GetEpoch()));
+    REQUIRE(state.BindIncarnation(kSlotB, {8, 11}, state.GetEpoch()));
+    REQUIRE(state.RecordVerifiedDeath({7, 10}, 50) == RenewableEncounterState::DeathResult::Recorded);
+    membership = state.GetMembership();
+    REQUIRE(membership.Unbound == 0);
+    REQUIRE(membership.Alive == 1);
+    REQUIRE(membership.Dead == 1);
+
+    REQUIRE(state.ReleaseIncarnation({8, 11}) == RenewableEncounterState::ReleaseResult::Released);
+    membership = state.GetMembership();
+    REQUIRE(membership.Unbound == 1);
+    REQUIRE(membership.Alive == 0);
+    REQUIRE(membership.Dead == 1);
+}

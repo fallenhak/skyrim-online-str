@@ -82,3 +82,23 @@ TEST_CASE("W02: registry forgets incarnations on release and reset", "[renewable
     REQUIRE(registry.FindEncounter({7, 10}) == kCrypt);
     REQUIRE_FALSE(registry.TryReset(RenewableEncounterId{0x9999u, 0}, 50));
 }
+
+TEST_CASE("W01: registry resolves the encounter owning a placed reference", "[renewable_encounter]")
+{
+    const auto registry = MakeRegistry();
+    REQUIRE(registry.FindEncounter(kCaveSlot) == kCave);
+    REQUIRE(registry.FindEncounter(kCryptSlot) == kCrypt);
+    REQUIRE_FALSE(registry.FindEncounter(SpawnSlotId{0x0010F00Fu}));
+}
+
+TEST_CASE("W02: registry keeps slot ownership when a cleared encounter rejects a slot", "[renewable_encounter]")
+{
+    auto registry = MakeRegistry();
+    REQUIRE(registry.BindIncarnation(kCave, kCaveSlot, {7, 10}, EpochOf(registry, kCave)));
+    REQUIRE(registry.RecordVerifiedDeath({7, 10}, 50) == RenewableEncounterState::DeathResult::Recorded);
+
+    constexpr SpawnSlotId kLateSlot{0x0010F00Fu};
+    REQUIRE_FALSE(registry.AddSlot(kCave, kLateSlot));
+    REQUIRE_FALSE(registry.FindEncounter(kLateSlot));
+    REQUIRE(registry.AddSlot(kCrypt, kLateSlot)); // the slot is still free for another encounter
+}

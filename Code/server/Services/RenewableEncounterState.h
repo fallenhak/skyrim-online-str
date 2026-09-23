@@ -114,6 +114,13 @@ public:
         UnknownIncarnation
     };
 
+    struct Membership final
+    {
+        std::size_t Unbound{};
+        std::size_t Alive{};
+        std::size_t Dead{};
+    };
+
     RenewableEncounterState(const RenewableEncounterId aId, const RenewableEncounterPolicy aPolicy) noexcept
         : m_id(aId)
         , m_policy(aPolicy)
@@ -128,7 +135,8 @@ public:
 
     [[nodiscard]] bool AddSlot(const SpawnSlotId aSlot)
     {
-        if (!m_id.IsValid() || !aSlot.IsValid())
+        // A cleared encounter must not gain a slot that was never populated.
+        if (!m_id.IsValid() || !aSlot.IsValid() || IsCleared())
             return false;
 
         return m_slots.emplace(aSlot, Slot{}).second;
@@ -207,6 +215,22 @@ public:
     }
 
     [[nodiscard]] bool IsCleared() const noexcept { return m_clearedTick.has_value(); }
+
+    [[nodiscard]] Membership GetMembership() const noexcept
+    {
+        Membership membership{};
+        for (const auto& [slotId, slot] : m_slots)
+        {
+            if (slot.Status == SlotStatus::Alive)
+                ++membership.Alive;
+            else if (slot.Status == SlotStatus::Dead)
+                ++membership.Dead;
+            else
+                ++membership.Unbound;
+        }
+
+        return membership;
+    }
 
     [[nodiscard]] bool IsResetEligible(const std::uint64_t aNowTick) const noexcept
     {
