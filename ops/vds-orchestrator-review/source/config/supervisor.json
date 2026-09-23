@@ -115,6 +115,11 @@
     "idle_warning_interval_seconds": 1800,
     "max_context_files": 32,
     "max_context_bytes": 524288,
-    "smoke_timeout_seconds": 240
+    "smoke_timeout_seconds": 240,
+    "deterministic_evidence_error_max_attempts": 3,
+    "transient_evidence_error_max_attempts": 5,
+    "evidence_error_backoff_seconds": 30,
+    "evidence_error_backoff_max_seconds": 300,
+    "max_committed_diff_bytes": 524288
   }
 }

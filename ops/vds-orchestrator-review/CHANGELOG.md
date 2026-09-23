@@ -1,3 +1,31 @@
+## V3.3 exact-SHA Sol evidence and blocked-lane scheduler repair — 2026-09-23
+
+- Replaced the shadowed worktree-only review bundle path with one canonical
+  evidence-v3 builder based on the last trusted accepted phase HEAD through the
+  exact reviewed commit. It includes raw diff SHA-256, rename-aware file
+  inventory, all phase commits/messages, and exact reviewed-Git-object content
+  hashes/source context; dirty diffs remain a separate input.
+- Added exact-SHA CI, required product/roadmap context, plan/product/context
+  hashes, fail-closed bounds, immutable v3 identities/bundles, and a reviewer
+  prompt that distinguishes committed evidence from uncommitted worktree data.
+- Added `REVIEW_EVIDENCE_ERROR` with bounded retries and explicit infrastructure
+  escalation, while allowing independent lanes to queue. Reviewer status reports
+  evidence errors; evidence failures never become product BLOCK decisions.
+- Fixed scheduler state so a terminal exact-head Sol BLOCK is `BLOCKED_REVIEW`,
+  not `READY`; idle summaries identify active blocked lanes and future external
+  gates.
+- Added guarded Population L05 checkpoint reconciliation using the normal
+  completion/checkpoint path and exact committed-range, clean-tree, structural,
+  CI, and control-plane invariants. It performs no Sol approval or milestone
+  acceptance.
+- Added an exact-target `re-review-v3` operator request that runs Sol-only while
+  globally paused, supersedes matching legacy decision metadata, and keeps
+  development paused until the four v3 decisions finish.
+- Added 34 exact-evidence/paused-continuation regressions and four scheduler/evidence-error
+  regressions. The complete deterministic suite passes 187 tests; deployment
+  and live review outcomes are recorded in the dated verification receipt.
+- Clarified the Sol output contract: APPROVE must have an empty required_actions list, and any needed repair or validation requires RETRY. The semantic validator remains fail-closed; an existing regression now checks the prompt.
+
 # Supervisor Hardening V2 changelog
 
 ## Isolated Sol architect review — 2026-09-23

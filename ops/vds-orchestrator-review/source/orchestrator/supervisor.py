@@ -52,6 +52,7 @@ from architect_review import (
     ArchitectReviewMixin,
     REVIEW_OUTPUT_SCHEMA,
     ReviewOutputError,
+    ReviewEvidenceError,
     build_bwrap_command,
     canonical_json,
     normalize_review_evidence,
@@ -127,6 +128,7 @@ OPERATOR_MUTATION_COMMANDS = {
     "approve-control-plane",
     "accept-milestone",
     "sync-control-plane",
+    "re-review-v3",
 }
 OPERATOR_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 
@@ -450,6 +452,23 @@ def validate_operator_request(
     elif command == "sync-control-plane":
         if set(args) != {"force"} or not isinstance(args.get("force"), bool):
             return False, request_id, "sync-control-plane requires a boolean force flag"
+    elif command == "re-review-v3":
+        targets = args.get("targets")
+        if set(args) != {"targets"} or not isinstance(targets, list) or len(targets) != len(LANE_ORDER):
+            return False, request_id, "re-review-v3 requires four exact lane/phase/SHA targets"
+        seen = set()
+        for target in targets:
+            if not isinstance(target, dict) or set(target) != {"lane", "phase", "sha"}:
+                return False, request_id, "re-review-v3 target schema is invalid"
+            if target.get("lane") not in LANE_ORDER or target.get("lane") in seen:
+                return False, request_id, "re-review-v3 lane target is unknown or duplicated"
+            if not isinstance(target.get("phase"), str) or not target["phase"].strip():
+                return False, request_id, "re-review-v3 phase is required"
+            if not isinstance(target.get("sha"), str) or not re.fullmatch(r"[0-9a-f]{40,64}", target["sha"]):
+                return False, request_id, "re-review-v3 requires a full Git SHA"
+            seen.add(target["lane"])
+        if seen != set(LANE_ORDER):
+            return False, request_id, "re-review-v3 must cover all four active lanes"
     return True, request_id, ""
 
 
@@ -1553,6 +1572,8 @@ class Supervisor(ArchitectReviewMixin):
                     )
                 elif command == "sync-control-plane":
                     result = 0 if self.sync_control_plane(bool(args["force"])) else 1
+                elif command == "re-review-v3":
+                    result = self.request_fresh_reviews_v3(list(args["targets"]))
                 else:  # validate_operator_request should make this unreachable
                     result = 2
                     print("unsupported operator command", file=sys.stderr)
@@ -1829,6 +1850,8 @@ class Supervisor(ArchitectReviewMixin):
                 result[workstream_id] = "RUNNING"
             elif "NEEDS_SOL_REVIEW" in states:
                 result[workstream_id] = "NEEDS_SOL_REVIEW"
+            elif "BLOCKED_REVIEW" in states:
+                result[workstream_id] = "BLOCKED_REVIEW"
             elif "BLOCKED_EXTERNAL_GATE" in states:
                 result[workstream_id] = "BLOCKED_EXTERNAL_GATE"
             elif "BLOCKED_DEPENDENCY" in states:
@@ -1942,6 +1965,13 @@ class Supervisor(ArchitectReviewMixin):
                 lane = self.state["lanes"].get(task.lane, {})
                 if task_states.get(task_id) == "DONE":
                     new_state, reason = "DONE", "task completion is persisted"
+                elif (
+                    task.source == "EXISTING_PLAN" and lane.get("phase_id") == task_id
+                    and lane.get("state") == "BLOCKED"
+                    and lane.get("review", {}).get("decision") == "SOL_BLOCKED"
+                    and str(lane.get("review", {}).get("commit_sha") or "") == str(lane.get("last_commit") or "")
+                ):
+                    new_state, reason = "BLOCKED_REVIEW", "terminal architect BLOCK is active for this exact phase and HEAD"
                 elif task.source == "EXISTING_PLAN" and lane.get("phase_id") == task_id:
                     review = lane.get("review", {})
                     if lane.get("state") == "NEEDS_SOL_REVIEW":
@@ -3800,7 +3830,7 @@ an actually failing command is not a validation gap.
             index = int(self.state["lanes"][lane_name].get("phase_index", 0))
         return phases[index] if 0 <= index < len(phases) else None
 
-    def complete_phase(self, lane_name: str) -> None:
+    def complete_phase(self, lane_name: str, notify_review: bool = True) -> None:
         lane = self.state["lanes"][lane_name]
         completed_phase = {
             "id": lane.get("phase_id"),
@@ -3823,6 +3853,7 @@ an actually failing command is not a validation gap.
                 reviewed_phase=completed_phase,
                 commit_sha=lane.get("last_commit"),
                 next_phase=next_phase,
+                notify_external=notify_review,
             )
             return
         lane["phase_index"] = int(lane.get("phase_index", 0)) + 1
@@ -3851,6 +3882,99 @@ an actually failing command is not a validation gap.
         if "scheduler" in self.state:
             self._recompute_scheduler()
 
+    def repair_population_l05_checkpoint(self, phase_id: str, reviewed_sha: str) -> bool:
+        """Convert only the clean-commit empty-diff artifact into the normal checkpoint state."""
+        lane_name = "population"
+        lane = self.state.get("lanes", {}).get(lane_name)
+        if not isinstance(lane, dict) or phase_id != "L05":
+            return False
+        review = lane.get("review", {})
+        if (lane.get("state") != "BLOCKED" or lane.get("phase_id") != phase_id
+                or review.get("type") != "CURRENT_PHASE_REVIEW"
+                or review.get("decision") != "SOL_BLOCKED"
+                or str(lane.get("last_commit") or "") != reviewed_sha
+                or str(review.get("commit_sha") or "") != reviewed_sha
+                or self.git_head(str(lane.get("worktree") or "")) != reviewed_sha):
+            return False
+        if lane.get("worker_result") != "COMPLETE_WITH_VALIDATION_GAP":
+            return False
+        validation = lane.get("validation", {})
+        structural = validation.get("structural", {}) if isinstance(validation, dict) else {}
+        prospective = structural.get("prospective_commit", {}) if isinstance(structural, dict) else {}
+        if (structural.get("status") != "FAIL" or validation.get("changed_files")
+                or prospective.get("files") != [] or prospective.get("status") != "PASS"
+                or prospective.get("diff_check") is not True
+                or prospective.get("real_index_unchanged") is not True
+                or structural.get("unstaged_diff_check") is not True
+                or structural.get("staged_diff_check") is not True
+                or lane.get("success_since_review") != 2
+                or lane.get("validation_gap", {}).get("status") != "PRESENT"):
+            return False
+        tree = str(lane.get("worktree") or self.config["lanes"][lane_name]["worktree"])
+        expected_branch = str(lane.get("branch") or self.config["lanes"][lane_name].get("branch") or "")
+        if expected_branch and self.git_branch(tree) != expected_branch:
+            return False
+        status_ok, entries, _ = self.git_status_details(tree)
+        if not status_ok or entries or any(entry.get("kind") == "unmerged" for entry in entries):
+            return False
+        base = self._trusted_previous_accepted_head(lane, phase_id)
+        if not base:
+            return False
+        try:
+            evidence = self._committed_phase_evidence(lane_name, lane, "POST_PHASE_CHECKPOINT", phase_id, tree, reviewed_sha)
+        except ReviewEvidenceError:
+            return False
+        files = evidence.get("committed_phase_files", [])
+        diff = str(evidence.get("committed_phase_diff") or "")
+        if not files or not diff:
+            return False
+        if len(files) > int(self.config.get("max_changed_files", 40)):
+            return False
+        if len(diff.encode("utf-8", errors="replace")) > int(self.config.get("max_total_diff_bytes", 524288)):
+            return False
+        forbidden = self.forbidden_change_reasons(lane_name, [str(row.get("path") or "") for row in files])
+        if forbidden:
+            return False
+        check, _, _ = self.command(["git", "-C", tree, "diff", "--check", base, reviewed_sha], cwd=tree, timeout=90)
+        if check != 0 or not self._review_ci_is_exact_pass(lane, reviewed_sha)[0]:
+            return False
+        if self.state.get("control_plane", {}).get("status") != "VALID" or not self._control_plane_valid():
+            return False
+        snapshot = json.loads(json.dumps(lane))
+        lane_validation = lane.setdefault("validation", {})
+        lane_validation["status"] = "PASS"
+        lane_validation["changed_files"] = [str(row.get("path") or "") for row in files]
+        lane_validation["diffstat"] = evidence.get("committed_phase_stat", "")
+        lane_validation["diff_text"] = diff
+        lane_validation["diff_metrics"] = {
+            "changed_files": len(files), "total_diff_bytes": len(diff.encode("utf-8", errors="replace")),
+            "untracked_bytes": 0, "untracked_review_bytes": 0, "untracked_review_issues": [],
+        }
+        lane_validation.setdefault("structural", {}).update({
+            "status": "PASS", "committed_phase_recovery": {
+                "base_previous_accepted_head": base, "reviewed_sha": reviewed_sha,
+                "committed_phase_diff_sha256": evidence["committed_phase_diff_sha256"],
+                "committed_phase_files": files, "phase_commits": evidence["phase_commits"],
+                "reason": "prior structural failure was the clean-worktree empty-diff check; committed phase invariants revalidated",
+            },
+        })
+        self.event("reconciled Population L05 committed completion with normal checkpoint semantics", lane_name)
+        self.complete_phase(lane_name, notify_review=False)
+        self._recompute_scheduler()
+        current = self.state["lanes"][lane_name]
+        repaired = (
+            current.get("state") == "NEEDS_SOL_REVIEW"
+            and current.get("review", {}).get("type") == "POST_PHASE_CHECKPOINT"
+            and current.get("review", {}).get("commit_sha") == reviewed_sha
+            and (current.get("review", {}).get("reviewed_phase") or {}).get("id") == phase_id
+            and current.get("phase_index") == lane.get("phase_index")
+        )
+        if not repaired:
+            self.state["lanes"][lane_name] = snapshot
+            self._recompute_scheduler()
+            return False
+        return True
+
     def review(
         self,
         lane_name: str,
@@ -3859,6 +3983,7 @@ an actually failing command is not a validation gap.
         reviewed_phase: dict[str, Any] | None = None,
         commit_sha: str | None = None,
         next_phase: dict[str, Any] | None = None,
+        notify_external: bool = True,
     ) -> None:
         lane = self.state["lanes"][lane_name]
         clean = sorted(set(redact(reason) for reason in reasons if reason))
@@ -3904,7 +4029,8 @@ an actually failing command is not a validation gap.
                 )
         packet = self.make_review_packet(lane_name, lane["review_reasons"])
         lane["review_packet"] = str(packet)
-        self.post_issue_update(lane_name, lane["review_reasons"])
+        if notify_external:
+            self.post_issue_update(lane_name, lane["review_reasons"])
         self.event("lane stopped for Sol review", lane_name)
 
     def approve_review(self, lane_name: str) -> int:
@@ -4111,259 +4237,7 @@ an actually failing command is not a validation gap.
             return None, f"unavailable: {type(exc).__name__}"
 
     def build_review_bundle(self, lane_name: str) -> dict[str, Any]:
-        lane = self.state["lanes"][lane_name]
-        review = lane.get("review", {})
-        review_type = str(review.get("type") or "")
-        if review_type not in {
-            "CURRENT_PHASE_REVIEW", "POST_PHASE_CHECKPOINT",
-            "FINAL_MILESTONE_OR_QUEUE_REVIEW",
-        }:
-            raise ValueError(f"unsupported review type for {lane_name}: {review_type}")
-        reviewed_phase = review.get("reviewed_phase") or {
-            "id": lane.get("phase_id"), "title": lane.get("phase_title")
-        }
-        if not isinstance(reviewed_phase, dict) or not reviewed_phase.get("id"):
-            raise ValueError(f"missing reviewed phase for {lane_name}")
-        phase_id = str(reviewed_phase["id"])
-        worktree = str(lane.get("worktree") or self.config["lanes"][lane_name]["worktree"])
-        head = self.git_head(worktree)
-        if not head:
-            raise RuntimeError(f"could not determine reviewed HEAD for {lane_name}")
-        branch = self.git_branch(worktree)
-        okay, entries, status_error = self.git_status_details(worktree)
-        if not okay:
-            raise RuntimeError(f"could not read worktree status for {lane_name}: {status_error}")
-        files = status_paths(entries)
-        changed_files, diff_text, diff_stats, diff_metrics = self.changed_diff(lane_name)
-        status_evidence = [
-            {
-                "kind": entry.get("kind"),
-                "x": entry.get("x"),
-                "y": entry.get("y"),
-                "path": redact(str(entry.get("path") or "")),
-                "original_path": redact(str(entry.get("original_path") or "")) if entry.get("original_path") else None,
-            }
-            for entry in entries
-        ]
-        ci = redact_value(lane.get("ci", {}))
-        validation = lane.get("validation", {})
-        if not isinstance(validation, dict):
-            validation = {}
-        validation_evidence = {
-            "structural": redact_value(validation.get("structural", {})),
-            "focused_tests": redact_value(validation.get("focused_tests", {})),
-            "changed_files": [redact(str(item)) for item in validation.get("changed_files", changed_files)],
-            "worker_output_tail": redact(str(validation.get("worker_output_tail") or ""))[-MAX_RECOVERY_WORKER_BYTES:],
-            "validation_gap": redact_value(lane.get("validation_gap", {})),
-        }
-        worker_log = ""
-        if lane.get("worker_log"):
-            worker_log = tail_text(Path(str(lane["worker_log"])), MAX_RECOVERY_WORKER_BYTES)
-        if not worker_log:
-            worker_log = str(validation_evidence.get("worker_output_tail") or "")
-        packet_text, packet_status = self._review_file_text(
-            lane.get("review_packet"), REVIEW_ROOT, MAX_ARCHITECT_REVIEW_BUNDLE_BYTES // 2
-        )
-        plan_text, plan_status = self._review_file_text(
-            lane.get("plan"), Path(worktree), 160 * 1024
-        )
-        product_root = self._active_product_root()
-        product_context: dict[str, Any] = {}
-        product_status: dict[str, str] = {}
-        for filename in ("PRODUCT_VISION.md", "WORLD_RULES.md", "MILESTONE_01_CORE_WORLD.md"):
-            content, status = self._review_file_text(
-                product_root / filename, product_root, 80 * 1024
-            )
-            product_status[filename] = status
-            if content is not None:
-                product_context[filename] = content
-
-        task_id = str(lane.get("scheduler_task_id") or phase_id)
-        scheduler = self.state.get("scheduler", {})
-        tasks = scheduler.get("tasks", {}) if isinstance(scheduler, dict) else {}
-        task_record = tasks.get(task_id, {}) if isinstance(tasks, dict) else {}
-        dependencies = task_record.get("dependencies", []) if isinstance(task_record, dict) else []
-        dependency_records = {
-            str(dependency): redact_value(tasks.get(str(dependency), {}))
-            for dependency in dependencies
-        } if isinstance(tasks, dict) and isinstance(dependencies, list) else {}
-        roadmap_evidence = {
-            "task_id": task_id,
-            "task": redact_value(task_record),
-            "dependencies": dependency_records,
-            "resolved_external_gates": redact_value(scheduler.get("resolved_external_gates", [])) if isinstance(scheduler, dict) else [],
-            "control_plane_sha": self.state.get("control_plane", {}).get("applied_sha"),
-            "control_plane_status": self.state.get("control_plane", {}).get("status"),
-        }
-
-        cross_lane: dict[str, Any] = {}
-        for other_name in LANE_ORDER:
-            other = self.state.get("lanes", {}).get(other_name, {})
-            other_tree = str(other.get("worktree") or self.config["lanes"][other_name]["worktree"])
-            status_ok, other_entries, other_error = self.git_status_details(other_tree)
-            cross_lane[other_name] = {
-                "phase": other.get("phase_id"),
-                "state": other.get("state"),
-                "head": self.git_head(other_tree),
-                "changed_files": status_paths(other_entries) if status_ok else [],
-                "status_error": redact(other_error) if not status_ok else None,
-                "recent_history": redact_value(list(other.get("history", []))[-3:]),
-            }
-
-        max_context_files = max(1, int(self.config.get("architect_review", {}).get("max_context_files", 32)))
-        max_context_bytes = max(4096, int(self.config.get("architect_review", {}).get("max_context_bytes", 512 * 1024)))
-        remaining_context = max_context_bytes
-        repository_context: list[dict[str, Any]] = []
-        worktree_root = Path(worktree).resolve()
-        status_by_path = {str(item.get("path")): item for item in entries if item.get("path")}
-        for relative in changed_files[:max_context_files]:
-            record = status_by_path.get(relative, {})
-            candidate = worktree_root / relative
-            context_record: dict[str, Any] = {
-                "path": redact(relative),
-                "status": record,
-                "content_status": "omitted",
-            }
-            try:
-                resolved = candidate.resolve()
-                resolved.relative_to(worktree_root)
-                metadata = candidate.lstat()
-                if candidate.is_symlink() or not candidate.is_file():
-                    context_record["content_status"] = "not a regular file"
-                elif metadata.st_size > min(64 * 1024, remaining_context):
-                    context_record["content_status"] = f"omitted: {metadata.st_size} bytes exceeds remaining context bound"
-                else:
-                    raw = candidate.read_bytes()
-                    try:
-                        contents = raw.decode("utf-8")
-                    except UnicodeDecodeError:
-                        context_record["content_status"] = "omitted: binary or non-UTF-8 content"
-                    else:
-                        contents = redact(contents)
-                        context_record["worktree_content"] = contents
-                        context_record["content_status"] = "included"
-                        remaining_context -= len(contents.encode("utf-8", errors="replace"))
-            except (OSError, ValueError) as exc:
-                context_record["content_status"] = f"unavailable: {type(exc).__name__}"
-            repository_context.append(context_record)
-
-        history = redact_value(list(lane.get("history", []))[-5:])
-        base_head = None
-        for entry in reversed(lane.get("history", [])):
-            if isinstance(entry, dict) and entry.get("commit") and entry.get("phase") != phase_id:
-                base_head = entry.get("commit")
-                break
-        evidence_ids = [
-            "bundle.diff", "bundle.worktree_status", "bundle.worker_result",
-            "bundle.validation", "bundle.ci", "bundle.review_packet",
-            "bundle.phase_plan", "bundle.product_vision", "bundle.world_rules",
-            "bundle.milestone", "bundle.roadmap", "bundle.cross_lane_interfaces",
-            "bundle.repository_context", "bundle.accepted_history", "bundle.control_plane",
-        ]
-        for filename in self.config.get("required_workflows", []):
-            evidence_ids.append(f"ci:{filename}")
-        for relative in changed_files:
-            evidence_ids.append(f"diff:{relative}")
-        for record in repository_context:
-            evidence_ids.append(f"repo:{record['path']}")
-        evidence_ids = sorted(set(evidence_ids))
-
-        diff_bytes = diff_text.encode("utf-8", errors="replace")
-        max_diff_bytes = max(1, int(self.config.get("max_total_diff_bytes", 524288)))
-        diff_truncated = (
-            len(diff_bytes) >= max_diff_bytes
-            or "[review diff text truncated to configured bound]" in diff_text
-            or int(diff_metrics.get("total_diff_bytes", 0)) > max_diff_bytes
-        )
-        state_material = {
-            "lane": lane_name,
-            "lane_state": lane.get("state"),
-            "phase": phase_id,
-            "lane_phase": lane.get("phase_id"),
-            "review_type": review_type,
-            "reviewed_phase": redact_value(reviewed_phase),
-            "next_phase": redact_value(review.get("next_phase")),
-            "head": head,
-            "branch": branch,
-            "status": status_evidence,
-            "diff_sha256": __import__("hashlib").sha256(diff_bytes).hexdigest(),
-            "worker_attempt": lane.get("worker_attempt", 0),
-            "worker_result": lane.get("worker_result"),
-            "worker_log_sha256": __import__("hashlib").sha256(redact(worker_log).encode("utf-8")).hexdigest(),
-            "validation": validation_evidence,
-            "ci": ci,
-            "control_plane": roadmap_evidence["control_plane_sha"],
-            "control_plane_status": roadmap_evidence["control_plane_status"],
-            "roadmap": roadmap_evidence,
-            "cross_lane": cross_lane,
-            "review_packet_sha256": __import__("hashlib").sha256((packet_text or "").encode("utf-8")).hexdigest(),
-            "diff_truncated": diff_truncated,
-        }
-        review_state_sha = stable_review_state_sha256(state_material)
-        review_id = review_identity(lane_name, phase_id, review_type, head, review_state_sha)
-        bundle = {
-            "bundle_schema_version": 2,
-            "review_id": review_id,
-            "review_state_sha256": review_state_sha,
-            "lane": lane_name,
-            "phase": phase_id,
-            "review_type": review_type,
-            "reviewed_phase": redact_value(reviewed_phase),
-            "next_phase": redact_value(review.get("next_phase")),
-            "reviewed_sha": head,
-            "base_previous_accepted_head": base_head,
-            "branch": branch,
-            "worktree": worktree,
-            "worker_attempt": lane.get("worker_attempt", 0),
-            "worker_result": lane.get("worker_result"),
-            "validation_gap": redact_value(lane.get("validation_gap", {})),
-            "validation": validation_evidence,
-            "exact_sha_ci": ci,
-            "worker_log_tail": redact(worker_log),
-            "review_packet": {"status": packet_status, "text": packet_text},
-            "phase_plan": {"status": plan_status, "text": plan_text},
-            "product_vision": {"status": product_status.get("PRODUCT_VISION.md"), "text": product_context.get("PRODUCT_VISION.md")},
-            "world_rules": {"status": product_status.get("WORLD_RULES.md"), "text": product_context.get("WORLD_RULES.md")},
-            "milestone_definition": {"status": product_status.get("MILESTONE_01_CORE_WORLD.md"), "text": product_context.get("MILESTONE_01_CORE_WORLD.md")},
-            "roadmap_dependencies_and_gates": roadmap_evidence,
-            "cross_lane_interfaces": cross_lane,
-            "recent_accepted_lane_history": history,
-            "worktree_evidence": {
-                "status_entries": status_evidence,
-                "status_error": redact(status_error),
-                "changed_files": [redact(item) for item in changed_files],
-                "diff_stats": redact(diff_stats),
-                "diff_metrics": redact_value(diff_metrics),
-                "diff_truncated": diff_truncated,
-                "diff_exact": redact(diff_text),
-            },
-            "repository_context": repository_context,
-            "evidence_ids": evidence_ids,
-        }
-        bundle = redact_value(bundle)
-        bundle = normalize_review_evidence(bundle)
-        if len(canonical_json(bundle).encode("utf-8")) > MAX_ARCHITECT_REVIEW_BUNDLE_BYTES:
-            raise RuntimeError("review bundle exceeds the fail-closed size limit")
-        bundle_dir = self._architect_review_root() / "bundles" / review_id
-        bundle_dir.mkdir(parents=True, exist_ok=True, mode=0o750)
-        bundle_path = bundle_dir / "bundle.json"
-        schema_path = bundle_dir / "response-schema.json"
-        if bundle_path.exists():
-            existing = json.loads(bundle_path.read_text(encoding="utf-8"))
-            if canonical_json(existing) != canonical_json(bundle):
-                raise RuntimeError("immutable review bundle identity collision")
-        else:
-            atomic_write_json(bundle_path, bundle, 0o440)
-        if schema_path.exists():
-            existing_schema = json.loads(schema_path.read_text(encoding="utf-8"))
-            if canonical_json(existing_schema) != canonical_json(REVIEW_OUTPUT_SCHEMA):
-                raise RuntimeError("immutable review schema changed for an existing bundle")
-        else:
-            atomic_write_json(schema_path, REVIEW_OUTPUT_SCHEMA, 0o440)
-        os.chmod(bundle_dir, 0o550)
-        bundle["bundle_path"] = str(bundle_path)
-        bundle["bundle_dir"] = str(bundle_dir)
-        return bundle
+        return super().build_review_bundle(lane_name)
 
     def _phase_counter(self, lane_name: str, phase_id: str, commit_sha: str) -> dict[str, Any]:
         review = self.state.setdefault("architect_review", {})
@@ -4387,53 +4261,7 @@ an actually failing command is not a validation gap.
         return counter
 
     def queue_sol_reviews(self) -> int:
-        review_state = self.state.setdefault("architect_review", {})
-        if not review_state.get("enabled") or not self._control_plane_valid():
-            return 0
-        queued = 0
-        queue = review_state.setdefault("queue", [])
-        items = review_state.setdefault("items", {})
-        for lane_name in LANE_ORDER:
-            lane = self.state.get("lanes", {}).get(lane_name, {})
-            if lane.get("state") != "NEEDS_SOL_REVIEW":
-                continue
-            try:
-                bundle = self.build_review_bundle(lane_name)
-                review_id = str(bundle["review_id"])
-                self._phase_counter(lane_name, str(bundle["phase"]), str(bundle["reviewed_sha"]))
-                item = items.get(review_id)
-                if not isinstance(item, dict):
-                    item = {
-                        "review_id": review_id,
-                        "lane": lane_name,
-                        "phase": bundle["phase"],
-                        "review_type": bundle["review_type"],
-                        "reviewed_sha": bundle["reviewed_sha"],
-                        "review_state_sha256": bundle["review_state_sha256"],
-                        "bundle_dir": bundle["bundle_dir"],
-                        "bundle_path": bundle["bundle_path"],
-                        "worker_attempt": bundle["worker_attempt"],
-                        "control_plane_sha": self.state.get("control_plane", {}).get("applied_sha"),
-                        "status": "QUEUED",
-                        "launch_attempts": 0,
-                        "created_at": utc_now(),
-                        "decision": None,
-                    }
-                    items[review_id] = item
-                    self.event(f"queued autonomous Sol review for {lane_name}/{bundle['phase']}", lane_name)
-                if item.get("status") == "QUEUED" and review_id not in queue:
-                    queue.append(review_id)
-                    queued += 1
-            except Exception as exc:
-                self.log(f"could not prepare autonomous review bundle: {type(exc).__name__}: {redact(str(exc))}", lane_name)
-                review_state.setdefault("bundle_failures", {})[lane_name] = {
-                    "phase": lane.get("phase_id"),
-                    "at": utc_now(),
-                    "reason": redact(f"{type(exc).__name__}: {exc}")[:1000],
-                }
-        if queued:
-            self.save_state()
-        return queued
+        return super().queue_sol_reviews()
 
     def make_task_review_packet(self, task: ScheduledTask, reason: str) -> Path:
         """Write bounded metadata for a roadmap-native pre-task Sol gate."""
@@ -4800,9 +4628,14 @@ operator decision.
         for lane_name in LANE_ORDER:
             lane = self.state.get("lanes", {}).get(lane_name, {})
             review = lane.get("review", {})
-            if lane.get("state") == "NEEDS_SOL_REVIEW":
+            terminal_architect_block = (
+                lane.get("state") == "BLOCKED"
+                and review.get("decision") == "SOL_BLOCKED"
+                and str(review.get("commit_sha") or "") == str(lane.get("last_commit") or "")
+            )
+            if lane.get("state") == "NEEDS_SOL_REVIEW" or terminal_architect_block:
                 review_gated.append(lane_name)
-            if lane.get("state") == "NEEDS_SOL_REVIEW" and review.get("type") == "POST_PHASE_CHECKPOINT":
+            if (lane.get("state") == "NEEDS_SOL_REVIEW" or terminal_architect_block) and review.get("type") == "POST_PHASE_CHECKPOINT":
                 waiting_checkpoint.append(lane_name)
             record = records.get(lane.get("phase_id")) if isinstance(records, dict) else None
             if (
@@ -4824,6 +4657,11 @@ operator decision.
             review_id for review_id, item in review_items.items()
             if isinstance(item, dict) and item.get("status") == "QUEUED"
         ) if isinstance(review_items, dict) else []
+        evidence_errors = architect.get("evidence_errors", {}) if isinstance(architect, dict) else {}
+        evidence_error_lanes = sorted({
+            str(item.get("lane")) for item in evidence_errors.values()
+            if isinstance(item, dict) and item.get("status") in {"EVIDENCE_ERROR", "REQUIRES_INFRA_REVIEW"}
+        }) if isinstance(evidence_errors, dict) else []
         active_review = architect.get("active_review_id") if isinstance(architect, dict) else None
         availability = architect.get("availability", {}) if isinstance(architect, dict) else {}
         if runnable:
@@ -4833,12 +4671,16 @@ operator decision.
         elif queued_reviews:
             retry_at = availability.get("next_retry_at") if isinstance(availability, dict) else None
             idle_reason = f"Sol architect review is queued; retry after {retry_at}" if retry_at else "Sol architect review is queued"
+        elif evidence_error_lanes:
+            idle_reason = "review evidence failure requires infrastructure review for " + ", ".join(evidence_error_lanes)
+        elif review_gated and external:
+            idle_reason = "active lanes blocked by architect decisions; future roadmap tasks are externally gated"
         elif review_gated:
             failed = any(
                 isinstance(item, dict) and item.get("status") == "FAILED"
                 for item in review_items.values()
             ) if isinstance(review_items, dict) else False
-            idle_reason = "reviewer failure limit reached; human review is required" if failed else "active lanes are gated on exact-state architect or human review"
+            idle_reason = "reviewer failure limit reached; human review is required" if failed else "active lanes are blocked or gated on exact-state architect review"
         elif external:
             idle_reason = "remaining roadmap tasks are externally gated"
         elif self.state.get("global_mode") != "RUNNING":
@@ -4849,6 +4691,7 @@ operator decision.
             "runnable": runnable,
             "review_gated": sorted(set(review_gated)),
             "waiting_checkpoint": sorted(set(waiting_checkpoint)),
+            "review_evidence_error_lanes": evidence_error_lanes,
             "external_gated_future_tasks": external,
             "queued_reviews": queued_reviews,
             "active_review": active_review,
@@ -5046,6 +4889,14 @@ operator decision.
             print(f"  availability: {availability.get('status', 'UNKNOWN') if isinstance(availability, dict) else 'UNKNOWN'}")
             print(f"  next_retry_at: {availability.get('next_retry_at') or 'none' if isinstance(availability, dict) else 'none'}")
             print(f"  idle_reason: {architect.get('idle_reason') or 'none'}")
+            evidence_errors = architect.get("evidence_errors", {})
+            if isinstance(evidence_errors, dict):
+                active_errors = [item for item in evidence_errors.values()
+                                 if isinstance(item, dict) and item.get("status") in {"EVIDENCE_ERROR", "REQUIRES_INFRA_REVIEW"}]
+                print(f"  evidence_errors: {len(active_errors)}")
+                for item in sorted(active_errors, key=lambda row: (str(row.get("lane")), str(row.get("phase")))):
+                    retry = item.get("next_retry_at") or "none"
+                    print(f"    {item.get('status')} lane={item.get('lane')} phase={item.get('phase')} sha={item.get('reviewed_sha')} code={item.get('error_code')} attempts={item.get('attempts')} retry_at={retry}")
         return 0
 
     def healthcheck(self) -> int:
@@ -5287,6 +5138,9 @@ def main() -> int:
     sub.add_parser("self-test")
     sub.add_parser("worker-smoke-test")
     sub.add_parser("architect-review-smoke-test")
+    re_review = sub.add_parser("re-review-v3")
+    re_review.add_argument("--target", action="append", nargs=3, required=True,
+                           metavar=("LANE", "PHASE", "SHA"))
     for command_name in ("approve", "retry", "block"):
         command_parser = sub.add_parser(command_name)
         command_parser.add_argument("lane", choices=LANE_ORDER)
@@ -5321,6 +5175,11 @@ def main() -> int:
             operator_args = {"task_id": args.task_id}
         elif args.command == "approve-control-plane":
             operator_args = {"sha": args.sha}
+        elif args.command == "re-review-v3":
+            operator_args = {"targets": [
+                {"lane": lane, "phase": phase, "sha": sha}
+                for lane, phase, sha in args.target
+            ]}
         elif args.command == "accept-milestone":
             evidence: dict[str, Any] = {}
             if args.evidence_file:

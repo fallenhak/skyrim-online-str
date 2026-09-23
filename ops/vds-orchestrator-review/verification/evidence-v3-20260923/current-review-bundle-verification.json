@@ -1,0 +1,205 @@
+{
+  "applied_decisions": [
+    {
+      "application_reason": "exact-state checkpoint approved; phase advanced once",
+      "confidence": "high",
+      "decision": "APPROVE",
+      "failure_count": 0,
+      "lane": "combat",
+      "launch_attempts": 1,
+      "phase": "C05",
+      "required_action_count": 0,
+      "review_id": "c3d20c8b18a2f186fdb586c9ccc3526361da10bd7c530d09e79834a6d8773b00",
+      "status": "APPLIED"
+    },
+    {
+      "application_reason": "bounded retry cycle 1/3 authorized for the same phase",
+      "confidence": "high",
+      "decision": "RETRY",
+      "failure_count": 0,
+      "lane": "authority",
+      "launch_attempts": 1,
+      "phase": "A09",
+      "required_action_count": 4,
+      "review_id": "2c03f6b96f676c62b08840cbe59c58e936aa63f4c6191a5fa4f73fc99b67fc03",
+      "status": "APPLIED"
+    },
+    {
+      "application_reason": "bounded retry cycle 2/3 authorized for the same phase",
+      "confidence": "high",
+      "decision": "RETRY",
+      "failure_count": 0,
+      "lane": "population",
+      "launch_attempts": 1,
+      "phase": "L05",
+      "required_action_count": 3,
+      "review_id": "0de40a351612b6cd788c671f55a38f4b97cd5bd2cf1722ece53e797cdc4be7d4",
+      "status": "APPLIED"
+    },
+    {
+      "application_reason": "exact-state checkpoint approved; phase advanced once",
+      "confidence": "medium",
+      "decision": "APPROVE",
+      "failure_count": 1,
+      "lane": "ui",
+      "launch_attempts": 2,
+      "phase": "U04",
+      "required_action_count": 0,
+      "review_id": "12d4fd2b746821f51d39f39039d96674de01e65195b45be547c7594072935932",
+      "status": "APPLIED"
+    }
+  ],
+  "captured_at_utc": "2026-09-23T10:56:14.007603+00:00",
+  "control_plane_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
+  "method": "independent recomputation from immutable V3 bundles and each exact-SHA lane worktree; no reviewer decision inferred",
+  "reviews": [
+    {
+      "ancestor_validated": true,
+      "bundle_sha256": "a8ac0b2749080b83abf606e1f056a8ea4b4bac87a8e5d947ec89861818f7c712",
+      "ci_workflows": [
+        {
+          "conclusion": "success",
+          "run_id": 35807348533,
+          "sha": "8007bfa4625bd611458cd714241c1ea69dad9abf",
+          "status": "completed",
+          "workflow": "Build linux"
+        },
+        {
+          "conclusion": "success",
+          "run_id": 35807348546,
+          "sha": "8007bfa4625bd611458cd714241c1ea69dad9abf",
+          "status": "completed",
+          "workflow": "Build windows"
+        }
+      ],
+      "clean_worktree_at_capture": true,
+      "committed_diff_sha256": "330476c8e94ac189b282c5ae9a175a8906d6fc490f41f1faa75785edc0c78f9f",
+      "committed_file_count": 3,
+      "context_entries_redacted_vs_git_blob": 0,
+      "exact_sha_source_context_git_blob_hashes_verified": 3,
+      "lane": "combat",
+      "omitted_source_context_files": 0,
+      "phase": "C05",
+      "phase_commit_shas": [
+        "8007bfa4625bd611458cd714241c1ea69dad9abf"
+      ],
+      "product_roadmap_context_present": true,
+      "review_id": "c3d20c8b18a2f186fdb586c9ccc3526361da10bd7c530d09e79834a6d8773b00",
+      "review_state_sha256": "9d5feb5a4c28442eeb3388463f3dfe5c86324d7275fe0bc05f9b7bd0697996a0",
+      "reviewed_sha": "8007bfa4625bd611458cd714241c1ea69dad9abf",
+      "trusted_base": "e54145143df19f55b7e9556120e3c01fab5d5ccd"
+    },
+    {
+      "ancestor_validated": true,
+      "bundle_sha256": "22bed37e19c56342ff6232eb45cb31a5fe49af28f66e09dc6f5713ddab6b59bb",
+      "ci_workflows": [
+        {
+          "conclusion": "success",
+          "run_id": 35823298403,
+          "sha": "c9fae7f73f65d813c3fe3a4284caad71fada53a9",
+          "status": "completed",
+          "workflow": "Build linux"
+        },
+        {
+          "conclusion": "success",
+          "run_id": 35823298424,
+          "sha": "c9fae7f73f65d813c3fe3a4284caad71fada53a9",
+          "status": "completed",
+          "workflow": "Build windows"
+        }
+      ],
+      "clean_worktree_at_capture": true,
+      "committed_diff_sha256": "383c21895cc9b128af99a34663efe1e42f597534f4c25612c10362c43ff90943",
+      "committed_file_count": 13,
+      "context_entries_redacted_vs_git_blob": 1,
+      "exact_sha_source_context_git_blob_hashes_verified": 13,
+      "lane": "authority",
+      "omitted_source_context_files": 0,
+      "phase": "A09",
+      "phase_commit_shas": [
+        "19253e4fdc29984d66afa14ac718e2db378db70a",
+        "c9fae7f73f65d813c3fe3a4284caad71fada53a9"
+      ],
+      "product_roadmap_context_present": true,
+      "review_id": "2c03f6b96f676c62b08840cbe59c58e936aa63f4c6191a5fa4f73fc99b67fc03",
+      "review_state_sha256": "68fe8b9b6ee0e8d7b9caaff8ccafb0d185c9373b6e8c5324aa36a10e0abc332b",
+      "reviewed_sha": "c9fae7f73f65d813c3fe3a4284caad71fada53a9",
+      "trusted_base": "d56507332a0baf14d2077896997af55fd327daa0"
+    },
+    {
+      "ancestor_validated": true,
+      "bundle_sha256": "24e2aca9d96407dca8fea1b4157e415aca67246de458a723482bd41a85fca1bf",
+      "ci_workflows": [
+        {
+          "conclusion": "success",
+          "run_id": 35820516014,
+          "sha": "74d992001cfc63a7bb16ee7418f11bf05de07148",
+          "status": "completed",
+          "workflow": "Build linux"
+        },
+        {
+          "conclusion": "success",
+          "run_id": 35820516120,
+          "sha": "74d992001cfc63a7bb16ee7418f11bf05de07148",
+          "status": "completed",
+          "workflow": "Build windows"
+        }
+      ],
+      "clean_worktree_at_capture": true,
+      "committed_diff_sha256": "3ba6a447e197121a681e23377fa24b551222c0e7713eb54ee24a22b756243c9e",
+      "committed_file_count": 7,
+      "context_entries_redacted_vs_git_blob": 0,
+      "exact_sha_source_context_git_blob_hashes_verified": 7,
+      "lane": "population",
+      "omitted_source_context_files": 0,
+      "phase": "L05",
+      "phase_commit_shas": [
+        "10afd89156b70ff2b3cb003f3ef105126a4f5a00",
+        "007ffa541f97c39200edeff9d0edd68d6958e0b8",
+        "bc2d8dee67109b0a0cb30895f2ccb665ee41af3b",
+        "74d992001cfc63a7bb16ee7418f11bf05de07148"
+      ],
+      "product_roadmap_context_present": true,
+      "review_id": "0de40a351612b6cd788c671f55a38f4b97cd5bd2cf1722ece53e797cdc4be7d4",
+      "review_state_sha256": "507adf61072ab6e4a93766207a0a964ab7ada9ecb48d41ac2389c929ca2c7637",
+      "reviewed_sha": "74d992001cfc63a7bb16ee7418f11bf05de07148",
+      "trusted_base": "df675b9fc3163385095d47c6a90b280f604dd87f"
+    },
+    {
+      "ancestor_validated": true,
+      "bundle_sha256": "6cab3ad67d0d55263763cb90428014e25a4497ccc051f3c2906ccfbd4ee968b7",
+      "ci_workflows": [
+        {
+          "conclusion": "success",
+          "run_id": 35804185450,
+          "sha": "6d32bdab944a904098c0c91953fe6d3c0b641753",
+          "status": "completed",
+          "workflow": "Build linux"
+        },
+        {
+          "conclusion": "success",
+          "run_id": 35804185451,
+          "sha": "6d32bdab944a904098c0c91953fe6d3c0b641753",
+          "status": "completed",
+          "workflow": "Build windows"
+        }
+      ],
+      "clean_worktree_at_capture": true,
+      "committed_diff_sha256": "b6409a024d3b4190b8ae877402af0da5bbc404267c621c9a64c66060e75b9d91",
+      "committed_file_count": 12,
+      "context_entries_redacted_vs_git_blob": 1,
+      "exact_sha_source_context_git_blob_hashes_verified": 12,
+      "lane": "ui",
+      "omitted_source_context_files": 0,
+      "phase": "U04",
+      "phase_commit_shas": [
+        "6d32bdab944a904098c0c91953fe6d3c0b641753"
+      ],
+      "product_roadmap_context_present": true,
+      "review_id": "12d4fd2b746821f51d39f39039d96674de01e65195b45be547c7594072935932",
+      "review_state_sha256": "b517cc1becaf3e1e1a0462640c81910e23cfca1f7c1f254f24366d3d3c6bec2a",
+      "reviewed_sha": "6d32bdab944a904098c0c91953fe6d3c0b641753",
+      "trusted_base": "4093a55b435ab9f02d8ee6788861deaa7f8e768f"
+    }
+  ]
+}

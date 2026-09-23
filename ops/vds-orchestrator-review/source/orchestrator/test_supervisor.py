@@ -282,6 +282,38 @@ class LiveWorkerObserverHarness(Harness):
         return 0, "", ""
 
 
+class TerminalReviewSchedulerHarness(Harness):
+    def __init__(self) -> None:
+        super().__init__()
+        self._control_plane_valid = lambda: True
+        self.roadmap_snapshot = SimpleNamespace(
+            workstreams={
+                lane: {"id": f"existing-{lane}", "mode": "EXISTING_PLAN", "lane": lane,
+                       "milestone_id": "M01", "external_gates": []}
+                for lane in supervisor.LANE_ORDER
+            },
+            milestones={"M01": {"status": "ACTIVE", "executable": True}},
+            tasks={},
+        )
+        self.config["lanes"] = {lane: {"branch": f"parallel/{lane}", "worktree": f"/tmp/{lane}"}
+                                 for lane in supervisor.LANE_ORDER}
+        self.state.update({"global_mode": "RUNNING", "control_plane": {"applied_sha": "c" * 40, "status": "VALID"}})
+        self.state["scheduler"] = {"tasks": {}, "approvals": {}, "reviews": {}, "workstreams": {},
+                                    "milestones": {}, "resolved_external_gates": [], "audit": []}
+        self.state["lanes"] = {}
+        for lane in supervisor.LANE_ORDER:
+            phase = {"combat": "C01", "authority": "A01", "population": "L01", "ui": "U01"}[lane]
+            state = "BLOCKED" if lane == "combat" else "NEEDS_SOL_REVIEW"
+            sha = "a" * 40 if lane == "combat" else "b" * 40
+            self.state["lanes"][lane] = {
+                "state": state, "phase_id": phase, "phase_title": phase,
+                "phase_index": 0, "last_commit": sha,
+                "review": ({"type": "POST_PHASE_CHECKPOINT", "decision": "SOL_BLOCKED", "commit_sha": sha}
+                           if lane == "combat" else {"type": "CURRENT_PHASE_REVIEW", "commit_sha": sha}),
+                "plan_data": {"phases": [{"id": phase, "title": phase}], "boundaries": []},
+            }
+
+
 class SchedulingHarness(Harness):
     def __init__(self, lane_states: dict[str, str], task_states: dict[str, str]) -> None:
         super().__init__()
@@ -943,6 +975,57 @@ class SupervisorLogicTests(unittest.TestCase):
         self.assertEqual(summary["runnable"], [])
         self.assertIn("authority", summary["waiting_checkpoint"])
         self.assertEqual(summary["external_gated_future_tasks"], 1)
+
+    def test_terminal_architect_block_is_persisted_as_blocked_review_not_ready(self) -> None:
+        h = TerminalReviewSchedulerHarness()
+        h._recompute_scheduler()
+        record = h.state["scheduler"]["tasks"]["C01"]
+        self.assertEqual(record["state"], "BLOCKED_REVIEW")
+        self.assertIn("terminal architect BLOCK", record["reason"])
+        self.assertNotEqual(record["state"], "READY")
+
+    def test_blocked_active_lane_and_external_future_gate_are_explained(self) -> None:
+        h = SchedulingHarness(
+            {lane: "NEEDS_SOL_REVIEW" for lane in supervisor.LANE_ORDER}, {},
+        )
+        lane = h.state["lanes"]["combat"]
+        lane.update({"state": "BLOCKED", "last_commit": "a" * 40,
+                     "review": {"type": "POST_PHASE_CHECKPOINT", "decision": "SOL_BLOCKED",
+                                "commit_sha": "a" * 40}})
+        h.state["scheduler"]["tasks"]["future"] = {
+            "task_id": "future", "source": "ROADMAP", "state": "BLOCKED_EXTERNAL_GATE"
+        }
+        summary = h.scheduler_idle_summary()
+        self.assertIn("combat", summary["review_gated"])
+        self.assertIn("combat", summary["waiting_checkpoint"])
+        self.assertIn("active lanes blocked", summary["idle_reason"])
+        self.assertEqual(summary["external_gated_future_tasks"], 1)
+
+    def test_review_evidence_error_is_separate_from_lane_decision(self) -> None:
+        h = Harness()
+        h.config["architect_review"] = {"deterministic_evidence_error_max_attempts": 3, "evidence_error_backoff_seconds": 1}
+        h.state["lanes"]["combat"] = {"state": "NEEDS_SOL_REVIEW", "phase_id": "C05"}
+        h.state["architect_review"] = {"items": {}}
+        before = deepcopy(h.state["architect_review"]["items"])
+        error = supervisor.ReviewEvidenceError("EXACT_SHA_CI_MISSING", "CI evidence unavailable", deterministic=True)
+        item = h._record_review_evidence_error("combat", "C05", "POST_PHASE_CHECKPOINT", "a" * 40, error)
+        self.assertEqual(item["status"], "EVIDENCE_ERROR")
+        self.assertEqual(h.state["lanes"]["combat"]["state"], "NEEDS_SOL_REVIEW")
+        self.assertEqual(h.state["architect_review"]["items"], before)
+        self.assertEqual(len(h.state["architect_review"]["evidence_errors"]), 1)
+
+    def test_deterministic_evidence_error_escalates_after_bounded_attempts(self) -> None:
+        h = Harness()
+        h.config["architect_review"] = {"deterministic_evidence_error_max_attempts": 2, "evidence_error_backoff_seconds": 1}
+        h.state["architect_review"] = {"items": {}}
+        error = supervisor.ReviewEvidenceError("TRUSTED_BASE_MISSING", "no accepted base", deterministic=True)
+        first = deepcopy(h._record_review_evidence_error("combat", "C05", "CURRENT_PHASE_REVIEW", "b" * 40, error))
+        second = h._record_review_evidence_error("combat", "C05", "CURRENT_PHASE_REVIEW", "b" * 40, error)
+        self.assertEqual(first["status"], "EVIDENCE_ERROR")
+        self.assertEqual(first["attempts"], 1)
+        self.assertEqual(second["status"], "REQUIRES_INFRA_REVIEW")
+        self.assertEqual(second["attempts"], 2)
+        self.assertIsNone(second["next_retry_at"])
 
     def test_required_workflows_all_success(self) -> None:
         runs = [

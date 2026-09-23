@@ -1,0 +1,178 @@
+{
+  "architect_review": {
+    "active_review_id": null,
+    "decisions": [
+      {
+        "application_reason": "exact-state checkpoint approved; phase advanced once",
+        "confidence": "high",
+        "decision": "APPROVE",
+        "evidence_version": 3,
+        "failure_count": 0,
+        "lane": "combat",
+        "launch_attempts": 1,
+        "phase": "C05",
+        "review_id": "c3d20c8b18a2f186fdb586c9ccc3526361da10bd7c530d09e79834a6d8773b00",
+        "reviewed_sha": "8007bfa4625bd611458cd714241c1ea69dad9abf",
+        "status": "APPLIED"
+      },
+      {
+        "application_reason": "bounded retry cycle 1/3 authorized for the same phase",
+        "confidence": "high",
+        "decision": "RETRY",
+        "evidence_version": 3,
+        "failure_count": 0,
+        "lane": "authority",
+        "launch_attempts": 1,
+        "phase": "A09",
+        "review_id": "2c03f6b96f676c62b08840cbe59c58e936aa63f4c6191a5fa4f73fc99b67fc03",
+        "reviewed_sha": "c9fae7f73f65d813c3fe3a4284caad71fada53a9",
+        "status": "APPLIED"
+      },
+      {
+        "application_reason": "bounded retry cycle 2/3 authorized for the same phase",
+        "confidence": "high",
+        "decision": "RETRY",
+        "evidence_version": 3,
+        "failure_count": 0,
+        "lane": "population",
+        "launch_attempts": 1,
+        "phase": "L05",
+        "review_id": "0de40a351612b6cd788c671f55a38f4b97cd5bd2cf1722ece53e797cdc4be7d4",
+        "reviewed_sha": "74d992001cfc63a7bb16ee7418f11bf05de07148",
+        "status": "APPLIED"
+      },
+      {
+        "application_reason": "exact-state checkpoint approved; phase advanced once",
+        "confidence": "medium",
+        "decision": "APPROVE",
+        "evidence_version": 3,
+        "failure_count": 1,
+        "lane": "ui",
+        "launch_attempts": 2,
+        "phase": "U04",
+        "review_id": "12d4fd2b746821f51d39f39039d96674de01e65195b45be547c7594072935932",
+        "reviewed_sha": "6d32bdab944a904098c0c91953fe6d3c0b641753",
+        "status": "APPLIED"
+      }
+    ],
+    "enabled": true,
+    "evidence_error_count": 0,
+    "operator_v3_targets": null,
+    "queue": [],
+    "read_only_while_paused": false
+  },
+  "captured_at_utc": "2026-09-23T11:28:40Z",
+  "control_plane": {
+    "applied_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
+    "branch": "orchestration/control-plane",
+    "observed_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
+    "status": "VALID",
+    "validation_error": ""
+  },
+  "global_mode": "RUNNING",
+  "lanes": [
+    {
+      "branch": "parallel/interaction-authority",
+      "ci_sha": "c9fae7f73f65d813c3fe3a4284caad71fada53a9",
+      "ci_status": "PASS",
+      "head": "c9fae7f73f65d813c3fe3a4284caad71fada53a9",
+      "lane": "authority",
+      "phase": "A09",
+      "review_decision": "SOL_RETRY_CHECKPOINT_PHASE",
+      "review_type": "POST_PHASE_CHECKPOINT",
+      "reviewed_phase": {
+        "id": "A09",
+        "title": "Object Activate/LockChange/AssignObjects trust and sender-range audit. Harden obvious spoof paths."
+      },
+      "state": "CODING",
+      "worker_pid": 404453
+    },
+    {
+      "branch": "parallel/combat-foundations",
+      "ci_sha": "8007bfa4625bd611458cd714241c1ea69dad9abf",
+      "ci_status": "PASS",
+      "head": "8007bfa4625bd611458cd714241c1ea69dad9abf",
+      "lane": "combat",
+      "phase": "C06",
+      "review_decision": "APPROVED_ADVANCE_ONCE",
+      "review_type": "POST_PHASE_CHECKPOINT",
+      "reviewed_phase": {
+        "id": "C05",
+        "title": "Implement pure attacker authorization: InWorld, current owner/epoch, eligible persistent attacker identity resolved server-side."
+      },
+      "state": "CODING",
+      "worker_pid": 403175
+    },
+    {
+      "branch": "parallel/population-loader",
+      "ci_sha": "9c665e0f0ac21fced7cbcf567904328e75aca942",
+      "ci_status": "WAIT",
+      "head": "9c665e0f0ac21fced7cbcf567904328e75aca942",
+      "lane": "population",
+      "phase": "L05",
+      "review_decision": "SOL_RETRY_CHECKPOINT_PHASE",
+      "review_type": "POST_PHASE_CHECKPOINT",
+      "reviewed_phase": {
+        "id": "L05",
+        "title": "Verify master mapping/reference prefix resolution for NPC, RACE, ACHR across multiple masters and overrides."
+      },
+      "state": "WAITING_FOR_CI",
+      "worker_pid": null
+    },
+    {
+      "branch": "parallel/character-ui",
+      "ci_sha": "45b6eb4f6f0bcdcc105f1f048cf09d239716a53f",
+      "ci_status": "WAIT",
+      "head": "45b6eb4f6f0bcdcc105f1f048cf09d239716a53f",
+      "lane": "ui",
+      "phase": "U05",
+      "review_decision": "APPROVED_ADVANCE_ONCE",
+      "review_type": "POST_PHASE_CHECKPOINT",
+      "reviewed_phase": {
+        "id": "U04",
+        "title": "Add Character Select route/screen with loading/empty/error/list states."
+      },
+      "state": "WAITING_FOR_CI",
+      "worker_pid": null
+    }
+  ],
+  "live_codex_processes_by_model": {
+    "gpt-6-luna": 2
+  },
+  "m02_plus_execution": false,
+  "milestone": {
+    "acceptance": [
+      "Character Select is the player entry flow.",
+      "Selected Character is server-owned and restored on reconnect.",
+      "Ordinary humanoid NPC population is suppressed.",
+      "Trusted creatures remain and synchronize.",
+      "Creature lifecycle/death authority is coherent.",
+      "A renewable dungeon/encounter can reset with fresh incarnations.",
+      "Two-client Windows runtime acceptance evidence is reviewed."
+    ],
+    "id": "M01",
+    "state": "ACTIVE",
+    "title": "Core World",
+    "updated_at": "2026-09-23T11:28:23+00:00"
+  },
+  "mode_reason": "operator requested resume",
+  "runtime_milestone_acceptance_recorded": false,
+  "scheduler_idle_projection": [
+    "RUNNABLE WORK: 0",
+    "REVIEW-GATED LANES: none",
+    "WAITING CHECKPOINT: none",
+    "EXTERNAL-GATED FUTURE TASKS: 10",
+    "IDLE REASON: remaining roadmap tasks are externally gated"
+  ],
+  "service_units": {
+    "skyrim-dev-healthcheck.timer": {
+      "active": "active",
+      "enabled": "enabled"
+    },
+    "skyrim-dev-orchestrator.service": {
+      "active": "active",
+      "enabled": "enabled"
+    }
+  },
+  "worker_cap": 2
+}

@@ -1,5 +1,33 @@
 # Skyrim Supervisor Roadmap / Dependency Control Plane review snapshot
 
+## V3.3 exact-SHA architect evidence repair — 2026-09-23
+
+This repair builds immutable evidence from the trusted accepted phase boundary
+through the exact reviewed HEAD. The bundle records the raw committed-diff
+SHA-256, NUL-delimited rename-aware inventory, phase commits/messages, and
+content hashes/source bodies read directly from Git objects at the reviewed
+SHA. Dirty-worktree evidence remains separate and cannot stand in for committed
+phase changes. Product context and phase-plan hashes are part of the v3
+identity; v2 bundles and decisions remain unchanged and are superseded only by
+metadata when a matching v3 review is queued.
+
+Evidence preflight failures use a separate `REVIEW_EVIDENCE_ERROR` record with
+bounded transient/deterministic retry budgets and an infrastructure-review
+terminal state. They do not become lane/product BLOCK decisions, and one lane's
+failed preflight does not stop other lanes from queuing. Terminal architect
+BLOCKs render as `BLOCKED_REVIEW`, never scheduler `READY`; idle status names
+active blocked lanes and future external gates.
+
+Population L05's clean-worktree empty-diff artifact is reconciled only after
+its exact committed range, clean branch/status, structural checks, unchanged
+real index, prospective validation, forbidden-path checks, exact-SHA CI, and
+valid control plane all pass. The repair calls the ordinary completion/checkpoint
+path and queues a fresh POST checkpoint; it does not approve the lane or accept
+M01. The normal cap remains two Luna workers and one serialized Sol reviewer.
+
+
+The final four current v3 review decisions, exact diff/source-hash proof, deployment verification, and resumed live VDS state are recorded in [verification/evidence-v3-20260923/final-report.md](verification/evidence-v3-20260923/final-report.md) and [verification/final-verification.md](verification/final-verification.md). The Windows PC remains on.
+
 ## V3.2 bounded supervisor concurrency repair — 2026-09-22
 
 The production VDS was paused before this repair. `advance_lane()` no longer
