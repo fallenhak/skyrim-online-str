@@ -59,6 +59,11 @@ struct EncounterIncarnation final
 
     [[nodiscard]] constexpr bool IsValid() const noexcept { return LifecycleGeneration != 0; }
 
+    friend constexpr bool operator<(const EncounterIncarnation& acLeft, const EncounterIncarnation& acRight) noexcept
+    {
+        return std::tie(acLeft.ServerId, acLeft.LifecycleGeneration) < std::tie(acRight.ServerId, acRight.LifecycleGeneration);
+    }
+
     friend constexpr bool operator==(const EncounterIncarnation& acLeft, const EncounterIncarnation& acRight) noexcept
     {
         return acLeft.ServerId == acRight.ServerId && acLeft.LifecycleGeneration == acRight.LifecycleGeneration;
@@ -79,6 +84,10 @@ struct RenewableEncounterPolicy final
  * combat lane has verified the kill (W03); a client claim must never reach it
  * directly. Occupancy checks before reset (W05) and spawning (W06) are left to
  * the caller.
+ *
+ * The epoch increases on every reset. A spawn must carry the epoch it was
+ * requested in, so a spawn that completes after a reset cannot refill a slot of
+ * the new cycle.
  */
 class RenewableEncounterState final
 {
@@ -98,6 +107,13 @@ public:
         UnknownIncarnation
     };
 
+    enum class ReleaseResult : std::uint8_t
+    {
+        Released,
+        AlreadyDead,
+        UnknownIncarnation
+    };
+
     RenewableEncounterState(const RenewableEncounterId aId, const RenewableEncounterPolicy aPolicy) noexcept
         : m_id(aId)
         , m_policy(aPolicy)
@@ -107,6 +123,7 @@ public:
     [[nodiscard]] const RenewableEncounterId& GetId() const noexcept { return m_id; }
     [[nodiscard]] std::size_t GetSlotCount() const noexcept { return m_slots.size(); }
     [[nodiscard]] std::uint64_t GetResetCount() const noexcept { return m_resetCount; }
+    [[nodiscard]] std::uint64_t GetEpoch() const noexcept { return m_resetCount; }
     [[nodiscard]] std::optional<std::uint64_t> GetClearedTick() const noexcept { return m_clearedTick; }
 
     [[nodiscard]] bool AddSlot(const SpawnSlotId aSlot)
@@ -117,9 +134,9 @@ public:
         return m_slots.emplace(aSlot, Slot{}).second;
     }
 
-    [[nodiscard]] bool BindIncarnation(const SpawnSlotId aSlot, const EncounterIncarnation aIncarnation)
+    [[nodiscard]] bool BindIncarnation(const SpawnSlotId aSlot, const EncounterIncarnation aIncarnation, const std::uint64_t aSpawnEpoch)
     {
-        if (!aIncarnation.IsValid() || FindSlot(aIncarnation))
+        if (aSpawnEpoch != GetEpoch() || !aIncarnation.IsValid() || FindSlot(aIncarnation))
             return false;
 
         const auto it = m_slots.find(aSlot);
@@ -128,18 +145,37 @@ public:
 
         it->second.Incarnation = aIncarnation;
         it->second.Status = SlotStatus::Alive;
+        m_slotByIncarnation.emplace(aIncarnation, aSlot);
         return true;
     }
 
     [[nodiscard]] std::optional<SpawnSlotId> FindSlot(const EncounterIncarnation aIncarnation) const noexcept
     {
-        for (const auto& [slotId, slot] : m_slots)
-        {
-            if (slot.Status != SlotStatus::Unbound && slot.Incarnation == aIncarnation)
-                return slotId;
-        }
+        const auto it = m_slotByIncarnation.find(aIncarnation);
+        if (it == m_slotByIncarnation.end())
+            return std::nullopt;
 
-        return std::nullopt;
+        return it->second;
+    }
+
+    /**
+     * Frees the slot of a live incarnation that left the world without dying
+     * (despawn, cell unload, lost ownership). A dead incarnation stays dead so
+     * unloading a corpse can never undo a verified death.
+     */
+    [[nodiscard]] ReleaseResult ReleaseIncarnation(const EncounterIncarnation aIncarnation)
+    {
+        const auto slotId = FindSlot(aIncarnation);
+        if (!slotId)
+            return ReleaseResult::UnknownIncarnation;
+
+        auto& slot = m_slots.at(*slotId);
+        if (slot.Status == SlotStatus::Dead)
+            return ReleaseResult::AlreadyDead;
+
+        slot = Slot{};
+        m_slotByIncarnation.erase(aIncarnation);
+        return ReleaseResult::Released;
     }
 
     [[nodiscard]] SlotStatus GetSlotStatus(const SpawnSlotId aSlot) const noexcept
@@ -192,6 +228,7 @@ public:
         for (auto& [slotId, slot] : m_slots)
             slot = Slot{};
 
+        m_slotByIncarnation.clear();
         m_clearedTick.reset();
         ++m_resetCount;
         return true;
@@ -221,6 +258,7 @@ private:
     RenewableEncounterId m_id;
     RenewableEncounterPolicy m_policy;
     std::map<SpawnSlotId, Slot> m_slots;
+    std::map<EncounterIncarnation, SpawnSlotId> m_slotByIncarnation;
     std::optional<std::uint64_t> m_clearedTick;
     std::uint64_t m_resetCount{};
 };
