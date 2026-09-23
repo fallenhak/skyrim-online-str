@@ -164,3 +164,8 @@ next tick from treating the in-memory request marker as durable. The
 `sync-control-plane` fixture models its real fetch/fast-forward/cache behavior
 as an idempotent external action and proves safe replay after a pre-commit
 failure.
+
+
+## V3.3 runtime follow-up — 2026-09-23
+
+Completed Sol decisions are now revalidated and applied before another queued review starts. The worker-smoke fixture now matches its exact-byte prompt. Canonical and installed suites pass 190 tests; compile checks, self-test, healthcheck, real worker smoke, and isolated architect-review smoke pass. The deployed source hashes and backup location are recorded in [the follow-up report](evidence-v3-20260923/final-report.md#autonomous-decision-drain-and-worker-smoke-follow-up--2026-09-23). A bounded 12:36:07 UTC live snapshot confirms RUNNING, service/timer active and enabled, control plane VALID, zero decision-pending results, one Sol reviewer, two queued, M01 ACTIVE, and no M02+ or runtime acceptance.

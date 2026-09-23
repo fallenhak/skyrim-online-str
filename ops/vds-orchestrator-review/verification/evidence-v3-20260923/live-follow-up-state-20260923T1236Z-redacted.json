@@ -1,0 +1,192 @@
+{
+  "captured_at_utc": "2026-09-23T12:36:07Z",
+  "supervisor_state_updated_at": "2026-09-23T12:36:07+00:00",
+  "global_mode": "RUNNING",
+  "control_plane": {
+    "branch": "orchestration/control-plane",
+    "applied_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
+    "observed_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
+    "status": "VALID"
+  },
+  "service_units": {
+    "skyrim-dev-orchestrator.service": {
+      "active": "active",
+      "enabled": "enabled"
+    },
+    "skyrim-dev-healthcheck.timer": {
+      "active": "active",
+      "enabled": "enabled"
+    }
+  },
+  "milestones": {
+    "M01": "ACTIVE",
+    "M02": "PLANNED",
+    "M03": "PLANNED",
+    "M04": "PLANNED",
+    "M05": "PLANNED"
+  },
+  "lanes": [
+    {
+      "lane": "combat",
+      "phase": "C06",
+      "branch": "parallel/combat-foundations",
+      "state": "WAITING_FOR_CI",
+      "head": "162905c204cac51817497182361bbacfb5314e9a",
+      "worker_pid": null,
+      "ci_status": "WAIT",
+      "ci_sha": "162905c204cac51817497182361bbacfb5314e9a",
+      "required_workflows": [
+        {
+          "workflow": "Build linux",
+          "run_id": 35861275699,
+          "status": "in_progress",
+          "conclusion": null,
+          "sha": "162905c204cac51817497182361bbacfb5314e9a"
+        },
+        {
+          "workflow": "Build windows",
+          "run_id": 35861276170,
+          "status": "in_progress",
+          "conclusion": null,
+          "sha": "162905c204cac51817497182361bbacfb5314e9a"
+        }
+      ],
+      "review_decision": "SOL_RETRY_CURRENT_PHASE"
+    },
+    {
+      "lane": "authority",
+      "phase": "A09",
+      "branch": "parallel/interaction-authority",
+      "state": "NEEDS_SOL_REVIEW",
+      "head": "6e33be66290564593aa6bc74b4aee71f0493a828",
+      "worker_pid": null,
+      "ci_status": "PASS",
+      "ci_sha": "6e33be66290564593aa6bc74b4aee71f0493a828",
+      "required_workflows": [
+        {
+          "workflow": "Build linux",
+          "run_id": 35855238652,
+          "status": "completed",
+          "conclusion": "success",
+          "sha": "6e33be66290564593aa6bc74b4aee71f0493a828"
+        },
+        {
+          "workflow": "Build windows",
+          "run_id": 35855238701,
+          "status": "completed",
+          "conclusion": "success",
+          "sha": "6e33be66290564593aa6bc74b4aee71f0493a828"
+        }
+      ],
+      "review_decision": null
+    },
+    {
+      "lane": "population",
+      "phase": "L05",
+      "branch": "parallel/population-loader",
+      "state": "NEEDS_SOL_REVIEW",
+      "head": "3190462a435325a6448c8a718e2352a0bf59fb35",
+      "worker_pid": null,
+      "ci_status": "FAIL",
+      "ci_sha": "3190462a435325a6448c8a718e2352a0bf59fb35",
+      "required_workflows": [
+        {
+          "workflow": "Build linux",
+          "run_id": 35855578265,
+          "status": "completed",
+          "conclusion": "failure",
+          "sha": "3190462a435325a6448c8a718e2352a0bf59fb35"
+        },
+        {
+          "workflow": "Build windows",
+          "run_id": 35855578223,
+          "status": "in_progress",
+          "conclusion": null,
+          "sha": "3190462a435325a6448c8a718e2352a0bf59fb35"
+        }
+      ],
+      "review_decision": null
+    },
+    {
+      "lane": "ui",
+      "phase": "U06",
+      "branch": "parallel/character-ui",
+      "state": "NEEDS_SOL_REVIEW",
+      "head": "e9e17c8a7d1d43f0223e97469f34de1b31b6dc6a",
+      "worker_pid": null,
+      "ci_status": "PASS",
+      "ci_sha": "e9e17c8a7d1d43f0223e97469f34de1b31b6dc6a",
+      "required_workflows": [
+        {
+          "workflow": "Build linux",
+          "run_id": 35856813581,
+          "status": "completed",
+          "conclusion": "success",
+          "sha": "e9e17c8a7d1d43f0223e97469f34de1b31b6dc6a"
+        },
+        {
+          "workflow": "Build windows",
+          "run_id": 35856813611,
+          "status": "completed",
+          "conclusion": "success",
+          "sha": "e9e17c8a7d1d43f0223e97469f34de1b31b6dc6a"
+        }
+      ],
+      "review_decision": "APPROVED_ADVANCE_ONCE"
+    }
+  ],
+  "architect_review": {
+    "active_review": {
+      "review_id": "fa1917f65382308ef56d00dc581328be75344ce3a8e82f0befeeb0be80b2f405",
+      "lane": "authority",
+      "phase": "A09",
+      "status": "RUNNING"
+    },
+    "queue": [
+      {
+        "review_id": "bb19d545259d230ca78b8975f9f58699a9cf5dcec420c2442368333bded4f10a",
+        "lane": "population",
+        "phase": "L05",
+        "status": "QUEUED"
+      },
+      {
+        "review_id": "4107bd3a4299b22c8d6f7fea1b97fa6b26170dd6d2e2471218da990c56ff7d62",
+        "lane": "ui",
+        "phase": "U06",
+        "status": "QUEUED"
+      }
+    ],
+    "decision_pending_count": 0,
+    "evidence_errors": 0,
+    "reviewer_cap": 1
+  },
+  "scheduler": {
+    "runnable_work": 0,
+    "review_gated_lanes": [
+      "authority",
+      "population",
+      "ui"
+    ],
+    "waiting_checkpoints": [
+      "authority",
+      "ui"
+    ],
+    "external_gated_future_tasks": 10,
+    "idle_reason": "the independent Sol architect reviewer is working"
+  },
+  "worker_cap": 2,
+  "live_worker_pids": {
+    "combat": null,
+    "authority": null,
+    "population": null,
+    "ui": null
+  },
+  "live_codex_processes_by_model": {
+    "gpt-6-luna": 0,
+    "gpt-6-sol": 1
+  },
+  "m02_plus_execution": false,
+  "runtime_acceptance_recorded": false,
+  "auto_merge": false,
+  "destructive_git_operation": false
+}

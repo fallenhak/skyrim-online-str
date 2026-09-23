@@ -1738,6 +1738,29 @@ class SupervisorLogicTests(unittest.TestCase):
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
         self.assertNotIn("/srv/projects/skyrim-online-str/workers/combat", command)
 
+    def test_worker_smoke_input_matches_the_exact_prompt_content(self) -> None:
+        harness = Harness()
+        observed = {}
+
+        class FakeProcess:
+            def __init__(self, _command, *, cwd, **_kwargs):
+                scratch = Path(cwd)
+                observed["input"] = (scratch / "input.txt").read_bytes()
+                if observed["input"] == b"harmless smoke input":
+                    (scratch / "output.txt").write_bytes(b"smoke-write-ok")
+                self.returncode = 0
+
+            def communicate(self, timeout=None):
+                return "WORKER_OPERATOR_INBOX: BLOCKED\n", None
+
+        with tempfile.TemporaryDirectory(prefix="worker-smoke-fixture-") as scratch_root:
+            harness.config["worker_smoke_root"] = scratch_root
+            with patch.object(supervisor.subprocess, "Popen", FakeProcess):
+                result = harness.worker_smoke_test()
+
+        self.assertEqual(observed["input"], b"harmless smoke input")
+        self.assertEqual(result, 0)
+
     def test_worker_smoke_does_not_change_protected_heads_or_worktrees(self) -> None:
         h = LiveWorkerObserverHarness()
         before = ownership_snapshot(h)

@@ -1,0 +1,154 @@
+{
+  "architect_review": {
+    "active_review_id": "7ca2067b428e75705a50232a85b8b6c419af93621612696157636bca7c5eb5c2",
+    "evidence_errors": 0,
+    "idle_reason": null,
+    "queue": []
+  },
+  "captured_at_utc": "2026-09-23T11:41:41Z",
+  "control_plane": {
+    "applied_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
+    "branch": "orchestration/control-plane",
+    "observed_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
+    "status": "VALID"
+  },
+  "global_mode": "RUNNING",
+  "lanes": [
+    {
+      "branch": "parallel/interaction-authority",
+      "ci_sha": "6e33be66290564593aa6bc74b4aee71f0493a828",
+      "ci_status": "WAIT",
+      "head": "6e33be66290564593aa6bc74b4aee71f0493a828",
+      "lane": "authority",
+      "phase": "A09",
+      "required_workflows": [
+        {
+          "conclusion": "",
+          "run_id": 35855238652,
+          "sha": "6e33be66290564593aa6bc74b4aee71f0493a828",
+          "status": "in_progress",
+          "workflow": "Build linux"
+        },
+        {
+          "conclusion": "",
+          "run_id": 35855238701,
+          "sha": "6e33be66290564593aa6bc74b4aee71f0493a828",
+          "status": "in_progress",
+          "workflow": "Build windows"
+        }
+      ],
+      "state": "WAITING_FOR_CI",
+      "worker_pid": null
+    },
+    {
+      "branch": "parallel/combat-foundations",
+      "ci_sha": "667deb4ac1dc0b298ef2dbd65bd9e4bd8aef5bcb",
+      "ci_status": "WAIT",
+      "head": "667deb4ac1dc0b298ef2dbd65bd9e4bd8aef5bcb",
+      "lane": "combat",
+      "phase": "C06",
+      "required_workflows": [
+        {
+          "conclusion": "",
+          "run_id": 35855800814,
+          "sha": "667deb4ac1dc0b298ef2dbd65bd9e4bd8aef5bcb",
+          "status": "in_progress",
+          "workflow": "Build linux"
+        },
+        {
+          "conclusion": "",
+          "run_id": 35855800822,
+          "sha": "667deb4ac1dc0b298ef2dbd65bd9e4bd8aef5bcb",
+          "status": "in_progress",
+          "workflow": "Build windows"
+        }
+      ],
+      "state": "WAITING_FOR_CI",
+      "worker_pid": null
+    },
+    {
+      "branch": "parallel/population-loader",
+      "ci_sha": "3190462a435325a6448c8a718e2352a0bf59fb35",
+      "ci_status": "FAIL",
+      "head": "3190462a435325a6448c8a718e2352a0bf59fb35",
+      "lane": "population",
+      "phase": "L05",
+      "required_workflows": [
+        {
+          "conclusion": "failure",
+          "run_id": 35855578265,
+          "sha": "3190462a435325a6448c8a718e2352a0bf59fb35",
+          "status": "completed",
+          "workflow": "Build linux"
+        },
+        {
+          "conclusion": "",
+          "run_id": 35855578223,
+          "sha": "3190462a435325a6448c8a718e2352a0bf59fb35",
+          "status": "in_progress",
+          "workflow": "Build windows"
+        }
+      ],
+      "state": "NEEDS_SOL_REVIEW",
+      "worker_pid": null
+    },
+    {
+      "branch": "parallel/character-ui",
+      "ci_sha": "45b6eb4f6f0bcdcc105f1f048cf09d239716a53f",
+      "ci_status": "PASS",
+      "head": "45b6eb4f6f0bcdcc105f1f048cf09d239716a53f",
+      "lane": "ui",
+      "phase": "U06",
+      "required_workflows": [
+        {
+          "conclusion": "success",
+          "run_id": 35854150236,
+          "sha": "45b6eb4f6f0bcdcc105f1f048cf09d239716a53f",
+          "status": "completed",
+          "workflow": "Build linux"
+        },
+        {
+          "conclusion": "success",
+          "run_id": 35854150111,
+          "sha": "45b6eb4f6f0bcdcc105f1f048cf09d239716a53f",
+          "status": "completed",
+          "workflow": "Build windows"
+        }
+      ],
+      "state": "CODING",
+      "worker_pid": 410210
+    }
+  ],
+  "live_codex_processes_by_model": {
+    "gpt-6-luna": 1,
+    "gpt-6-sol": 1
+  },
+  "m02_plus_execution": false,
+  "milestone": {
+    "acceptance": [
+      "Character Select is the player entry flow.",
+      "Selected Character is server-owned and restored on reconnect.",
+      "Ordinary humanoid NPC population is suppressed.",
+      "Trusted creatures remain and synchronize.",
+      "Creature lifecycle/death authority is coherent.",
+      "A renewable dungeon/encounter can reset with fresh incarnations.",
+      "Two-client Windows runtime acceptance evidence is reviewed."
+    ],
+    "id": "M01",
+    "state": "ACTIVE",
+    "title": "Core World",
+    "updated_at": "2026-09-23T11:41:31+00:00"
+  },
+  "runtime_acceptance_recorded": false,
+  "service_units": {
+    "skyrim-dev-healthcheck.timer": {
+      "active": "active",
+      "enabled": "enabled"
+    },
+    "skyrim-dev-orchestrator.service": {
+      "active": "active",
+      "enabled": "enabled"
+    }
+  },
+  "worker_cap": 2
+}

@@ -2323,7 +2323,7 @@ class Supervisor(ArchitectReviewMixin):
             os.chmod(smoke_root, 0o750)
             scratch = Path(tempfile.mkdtemp(prefix="codex-worker-", dir=str(smoke_root)))
             os.chmod(scratch, 0o700)
-            atomic_write_text(scratch / "input.txt", "harmless smoke input\n", 0o600)
+            atomic_write_text(scratch / "input.txt", "harmless smoke input", 0o600)
             operator_probe = (
                 operator_request_paths(self.config)["inbox"] / f"worker-smoke-{os.getpid()}-probe"
             )

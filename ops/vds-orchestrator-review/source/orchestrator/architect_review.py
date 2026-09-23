@@ -1932,6 +1932,25 @@ class ArchitectReviewMixin:
         if not self._control_plane_valid():
             review_state["idle_reason"] = "control plane is not valid"
             return
+        if (
+            self.review_process is None
+            and not review_state.get("active_review_id")
+            and not getattr(self, "active_review_id", None)
+            and any(
+                isinstance(item, dict) and item.get("status") == "DECISION_PENDING"
+                for item in review_state.get("items", {}).values()
+            )
+        ):
+            # Apply or stale completed decisions before admitting another reviewer.
+            # Otherwise a continuously replenished queue can starve trusted decision
+            # application and leave lanes stuck behind obsolete identities.
+            self.poll_reviewer()
+            if any(
+                isinstance(item, dict) and item.get("status") == "DECISION_PENDING"
+                for item in review_state.get("items", {}).values()
+            ):
+                review_state["idle_reason"] = "a completed Sol decision is awaiting trusted application"
+                return
         self.queue_sol_reviews()
         if self.review_process is None and not review_state.get("active_review_id"):
             self.start_next_reviewer()

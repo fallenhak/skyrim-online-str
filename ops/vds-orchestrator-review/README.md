@@ -1,5 +1,9 @@
 # Skyrim Supervisor Roadmap / Dependency Control Plane review snapshot
 
+## V3.3 live review follow-up — 2026-09-23
+
+Completed Sol decisions are now revalidated and applied before another queued review starts. The worker-smoke fixture now matches its exact-byte prompt. Canonical and installed suites pass 190 tests; worker and architect-review smoke checks pass. See [the dated runtime follow-up](verification/evidence-v3-20260923/final-report.md#autonomous-decision-drain-and-worker-smoke-follow-up--2026-09-23) and [machine-readable live state](verification/evidence-v3-20260923/live-follow-up-state-20260923T1236Z-redacted.json).
+
 ## V3.3 exact-SHA architect evidence repair — 2026-09-23
 
 This repair builds immutable evidence from the trusted accepted phase boundary

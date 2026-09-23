@@ -932,3 +932,67 @@ class EvidenceQueueIsolationTests(unittest.TestCase):
         self.assertEqual(h.queue_sol_reviews(), 0)
         self.assertEqual(len(h.state["architect_review"]["queue"]), 3)
         self.assertEqual(len(h.state["architect_review"]["items"]), 3)
+
+
+class ReviewDecisionDrainHarness(ArchitectReviewMixin):
+    def __init__(self, leave_pending=False):
+        self.state = {
+            "global_mode": "RUNNING",
+            "architect_review": {
+                "active_review_id": "finished-review",
+                "queue": ["next-review"],
+                "items": {"pending-review": {"status": "DECISION_PENDING", "decision": {"decision": "RETRY"}}},
+            },
+        }
+        self.active_review_id = "finished-review"
+        self.review_process = object()
+        self.processes = {}
+        self.leave_pending = leave_pending
+        self.events = []
+
+    def poll_reviewer(self):
+        if self.review_process is not None:
+            self.events.append("finish-review")
+            self.review_process = None
+            self.active_review_id = None
+            self.state["architect_review"]["active_review_id"] = None
+            return
+        pending = self.state["architect_review"]["items"]["pending-review"]
+        if pending["status"] == "DECISION_PENDING":
+            if self.leave_pending:
+                self.events.append("decision-still-pending")
+            else:
+                self.events.append("apply-decision")
+                pending["status"] = "APPLIED"
+
+    def _control_plane_valid(self):
+        return True
+
+    def queue_sol_reviews(self):
+        self.events.append("queue-reviews")
+        return 0
+
+    def start_next_reviewer(self):
+        self.events.append("start-next-reviewer")
+        self.active_review_id = "next-review"
+        self.state["architect_review"]["active_review_id"] = "next-review"
+        return True
+
+    def scheduler_idle_summary(self):
+        self.events.append("idle-summary")
+        return {"idle_reason": "reviewer active", "runnable": [], "queued_reviews": 0}
+
+
+class ReviewDecisionSchedulingTests(unittest.TestCase):
+    def test_pending_decision_is_applied_before_starting_next_reviewer(self):
+        h = ReviewDecisionDrainHarness()
+        h.architect_review_tick()
+        self.assertLess(h.events.index("apply-decision"), h.events.index("start-next-reviewer"))
+        self.assertEqual(h.state["architect_review"]["items"]["pending-review"]["status"], "APPLIED")
+
+    def test_unapplied_decision_blocks_next_reviewer_admission(self):
+        h = ReviewDecisionDrainHarness(leave_pending=True)
+        h.architect_review_tick()
+        self.assertIn("decision-still-pending", h.events)
+        self.assertNotIn("start-next-reviewer", h.events)
+        self.assertEqual(h.state["architect_review"]["items"]["pending-review"]["status"], "DECISION_PENDING")

@@ -1,3 +1,10 @@
+## V3.3 decision-drain and worker-smoke follow-up — 2026-09-23
+
+- Fixed autonomous review starvation by applying and revalidating completed Sol decisions before admitting another queued review; a still-pending result blocks admission while the existing exact-state stale checks and approval gates remain in force.
+- Corrected the worker-smoke fixture to match the prompt's byte-exact input and added a regression test.
+- Canonical and installed deterministic suites pass 190 tests each; compile checks, self-test, healthcheck, real worker smoke, and isolated architect-review smoke pass.
+- Deployed the follow-up with pre-deployment copies under `/var/lib/skyrim-dev/backups/review-decision-drain-20260923T121422Z`. Live evidence is recorded in the dated follow-up report and redacted state snapshot.
+
 ## V3.3 exact-SHA Sol evidence and blocked-lane scheduler repair — 2026-09-23
 
 - Replaced the shadowed worktree-only review bundle path with one canonical

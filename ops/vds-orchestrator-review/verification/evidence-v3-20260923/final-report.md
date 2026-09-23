@@ -78,3 +78,26 @@ At the 11:28:40 UTC capture, GLOBAL is RUNNING. The orchestrator service and hea
 Two gpt-6-luna/max development processes were live (cap: 2): Combat C06 PID 403175 and Authority A09 same-phase recovery PID 404453. Population L05 HEAD 9c665e0f0ac21fced7cbcf567904328e75aca942 and UI U05 HEAD 45b6eb4f6f0bcdcc105f1f048cf09d239716a53 were WAITING_FOR_CI; no advancement or reviewer decision can pass without exact-SHA CI. Sol reviewer active/queued counts were 0/0, evidence errors 0, and no active lane was review-blocked. W01-W10 remain externally gated. The status idle summary refers to future externally gated work; the VDS was not idle because the two worker slots were occupied.
 
 No development branch was merged, force-pushed, reset, cleaned, or discarded; no CI gate was bypassed; no milestone acceptance was made. The Windows PC was left running.
+
+
+## Autonomous decision-drain and worker-smoke follow-up — 2026-09-23
+
+A bounded live run exposed a review scheduling starvation condition. When the active Sol process finished, its validated result entered `DECISION_PENDING`; the same `architect_review_tick()` then launched the next queued reviewer. `poll_reviewer()` applies pending results only when no review is active, so a continuously replenished queue could postpone normal decision application until cross-lane evidence changed. The pending result then failed the exact-state check and was correctly marked stale.
+
+The supervisor now gives completed decisions priority after the current reviewer exits and before admitting another reviewer. It revalidates through the existing trusted policy; stale output remains stale, current output follows the normal APPROVE/RETRY/BLOCK rules, and a decision that remains pending prevents a new reviewer launch. No CI, dependency, retry, safety, or human-acceptance gate changed. Immutable bundle comparison confirmed meaningful `cross_lane_interfaces` changes to Combat state, HEAD, and CI history; stale identities were not caused only by timestamps.
+
+The live worker smoke uncovered a separate fixture mismatch: `input.txt` included a trailing newline although the worker prompt required byte-exact `harmless smoke input`. The worker correctly declined to write output. The fixture now writes the exact requested bytes, and a deterministic regression verifies that behavior. The security probe still has to be denied by the sandbox.
+
+### Follow-up verification and deployment
+
+- Canonical and installed deterministic supervisor/roadmap/reviewer suites: **190 passed** each.
+- Python compile checks: PASS.
+- Installed self-test: `SELF_TEST_OK`; healthcheck: all five checks PASS.
+- Real worker smoke: `WORKER_SMOKE_OK`; inbox blocked, no credential exposure, no worktree/branch change, no persistent worker.
+- Architect-review smoke: PASS; isolated gpt-6-sol/max returned strict RETRY JSON with no tool events.
+- Canonical/runtime SHA-256 matches: `architect_review.py` `90ce30b9cd7a3b69468902f436fa397b4c6a8d86041901b995c93493107bb526`; `test_architect_review.py` `641fb7114b7b1c5f6f52718f15ba09a1bf6fef8446833faf7b26e28b06b04e7c`; `supervisor.py` `43f6dac8ab70975353fe2b2dc9acfb13dc28eba42bc8d5f11939706cb1c14e18`; `test_supervisor.py` `2a76fabdf41d13e633eecd588716006fd9303e161de511968ff3baf0253702c1`.
+- Pre-deployment copies are in `/var/lib/skyrim-dev/backups/review-decision-drain-20260923T121422Z`.
+
+At the 12:36:07 UTC RUNNING capture, the service and healthcheck timer were active/enabled, the control plane remained VALID at `3e7e893b4018b488e158aa5cda977399c0e55a75`, M01 remained ACTIVE, M02–M05 remained PLANNED, and runtime acceptance was unrecorded. One gpt-6-sol review was active (Authority A09); Population L05 and UI U06 were queued. There were zero `DECISION_PENDING` items and zero evidence errors. No development worker was live at this sample; the configured worker/reviewer caps remained 2/1. Combat C06 `162905c204cac51817497182361bbacfb5314e9a` was waiting for exact-SHA Linux/Windows CI; Authority A09 and UI U06 had exact-SHA PASS/PASS; Population L05 remained gated by a Linux failure and unfinished Windows CI. W01–W10 remained externally gated. The PC was left on.
+
+Machine-readable state: [live-follow-up-state-20260923T1236Z-redacted.json](live-follow-up-state-20260923T1236Z-redacted.json).
