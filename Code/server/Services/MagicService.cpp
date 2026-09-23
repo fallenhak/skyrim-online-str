@@ -2,6 +2,7 @@
 
 #include <Components.h>
 #include <GameServer.h>
+#include <Services/AddTargetAuthorityPolicy.h>
 #include <World.h>
 
 #include <Messages/SpellCastRequest.h>
@@ -71,8 +72,32 @@ void MagicService::OnInterruptCastRequest(const PacketEvent<InterruptCastRequest
 
 void MagicService::OnAddTargetRequest(const PacketEvent<AddTargetRequest>& acMessage) const noexcept
 {
-    auto& message = acMessage.Packet;
+    const auto& message = acMessage.Packet;
     if (!std::isfinite(message.Magnitude))
+        return;
+
+    const auto targetEntity = static_cast<entt::entity>(message.TargetId);
+    const bool targetExists = m_world.valid(targetEntity) && m_world.all_of<CharacterComponent>(targetEntity);
+    const auto* targetOwner = targetExists ? m_world.try_get<OwnerComponent>(targetEntity) : nullptr;
+    const bool targetHasOwner = targetOwner && targetOwner->GetOwner();
+    const bool senderOwnsTarget = targetHasOwner && targetOwner->GetOwner() == acMessage.pPlayer;
+
+    const bool casterIdProvided = message.CasterId != 0;
+    bool casterExists = false;
+    bool casterHasOwner = false;
+    bool senderOwnsCaster = false;
+    if (casterIdProvided)
+    {
+        const auto casterEntity = static_cast<entt::entity>(message.CasterId);
+        casterExists = m_world.valid(casterEntity) && m_world.all_of<CharacterComponent>(casterEntity);
+        const auto* casterOwner = casterExists ? m_world.try_get<OwnerComponent>(casterEntity) : nullptr;
+        casterHasOwner = casterOwner && casterOwner->GetOwner();
+        senderOwnsCaster = casterHasOwner && casterOwner->GetOwner() == acMessage.pPlayer;
+    }
+
+    if (!AddTargetAuthorityPolicy::IsAuthorized(
+            targetExists, targetHasOwner, senderOwnsTarget,
+            casterIdProvided, casterExists, casterHasOwner, senderOwnsCaster))
         return;
 
     NotifyAddTarget notify;
@@ -85,8 +110,7 @@ void MagicService::OnAddTargetRequest(const PacketEvent<AddTargetRequest>& acMes
     notify.ApplyHealPerkBonus = message.ApplyHealPerkBonus;
     notify.ApplyStaminaPerkBonus = message.ApplyStaminaPerkBonus;
 
-    const auto entity = static_cast<entt::entity>(message.TargetId);
-    if (!GameServer::Get()->SendToPlayersInRange(notify, entity, acMessage.GetSender()))
+    if (!GameServer::Get()->SendToPlayersInRange(notify, targetEntity, acMessage.GetSender()))
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }
 

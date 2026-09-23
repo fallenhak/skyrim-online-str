@@ -51,7 +51,7 @@ boundary. A client-side send restriction is not treated as authority.
 | `ProjectileLaunchRequest` / `CombatService` | Projectile presentation with claimed shooter | arbitrary shooter ID | no check | missing | generated InWorld gate; origin entity is only used for range broadcast | E | Resolve shooter entity and require sender ownership/epoch without breaking player shots | Phase D candidate |
 | `SpellCastRequest` / `MagicService` | Remote spell presentation/cast | caster ID and desired target ID | no check | missing | generated InWorld gate | E/D | Require caster authority where caster is an owned actor; preserve environmental casts explicitly | No |
 | `InterruptCastRequest` / `MagicService` | Remote cast interruption | caster ID | no check | missing | generated InWorld gate | E/D | Bind to caster authority/incarnation | No |
-| `AddTargetRequest` / `MagicService` | Applies remote magic effect presentation | target + optional caster IDs | optional caster authority | missing | generated InWorld gate; magnitude not finite-checked | C/E | Define environmental/non-owner effects, then validate caster and finite payloads | No |
+| `AddTargetRequest` / `MagicService` | Applies remote magic effect presentation | target + optional caster IDs | target owner or explicit caster owner | missing | generated InWorld gate; target/caster must resolve to owned character entities; finite magnitude; fan-out around target but no sender/spell range check | C/E | Preserve target-owner incoming/environmental reports and caster-owner reports; validate both endpoints | A07 |
 | `RemoveSpellRequest` / `MagicService` | Removes spell on remote actor | target ID | no check | missing | generated InWorld gate | E/D | Bind removal to a validated caster/interaction or document as legacy relay | No |
 | `RequestInventoryChanges` / `InventoryService` | Actor/object inventory contents | server entity ID | owner for actor; non-owner NPC interaction allowed | epoch checked | non-owner NPC requires in-range, non-player, non-persistent character; malformed item payloads are rejected; ownerless path requires an object entity, but object interaction proof is still absent | A/C/E | Preserve loot/pickpocket semantics; continue object interaction review | A02/A03 |
 | `RequestEquipmentChanges` / `InventoryService` | Actor equipment | server entity ID | owner for owned entity; object/no-owner edge exists | epoch checked when owner exists | generated InWorld gate; no range | A/E | Ensure non-character inventory entities cannot enter equipment path | No |
@@ -67,6 +67,26 @@ boundary. A client-side send restriction is not treated as authority.
 | `RequestQuestUpdate` / `QuestService` | Legacy quest log relay | sender player | sender-derived | n/a | InWorld gate; feature disabled by constant | F | Do not enable without a separate quest authority design | No |
 | party/map/chat requests | Social state or UI | player/party IDs | social authorization | n/a | service-specific | A/C | Keep separate from actor authority | No |
 
+## AddTarget semantics and authorization
+
+`MagicTarget::HookAddTarget` emits effects from either side of an interaction.
+When the caster is locally simulated, the caster owner reports effects applied
+to other actors, including healing or buffs applied to a remote player. When
+the target is locally simulated, its owner reports effects applied to that
+actor; this includes caster-less effects and incoming PvP effects from a remote
+caster. A caster-owner-only rule would drop the latter, while a target-owner-
+only rule would drop the former.
+
+`MagicService` now accepts a report when the sender currently owns the target,
+or when a nonzero caster ID resolves to a character with an owner and the
+sender currently owns that caster. A zero caster ID is the existing
+caster-less sentinel and therefore requires target ownership. Both endpoints
+must be canonical character entities with a live owner. Magnitude finite-value
+validation was already present and remains in place. This policy proves which
+side of the interaction the sender owns; it does not prove that the client
+observed the claimed effect or that a spell was in range. The message also has
+no ownership epochs, so the server checks current owner pointers only.
+
 ## High-confidence conclusions
 
 1. Health is the clear canonical-state vulnerability: the server currently
@@ -76,10 +96,13 @@ boundary. A client-side send restriction is not treated as authority.
    clients to render a shot from an arbitrary server entity. This is a serious
    presentation/interaction spoofing issue, but its safe fix must preserve
    legitimate player and owner-controlled creature projectiles.
-3. Package, spell, interrupt, target, remove-spell, script-animation, and some
-   object paths are relay or mutation surfaces without a complete actor
-   authority proof. Their legitimate non-owner/environmental semantics must be
-   distinguished before adding blanket owner checks.
+3. Package, spell, interrupt, remove-spell, script-animation, and some object
+   paths are relay or mutation surfaces without a complete actor authority
+   proof. AddTarget now has an ownership-side policy that preserves both
+   caster-owned and target-owned environmental/incoming effects; its missing
+   epoch and spell-range proof remain open questions. The other paths still
+   need their legitimate non-owner/environmental semantics distinguished
+   before adding blanket owner checks.
 4. `OwnerView` validates the current owner pointer, but it does not validate an
    ownership epoch by itself. Movement and faction updates now check the current
    epoch per actor. Draw-weapon state still has a stale-incarnation risk until

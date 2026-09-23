@@ -91,7 +91,9 @@ for this audit.
   accepted observations rather than reproducing AI.
 - Projectile and health messages are authority-bound observation relays, not a
   server-side damage or hit ledger.
-- `AddTarget` remains a caster-less/non-owner interaction surface requiring a
-  separate range and intent policy.
+- `AddTarget` now requires current ownership of either the target or its
+  explicit caster, preserving caster-less and incoming effects through target
+  ownership. The message has no ownership epochs or spell-range proof, so those
+  remain separate hardening questions.
 - Killer identity, contribution attribution, XP, loot, and reward eligibility
   are intentionally outside this milestone.
