@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <optional>
 #include <tuple>
@@ -214,7 +215,11 @@ public:
 
         slot.Status = SlotStatus::Dead;
         if (AllSlotsDead())
+        {
             m_clearedTick = aTick;
+            const auto cooldown = m_policy.ResetCooldownTicks;
+            m_resetNotBeforeTick = aTick > std::numeric_limits<std::uint64_t>::max() - cooldown ? std::numeric_limits<std::uint64_t>::max() : aTick + cooldown;
+        }
 
         return DeathResult::Recorded;
     }
@@ -261,16 +266,26 @@ public:
         if (!m_clearedTick || aNowTick < *m_clearedTick)
             return false;
 
-        return aNowTick - *m_clearedTick >= m_policy.ResetCooldownTicks;
+        return aNowTick >= m_resetNotBeforeTick;
+    }
+
+    /** Ticks left before a cleared encounter may reset; 0 when not cleared. */
+    [[nodiscard]] std::uint64_t GetResetCooldownRemaining(const std::uint64_t aNowTick) const noexcept
+    {
+        if (!m_clearedTick || aNowTick >= m_resetNotBeforeTick)
+            return 0;
+
+        return m_resetNotBeforeTick - aNowTick;
     }
 
     /**
-     * Reapplies persisted state after a server restart (roadmap W07). Only a
-     * freshly configured encounter with no bound slot accepts it. A cleared
-     * encounter comes back with every slot dead, so a restart never revives
-     * killed creatures, and its cooldown keeps counting from the clear tick.
+     * Reapplies persisted state after a server restart (roadmap W07, W08).
+     * Only a freshly configured encounter with no bound slot accepts it. A
+     * cleared encounter comes back with every slot dead, so a restart never
+     * revives killed creatures. Ticks restart with the process, so the
+     * cooldown is carried as the remaining duration, counted from aNowTick.
      */
-    [[nodiscard]] bool Restore(const std::uint64_t aEpoch, const std::optional<std::uint64_t> aClearedTick)
+    [[nodiscard]] bool Restore(const std::uint64_t aEpoch, const bool aCleared, const std::uint64_t aCooldownRemainingTicks, const std::uint64_t aNowTick)
     {
         if (!m_slotByIncarnation.empty() || IsCleared())
             return false;
@@ -282,12 +297,13 @@ public:
         }
 
         m_resetCount = aEpoch;
-        if (aClearedTick)
+        if (aCleared)
         {
             for (auto& [slotId, slot] : m_slots)
                 slot.Status = SlotStatus::Dead;
 
-            m_clearedTick = aClearedTick;
+            m_clearedTick = aNowTick;
+            m_resetNotBeforeTick = aNowTick > std::numeric_limits<std::uint64_t>::max() - aCooldownRemainingTicks ? std::numeric_limits<std::uint64_t>::max() : aNowTick + aCooldownRemainingTicks;
         }
 
         return true;
@@ -307,6 +323,7 @@ public:
 
         m_slotByIncarnation.clear();
         m_clearedTick.reset();
+        m_resetNotBeforeTick = 0;
         ++m_resetCount;
         return true;
     }
@@ -337,5 +354,6 @@ private:
     std::map<SpawnSlotId, Slot> m_slots;
     std::map<EncounterIncarnation, SpawnSlotId> m_slotByIncarnation;
     std::optional<std::uint64_t> m_clearedTick;
+    std::uint64_t m_resetNotBeforeTick{};
     std::uint64_t m_resetCount{};
 };

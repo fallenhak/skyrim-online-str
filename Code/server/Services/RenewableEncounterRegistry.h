@@ -39,8 +39,10 @@
  * cannot spawn the same slot twice; only CompleteSpawn with that ticket fills a
  * claimed slot. A disconnect (ReleasePlayerClaims) or a timeout
  * (ExpireSpawnClaims) voids the ticket, so a late completion from the old
- * owner is refused. Snapshot/Restore carry each encounter's epoch and cleared
- * state across a restart; the restored epoch is one higher, which makes every
+ * owner is refused. Snapshot/Restore carry the minimum state a restart needs
+ * (roadmap W08): each encounter's epoch, whether it is cleared, and the
+ * remaining reset cooldown. Nothing tick-absolute is kept because ticks start
+ * over with the process. The restored epoch is one higher, which makes every
  * ticket and spawn request issued before the restart stale.
  */
 class RenewableEncounterRegistry final
@@ -86,7 +88,8 @@ public:
     {
         RenewableEncounterId Id{};
         std::uint64_t Epoch{};
-        std::optional<std::uint64_t> ClearedTick{};
+        bool Cleared{};
+        std::uint64_t CooldownRemainingTicks{};
     };
 
     [[nodiscard]] bool AddEncounter(const RenewableEncounterId aId, const RenewableEncounterPolicy aPolicy)
@@ -207,11 +210,11 @@ public:
         return EraseClaimsIf([aNowTick, aTtlTicks](const Claim& acClaim) { return aNowTick >= acClaim.ClaimedTick && aNowTick - acClaim.ClaimedTick >= aTtlTicks; });
     }
 
-    [[nodiscard]] std::vector<EncounterSnapshot> Snapshot() const
+    [[nodiscard]] std::vector<EncounterSnapshot> Snapshot(const std::uint64_t aNowTick) const
     {
         std::vector<EncounterSnapshot> snapshot;
         for (const auto& [id, encounter] : m_encounters)
-            snapshot.push_back(EncounterSnapshot{id, encounter.GetEpoch(), encounter.GetClearedTick()});
+            snapshot.push_back(EncounterSnapshot{id, encounter.GetEpoch(), encounter.IsCleared(), encounter.GetResetCooldownRemaining(aNowTick)});
 
         return snapshot;
     }
@@ -221,7 +224,7 @@ public:
      * configuration. Nothing is applied unless every encounter in the
      * snapshot exists and the registry has no bound incarnation or claim.
      */
-    [[nodiscard]] bool Restore(const std::vector<EncounterSnapshot>& acSnapshot)
+    [[nodiscard]] bool Restore(const std::vector<EncounterSnapshot>& acSnapshot, const std::uint64_t aNowTick)
     {
         if (!m_encounterByIncarnation.empty() || !m_claims.empty())
             return false;
@@ -235,7 +238,7 @@ public:
 
         for (const auto& entry : acSnapshot)
         {
-            if (!FindMutable(entry.Id)->Restore(entry.Epoch + 1, entry.ClearedTick))
+            if (!FindMutable(entry.Id)->Restore(entry.Epoch + 1, entry.Cleared, entry.CooldownRemainingTicks, aNowTick))
                 return false;
         }
 

@@ -131,19 +131,18 @@ TEST_CASE("W07: restart restores epoch and cleared state, and old tickets are st
     const auto preRestart = before.ClaimSpawn(kCave, kSlotA, 0, kAlice, 40);
     REQUIRE(preRestart.has_value());
 
-    const auto snapshot = before.Snapshot();
+    const auto snapshot = before.Snapshot(40);
     REQUIRE(snapshot.size() == 2);
 
     auto after = MakeRegistry(); // reloaded from server configuration
-    REQUIRE(after.Restore(snapshot));
+    REQUIRE(after.Restore(snapshot, 0));
 
-    // Killed creatures stay dead across the restart; the cooldown keeps running from the clear tick.
+    // Killed creatures stay dead across the restart.
     const auto* pCrypt = after.Find(kCrypt);
     REQUIRE(pCrypt->IsCleared());
-    REQUIRE(pCrypt->GetClearedTick() == std::optional<std::uint64_t>{40});
     REQUIRE(pCrypt->GetMembership().Dead == 1);
     REQUIRE(after.GetSpawnRequests(kCrypt).empty());
-    REQUIRE(after.TryReset(kCrypt, 50));
+    REQUIRE(after.TryReset(kCrypt, 0));
     REQUIRE(after.GetSpawnRequests(kCrypt).size() == 1);
 
     // The live encounter starts a new epoch, so anything requested before the restart is stale.
@@ -154,15 +153,62 @@ TEST_CASE("W07: restart restores epoch and cleared state, and old tickets are st
     REQUIRE(after.GetSpawnRequests(kCave)[0].Epoch == 1);
 }
 
+TEST_CASE("W08: the remaining cooldown survives a restart whose tick counter starts over", "[renewable_encounter]")
+{
+    const auto make = [] {
+        RenewableEncounterRegistry registry;
+        REQUIRE(registry.AddEncounter(kCrypt, RenewableEncounterPolicy{100}));
+        REQUIRE(registry.AddSlot(kCrypt, kCryptSlot));
+        return registry;
+    };
+
+    auto before = make();
+    REQUIRE(before.BindIncarnation(kCrypt, kCryptSlot, {9, 10}, 0));
+    REQUIRE(before.RecordVerifiedDeath({9, 10}, 40000) == Death::Recorded);
+    REQUIRE(before.Find(kCrypt)->GetResetCooldownRemaining(40030) == 70);
+
+    // Only the minimum survives: epoch, cleared, remaining cooldown. No absolute tick.
+    const auto snapshot = before.Snapshot(40030);
+    REQUIRE(snapshot.size() == 1);
+    REQUIRE(snapshot[0].Epoch == 0);
+    REQUIRE(snapshot[0].Cleared);
+    REQUIRE(snapshot[0].CooldownRemainingTicks == 70);
+
+    auto after = make(); // new process: ticks start near zero
+    REQUIRE(after.Restore(snapshot, 5));
+    REQUIRE(after.Find(kCrypt)->GetResetCooldownRemaining(5) == 70);
+    REQUIRE_FALSE(after.TryReset(kCrypt, 74));
+    REQUIRE(after.TryReset(kCrypt, 75));
+}
+
+TEST_CASE("W08: an elapsed cooldown stays elapsed and a live encounter carries none", "[renewable_encounter]")
+{
+    auto before = MakeRegistry();
+    REQUIRE(before.BindIncarnation(kCrypt, kCryptSlot, {9, 10}, 0));
+    REQUIRE(before.RecordVerifiedDeath({9, 10}, 10) == Death::Recorded);
+
+    const auto snapshot = before.Snapshot(500);
+    for (const auto& entry : snapshot)
+    {
+        REQUIRE(entry.CooldownRemainingTicks == 0);
+        REQUIRE(entry.Cleared == (entry.Id == kCrypt));
+    }
+
+    auto after = MakeRegistry();
+    REQUIRE(after.Restore(snapshot, 0));
+    REQUIRE(after.Find(kCrypt)->IsResetEligible(0));
+    REQUIRE(after.Find(kCave)->GetResetCooldownRemaining(0) == 0);
+}
+
 TEST_CASE("W07: restore only applies to a freshly configured registry", "[renewable_encounter]")
 {
     auto before = MakeRegistry();
-    const auto snapshot = before.Snapshot();
+    const auto snapshot = before.Snapshot(0);
 
     auto busy = MakeRegistry();
     REQUIRE(busy.BindIncarnation(kCave, kSlotA, {7, 10}, 0));
-    REQUIRE_FALSE(busy.Restore(snapshot));
+    REQUIRE_FALSE(busy.Restore(snapshot, 0));
 
     RenewableEncounterRegistry unconfigured;
-    REQUIRE_FALSE(unconfigured.Restore(snapshot)); // snapshot names encounters the config lacks
+    REQUIRE_FALSE(unconfigured.Restore(snapshot, 0)); // snapshot names encounters the config lacks
 }
