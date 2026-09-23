@@ -6,40 +6,61 @@
 #include <Structs/GameId.h>
 #include <es_loader/ESLoader.h>
 
+#include <utility>
+
 uint32_t ModsComponent::AddStandard(const String& acpFilename) noexcept
 {
-    const auto itor = m_standardMods.find(acpFilename);
-    if (itor != std::end(m_standardMods))
+    String filenameKey;
+    const bool hasFilenameKey = ESLoader::GetPluginFilenameKey(acpFilename, filenameKey);
+    for (auto& entry : m_standardMods)
     {
-        itor.value().refCount++;
-        return itor->second.id;
+        String existingKey;
+        if ((hasFilenameKey && ESLoader::GetPluginFilenameKey(entry.first, existingKey) && existingKey == filenameKey) ||
+            (!hasFilenameKey && entry.first == acpFilename))
+        {
+            entry.second.refCount++;
+            return entry.second.id;
+        }
     }
 
     const auto id = m_seed++;
     m_standardMods.emplace(acpFilename, Entry{id, 1});
-    m_networkModIdentities.emplace(id, NetworkModIdentity{acpFilename, false});
+    m_networkModIdentities.emplace(id, NetworkModIdentity{std::move(filenameKey), false});
 
     return id;
 }
 
 uint32_t ModsComponent::AddLite(const String& acpFilename) noexcept
 {
-    const auto itor = m_liteMods.find(acpFilename);
-    if (itor != std::end(m_liteMods))
+    String filenameKey;
+    const bool hasFilenameKey = ESLoader::GetPluginFilenameKey(acpFilename, filenameKey);
+    for (auto& entry : m_liteMods)
     {
-        itor.value().refCount++;
-        return itor->second.id;
+        String existingKey;
+        if ((hasFilenameKey && ESLoader::GetPluginFilenameKey(entry.first, existingKey) && existingKey == filenameKey) ||
+            (!hasFilenameKey && entry.first == acpFilename))
+        {
+            entry.second.refCount++;
+            return entry.second.id;
+        }
     }
 
     const auto id = m_seed++;
     m_liteMods.emplace(acpFilename, Entry{id, 1});
-    m_networkModIdentities.emplace(id, NetworkModIdentity{acpFilename, true});
+    m_networkModIdentities.emplace(id, NetworkModIdentity{std::move(filenameKey), true});
 
     return id;
 }
 
 void ModsComponent::AddServerMod(const ESLoader::PluginData& acData)
 {
+    String filenameKey;
+    if (!ESLoader::GetPluginFilenameKey(acData.m_filename, filenameKey))
+    {
+        spdlog::warn("Ignoring server plugin with unsafe filename: {}", acData.m_filename);
+        return;
+    }
+
     const uint16_t loadOrderId = acData.IsLite() ? acData.m_liteId : acData.m_standardId;
     const uint16_t maximumId = acData.IsLite() ? ESLoader::kMaxLitePluginId : ESLoader::kMaxStandardPluginId;
     if (loadOrderId > maximumId)
@@ -48,7 +69,7 @@ void ModsComponent::AddServerMod(const ESLoader::PluginData& acData)
         return;
     }
 
-    m_serverPluginIdentities[acData.m_filename] = ServerPluginIdentity{
+    m_serverPluginIdentities[std::move(filenameKey)] = ServerPluginIdentity{
         loadOrderId, acData.IsLite()};
 
     // Keep the installed-mod entry consistent with the validated namespace ID.
@@ -63,7 +84,10 @@ bool ModsComponent::ResolveServerFormId(const GameId& acNetworkId, uint32_t& aRe
     if (networkIt == m_networkModIdentities.end())
         return false;
 
-    const auto serverIt = m_serverPluginIdentities.find(networkIt->second.Filename);
+    if (networkIt->second.FilenameKey.empty())
+        return false;
+
+    const auto serverIt = m_serverPluginIdentities.find(networkIt->second.FilenameKey);
     if (serverIt == m_serverPluginIdentities.end() || serverIt->second.IsLite != networkIt->second.IsLite)
         return false;
 
@@ -92,7 +116,6 @@ bool ModsComponent::ResolveServerFormId(const GameId& acNetworkId, uint32_t& aRe
 
 bool ModsComponent::IsInstalled(const String& acpFilename) const noexcept
 {
-    auto it = std::find_if(m_serverMods.begin(), m_serverMods.end(), [&](const TModList::value_type& aEntry) { return aEntry.first == acpFilename; });
-
-    return it != m_serverMods.end();
+    String filenameKey;
+    return ESLoader::GetPluginFilenameKey(acpFilename, filenameKey) && m_serverPluginIdentities.find(filenameKey) != m_serverPluginIdentities.end();
 }

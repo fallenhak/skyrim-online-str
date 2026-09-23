@@ -1,5 +1,6 @@
 #pragma once
 
+#include <PluginFilename.h>
 #include <TESFile.h>
 
 namespace fs = std::filesystem;

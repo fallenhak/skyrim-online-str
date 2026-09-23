@@ -26,6 +26,7 @@
 #include <Messages/NotifyCharacterEnteredWorld.h>
 #include <Messages/RequestCharacterList.h>
 #include <Messages/SelectCharacterRequest.h>
+#include <es_loader/PluginFilename.h>
 #include <console/ConsoleRegistry.h>
 #include <resources/ResourceCollection.h>
 
@@ -1097,7 +1098,9 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
             // mods that may exist on the server, but not on the client
             for (const auto& entry : modsComponent.GetServerMods())
             {
-                const auto it = std::find_if(userMods.begin(), userMods.end(), [&](const Mods::Entry& it) { return it.Filename == entry.first; });
+                const auto it = std::find_if(userMods.begin(), userMods.end(), [&](const Mods::Entry& it) {
+                    return ESLoader::ArePluginFilenamesEqual(it.Filename, entry.first);
+                });
 
                 if (it == userMods.end())
                 {

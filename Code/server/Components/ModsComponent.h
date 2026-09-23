@@ -39,7 +39,7 @@ struct ModsComponent
 private:
     struct NetworkModIdentity
     {
-        String Filename;
+        String FilenameKey;
         bool IsLite{};
     };
 

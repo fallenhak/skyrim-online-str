@@ -1,4 +1,5 @@
 #include "TESFile.h"
+#include "PluginFilename.h"
 
 #include <array>
 #include <cstring>
@@ -185,7 +186,15 @@ bool TESFile::InitializeFormIdPrefixes() noexcept
     {
         // An unresolved master must fail closed; operator[] would silently
         // turn it into standard prefix zero.
-        const auto masterId = m_masterFiles.find(master.m_masterName);
+        String masterFilenameKey;
+        if (!GetPluginFilenameKey(master.m_masterName, masterFilenameKey))
+        {
+            spdlog::warn("Plugin {} references invalid master {}; skipping its records", m_filename, master.m_masterName);
+            m_parentToFormIdPrefix.clear();
+            return false;
+        }
+
+        const auto masterId = m_masterFiles.find(masterFilenameKey);
         if (masterId == std::end(m_masterFiles))
         {
             spdlog::warn("Plugin {} references unresolved master {}; skipping its records", m_filename, master.m_masterName);

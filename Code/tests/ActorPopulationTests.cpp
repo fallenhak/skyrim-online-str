@@ -398,6 +398,46 @@ TEST(ESLoader, ParsesLoadOrderMetadataSafelyWithoutPluginFiles)
     EXPECT_FALSE(records->HasAnyRecords());
 }
 
+TEST(ESLoader, ResolvesPluginAndMasterNamesAcrossCaseAndLineEndingDifferences)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt", std::ios::binary);
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "MASTER.ESM\r\n"
+                  << "Dependent.ESP\r\n";
+    }
+
+    constexpr uint32_t masterRaceRawId = 0x00001000;
+    Bytes master = MakePluginHeaderWithMasters({});
+    AppendRecord(master, FormEnum::RACE, masterRaceRawId, MakeRaceData("CaseRace"));
+
+    Bytes dependent = MakePluginHeaderWithMaster("master.esm");
+    AppendRecord(dependent, FormEnum::NPC_, 0x01002000, MakeNpcData("CaseNpc", &masterRaceRawId));
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    // The load order has different case from the files on disk, and MAST has
+    // different case from the load-order spelling.
+    ASSERT_TRUE(writePlugin("master.esm", master));
+    ASSERT_TRUE(writePlugin("dependent.esp", dependent));
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+    ASSERT_EQ(loader.GetLoadOrder().size(), 2U);
+    EXPECT_EQ(loader.GetLoadOrder()[0].m_filename, "MASTER.ESM");
+    EXPECT_NE(records->FindNpcById(0x01002000), nullptr);
+}
+
 TEST(ESLoader, UsesTES4ESLFlagForLightPluginNamespace)
 {
     TemporaryDirectory dataDirectory;
@@ -1252,12 +1292,14 @@ TEST(ActorPopulationIdentityResolver, ResolvesStandardAndLightServerFormIds)
     AddServerPlugin(mods, "LastStandard.esp", ESLoader::kMaxStandardPluginId, false);
     AddServerPlugin(mods, "LastLight.esl", ESLoader::kMaxLitePluginId, true);
 
-    const auto standardNetworkId = mods.AddStandard("Test.esp");
+    const auto standardNetworkId = mods.AddStandard("tEsT.ESP\r");
+    EXPECT_EQ(mods.AddStandard("TEST.esp"), standardNetworkId);
     const auto lightNetworkId = mods.AddLite("Light.esp");
     const auto lastStandardNetworkId = mods.AddStandard("LastStandard.esp");
     const auto lastLightNetworkId = mods.AddLite("LastLight.esl");
     const auto mismatchedNetworkId = mods.AddStandard("Light.esp");
     const auto unknownNetworkId = mods.AddStandard("Unknown.esp");
+    const auto pathNetworkId = mods.AddStandard("mods/Test.esp");
 
     uint32_t resolvedFormId = 0;
     EXPECT_TRUE(mods.ResolveServerFormId(GameId(standardNetworkId, 0xAB123456), resolvedFormId));
@@ -1274,6 +1316,10 @@ TEST(ActorPopulationIdentityResolver, ResolvesStandardAndLightServerFormIds)
 
     EXPECT_FALSE(mods.ResolveServerFormId(GameId(mismatchedNetworkId, 0x00000ABC), resolvedFormId));
     EXPECT_FALSE(mods.ResolveServerFormId(GameId(unknownNetworkId, 0x00000ABC), resolvedFormId));
+    EXPECT_FALSE(mods.ResolveServerFormId(GameId(pathNetworkId, 0x00000ABC), resolvedFormId));
+    EXPECT_TRUE(mods.IsInstalled("tEsT.ESP\r"));
+    EXPECT_FALSE(mods.IsInstalled("folder/Test.esp"));
+    EXPECT_FALSE(mods.IsInstalled("../Test.esp"));
 }
 
 TEST(ModsComponent, RejectsOutOfRangeServerPluginLoadOrderIds)

@@ -45,23 +45,6 @@ String NormalizeLoadOrderLine(String aLine, const bool aFirstLine)
     return String(first, last);
 }
 
-String MakeFilenameKey(const String& acFilename)
-{
-    String key = acFilename;
-    std::transform(
-        key.begin(), key.end(), key.begin(), [](const char aCharacter) { return static_cast<char>(std::tolower(static_cast<unsigned char>(aCharacter))); });
-    return key;
-}
-
-bool IsSafePluginFilename(const String& acFilename) noexcept
-{
-    return !acFilename.empty() && acFilename.find('/') == String::npos && acFilename.find('\\') == String::npos &&
-           acFilename.find(':') == String::npos &&
-           std::none_of(acFilename.begin(), acFilename.end(), [](const char aCharacter) {
-               return std::iscntrl(static_cast<unsigned char>(aCharacter)) != 0;
-           });
-}
-
 enum class PluginType : uint8_t
 {
     kInvalid,
@@ -217,7 +200,8 @@ bool ESLoader::LoadLoadOrder()
         if (line.empty() || line.front() == '#')
             continue;
 
-        if (!IsSafePluginFilename(line))
+        String filenameKey;
+        if (!GetPluginFilenameKey(line, filenameKey))
         {
             spdlog::warn("Ignoring unsafe plugin entry in loadorder.txt");
             continue;
@@ -240,7 +224,7 @@ bool ESLoader::LoadLoadOrder()
             continue;
         }
 
-        if (!seenFilenames.emplace(MakeFilenameKey(line)).second)
+        if (!seenFilenames.emplace(std::move(filenameKey)).second)
         {
             spdlog::warn("Ignoring duplicate plugin entry in loadorder.txt: {}", line);
             continue;
@@ -325,7 +309,9 @@ UniquePtr<RecordCollection> ESLoader::LoadFiles()
         const uint32_t formIdPrefix = plugin.IsLite()
                                           ? 0xFE000000u | (static_cast<uint32_t>(plugin.m_liteId) << 12)
                                           : static_cast<uint32_t>(plugin.m_standardId) << 24;
-        m_masterFiles.emplace(plugin.m_filename, formIdPrefix);
+        String filenameKey;
+        if (GetPluginFilenameKey(plugin.m_filename, filenameKey))
+            m_masterFiles.emplace(std::move(filenameKey), formIdPrefix);
     }
 
     return recordCollection;
@@ -336,26 +322,52 @@ fs::path ESLoader::GetPath(const String& acFilename) const
     // loadorder.txt contains plugin filenames, not paths. Reject path syntax so
     // a malformed entry cannot make the loader read outside Data, and resolve
     // the exact path directly instead of depending on directory iteration order.
-    if (!IsSafePluginFilename(acFilename))
+    String filenameKey;
+    if (!GetPluginFilenameKey(acFilename, filenameKey))
         return {};
 
     const fs::path pluginPath = m_directory / fs::path(acFilename);
     std::error_code error;
     const auto status = fs::symlink_status(pluginPath, error);
-    if (error)
+    if (error && error != std::errc::no_such_file_or_directory)
     {
-        // Only a confirmed missing path may use filename-derived metadata.
-        // Other lookup errors leave file existence unknown, so retain the path
-        // and let header reading fail closed instead of guessing a namespace.
-        if (error != std::errc::no_such_file_or_directory)
-            return pluginPath;
-
-        return {};
+        // Other lookup errors leave file existence unknown. Retain the path so
+        // header reading fails closed instead of guessing a namespace.
+        return pluginPath;
     }
 
-    // Preserve existing non-regular paths too: they cannot supply a valid TES4
-    // header, and treating them as missing would incorrectly trust the suffix.
-    return status.type() == fs::file_type::not_found ? fs::path() : pluginPath;
+    // Prefer the exact spelling when it exists, then resolve a case-only
+    // mismatch in the Data directory. A path never comes from the load-order
+    // entry, so this scan cannot escape the plugin directory.
+    if (!error && status.type() != fs::file_type::not_found)
+        return pluginPath;
+
+    std::error_code directoryError;
+    fs::directory_iterator it(m_directory, directoryError);
+    if (directoryError)
+        return {};
+
+    const fs::directory_iterator end;
+    fs::path match;
+    while (it != end)
+    {
+        String entryKey;
+        const String entryFilename = it->path().filename().string();
+        if (GetPluginFilenameKey(entryFilename, entryKey) && entryKey == filenameKey)
+        {
+            // Distinct names that compare equal by case are ambiguous. Do not
+            // select one based on filesystem iteration order.
+            if (!match.empty())
+                return {};
+            match = it->path();
+        }
+
+        it.increment(directoryError);
+        if (directoryError)
+            return {};
+    }
+
+    return match;
 }
 
 } // namespace ESLoader
