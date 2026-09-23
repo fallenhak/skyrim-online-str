@@ -2,7 +2,7 @@
 
 ## V3.4 quota-aware reviewer routing — 2026-09-23
 
-Ordinary current-phase and post-phase reviews use GPT-6 Luna/high. Only
+Ordinary current-phase and post-phase reviews use GPT-6 Luna/max. Only
 deterministic architecture escalations use GPT-6 Sol/medium; automatic Sol/max
 is disabled. Development remains GPT-6 Luna/max, with the existing two-worker
 and one-reviewer caps. Per-tier availability/backoff and same-material Luna

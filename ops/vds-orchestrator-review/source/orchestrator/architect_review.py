@@ -1987,7 +1987,7 @@ class ArchitectReviewMixin:
         prior.append({
             "review_tier": "normal",
             "selected_model": item.get("selected_model") or "gpt-6-luna",
-            "selected_reasoning_effort": item.get("selected_reasoning_effort") or "high",
+            "selected_reasoning_effort": item.get("selected_reasoning_effort") or "max",
             "decision": item.get("decision"),
             "fingerprint": review_failure_fingerprint(item.get("decision") or {}),
             "reason": s.redact(reason)[:1600],

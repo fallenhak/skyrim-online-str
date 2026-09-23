@@ -28,6 +28,15 @@ class Harness(supervisor.Supervisor):
             "max_changed_files": 40,
             "max_total_diff_bytes": 524288,
             "required_workflows": ["Build linux", "Build windows"],
+            "model_routing": {
+                "review": {
+                    "normal": {
+                        "model": "gpt-6-luna",
+                        "family": "luna",
+                        "reasoning_effort": "max",
+                    },
+                },
+            },
             "operator_request_root": tempfile.mkdtemp(prefix="skyrim-operator-requests-"),
             "max_processed_operator_requests": 3,
             "lanes": {
@@ -1770,21 +1779,21 @@ class SupervisorLogicTests(unittest.TestCase):
 
 
 class V34ReviewerRoutingTests(unittest.TestCase):
-    def test_ordinary_review_routes_to_luna_high(self) -> None:
+    def test_ordinary_review_routes_to_luna_max(self) -> None:
         h = Harness()
         tier, reason = h._review_tier_for_request(
             "combat", "POST_PHASE_CHECKPOINT", ["ordinary implementation review"]
         )
         self.assertEqual((tier, reason), ("normal", None))
         self.assertEqual(h._review_route(tier), {
-            "model": "gpt-6-luna", "reasoning_effort": "high", "family": "luna",
+            "model": "gpt-6-luna", "reasoning_effort": "max", "family": "luna",
         })
 
     def test_ordinary_review_never_inherits_architect_sol_route(self) -> None:
         h = Harness()
         h.config["architect_review"] = {"model": "gpt-6-sol", "reasoning_effort": "max"}
         self.assertEqual(h._review_route("normal")["model"], "gpt-6-luna")
-        self.assertEqual(h._review_route("normal")["reasoning_effort"], "high")
+        self.assertEqual(h._review_route("normal")["reasoning_effort"], "max")
         self.assertEqual(h._review_route("architect")["model"], "gpt-6-sol")
         self.assertEqual(h._review_route("architect")["reasoning_effort"], "medium")
 
@@ -1858,7 +1867,7 @@ class V34ReviewerRoutingTests(unittest.TestCase):
         h = Harness()
         h.config["model_routing"] = {
             "development": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "max"},
-            "review": {"normal": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "high"}},
+            "review": {"normal": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "max"}},
             "luna_fallback_models": [],
         }
         availability = h._availability_record()
@@ -1870,14 +1879,14 @@ class V34ReviewerRoutingTests(unittest.TestCase):
         h = Harness()
         h.config["model_routing"] = {
             "development": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "max"},
-            "review": {"normal": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "high"}},
+            "review": {"normal": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "max"}},
             "luna_fallback_models": [{"model": "gpt-6-luna-reserve", "family": "luna", "reasoning_effort": "max"}],
         }
         availability = h._availability_record()
         with patch.object(h, "_probe_model_route", side_effect=[(False, "primary unavailable"), (True, "MODEL_OK")]) as probe:
             route = h._resolve_luna_route("review", availability)
         self.assertEqual(route["model"], "gpt-6-luna-reserve")
-        self.assertEqual(route["reasoning_effort"], "high")
+        self.assertEqual(route["reasoning_effort"], "max")
         self.assertTrue(availability["fallback_used"])
         self.assertEqual(probe.call_count, 2)
         with patch.object(h, "_probe_model_route", side_effect=[(False, "fallback unavailable"), (True, "MODEL_OK")]) as probe:
@@ -1891,7 +1900,7 @@ class V34ReviewerRoutingTests(unittest.TestCase):
         h.config["model_routing"] = {
             "development": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "max"},
             "review": {
-                "normal": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "high"},
+                "normal": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "max"},
                 "architect": {"model": "gpt-6-sol", "family": "sol", "reasoning_effort": "max"},
             },
             "luna_fallback_models": [],
@@ -1927,7 +1936,7 @@ class V34ReviewerRoutingTests(unittest.TestCase):
         self.assertEqual(item["review_tier"], "normal")
         self.assertEqual(lane_review["review_tier"], "normal")
         self.assertEqual(lane_review["selected_model"], "gpt-6-luna")
-        self.assertEqual(lane_review["selected_reasoning_effort"], "high")
+        self.assertEqual(lane_review["selected_reasoning_effort"], "max")
         self.assertEqual(h.state["architect_review"]["queue"], [])
 
     def test_model_availability_backoff_survives_json_state_restart(self) -> None:
@@ -1978,7 +1987,7 @@ class V34ReviewerRoutingTests(unittest.TestCase):
         self.assertFalse(supervisor.classify_codex_model_unavailable(1, "pytest assertion failed"))
         self.assertFalse(supervisor.classify_codex_model_unavailable(0, "unknown model"))
 
-    def test_starting_normal_review_builds_luna_high_command(self) -> None:
+    def test_starting_normal_review_builds_luna_max_command(self) -> None:
         h = Harness()
         h.review_process = None
         h.review_output_thread = None
@@ -2043,8 +2052,8 @@ class V34ReviewerRoutingTests(unittest.TestCase):
                     patch.object(architect_review, "build_bwrap_command", return_value=["bwrap-test"]) as build:
                 self.assertTrue(h.start_next_reviewer())
             self.assertEqual(item["selected_model"], "gpt-6-luna")
-            self.assertEqual(item["selected_reasoning_effort"], "high")
-            self.assertEqual(build.call_args.args[-2:], ("gpt-6-luna", "high"))
+            self.assertEqual(item["selected_reasoning_effort"], "max")
+            self.assertEqual(build.call_args.args[-2:], ("gpt-6-luna", "max"))
             self.assertNotEqual(build.call_args.args[-2], "gpt-6-sol")
             self.assertEqual(h.state["architect_review"]["queue"], [architect_wait_id])
             self.assertEqual(h.state["architect_review"]["items"][architect_wait_id]["status"], "QUEUED")

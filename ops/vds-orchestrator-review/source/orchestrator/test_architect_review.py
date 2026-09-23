@@ -215,7 +215,7 @@ class DecisionHarness(ArchitectReviewMixin):
                            "commit_sha": EXPECTED["reviewed_sha"], "next_phase": {"id": "A07"},
                            "review_tier": review_tier,
                            "selected_model": "gpt-6-luna" if review_tier == "normal" else "gpt-6-sol",
-                           "selected_reasoning_effort": "high" if review_tier == "normal" else "medium"},
+                           "selected_reasoning_effort": "max" if review_tier == "normal" else "medium"},
                 "ci": {"status": "NOT_RUN", "sha": EXPECTED["reviewed_sha"]},
                 "history": [], "success_since_review": 0,
             }},
@@ -235,7 +235,7 @@ class DecisionHarness(ArchitectReviewMixin):
             "control_plane_sha": "c" * 40, "status": "DECISION_PENDING",
             "review_tier": review_tier,
             "selected_model": "gpt-6-luna" if review_tier == "normal" else "gpt-6-sol",
-            "selected_reasoning_effort": "high" if review_tier == "normal" else "medium",
+            "selected_reasoning_effort": "max" if review_tier == "normal" else "medium",
             "prior_decisions": [],
             "decision": {
                 "decision": decision, "confidence": "high", "reason": "review result",

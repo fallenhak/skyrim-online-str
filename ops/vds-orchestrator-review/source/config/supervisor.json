@@ -59,7 +59,7 @@
       "normal": {
         "model": "gpt-6-luna",
         "family": "luna",
-        "reasoning_effort": "high"
+        "reasoning_effort": "max"
       },
       "architect": {
         "model": "gpt-6-sol",
@@ -126,7 +126,7 @@
     "model": "gpt-6-sol",
     "reasoning_effort": "medium",
     "normal_model": "gpt-6-luna",
-    "normal_reasoning_effort": "high",
+    "normal_reasoning_effort": "max",
     "max_concurrent_reviewers": 1,
     "max_review_failures": 3,
     "max_retry_cycles": 3,

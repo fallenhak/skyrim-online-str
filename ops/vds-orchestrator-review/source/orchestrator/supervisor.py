@@ -687,8 +687,12 @@ class Supervisor(ArchitectReviewMixin):
             ).strip().lower()
             if family != "luna":
                 raise RuntimeError("normal review route must remain in the configured Luna model family")
-            # Normal review is deliberately bounded to high, never max.
-            return {"model": model, "reasoning_effort": "high", "family": family}
+            effort = str(
+                configured.get("reasoning_effort")
+                or legacy.get("normal_reasoning_effort")
+                or "high"
+            ).strip()
+            return {"model": model, "reasoning_effort": effort, "family": family}
 
         configured = review_routing.get("architect", {})
         if not isinstance(configured, dict):
@@ -714,16 +718,19 @@ class Supervisor(ArchitectReviewMixin):
         configured = routing.get("luna_fallback_models", []) if isinstance(routing, dict) else []
         if not isinstance(configured, list):
             return []
+        effort = (
+            "max"
+            if purpose == "development"
+            else self._review_route("normal")["reasoning_effort"]
+        )
         routes: list[dict[str, str]] = []
         for candidate in configured:
             if isinstance(candidate, str):
                 model = candidate.strip()
                 family = self._infer_model_family(model)
-                effort = "max" if purpose == "development" else "high"
             elif isinstance(candidate, dict):
                 model = str(candidate.get("model") or "").strip()
                 family = str(candidate.get("family") or self._infer_model_family(model)).strip().lower()
-                effort = "max" if purpose == "development" else "high"
             else:
                 continue
             if model and family == "luna":

@@ -2,7 +2,7 @@
 
 | Review snapshot | Installed path | Purpose |
 | --- | --- | --- |
-| `source/orchestrator/architect_review.py` | `/srv/services/skyrim-dev/orchestrator/architect_review.py` | Two-tier tool-free reviewer (Luna/high normal, Sol/medium deterministic architect escalation), strict decisions, v3 exact-commit evidence, bounded availability/evidence retry, and blocked/idle state |
+| `source/orchestrator/architect_review.py` | `/srv/services/skyrim-dev/orchestrator/architect_review.py` | Two-tier tool-free reviewer (Luna/max normal, Sol/medium deterministic architect escalation), strict decisions, v3 exact-commit evidence, bounded availability/evidence retry, and blocked/idle state |
 | `source/orchestrator/test_architect_review.py` | `/srv/services/skyrim-dev/orchestrator/test_architect_review.py` | Deterministic reviewer schema, exact-SHA evidence, isolation, tool-free invocation, decision/action consistency, and tier/retry policy tests |
 | `source/orchestrator/supervisor.py` | `/srv/services/skyrim-dev/orchestrator/supervisor.py` | Runtime-owner/observer-safe supervisor, fail-closed gates, quota-aware model routing, and worker smoke test |
 | `source/orchestrator/roadmap.py` | `/srv/services/skyrim-dev/orchestrator/roadmap.py` | Validated roadmap schema, dependency scheduler, task identity, gates, and fairness |
