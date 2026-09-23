@@ -943,6 +943,13 @@ TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
     EXPECT_EQ(policy.ClassifyNpcBase(0x04008003).Class, ActorPopulationClass::kUnknown);
     EXPECT_EQ(policy.ClassifyNpcBase(0).Class, ActorPopulationClass::kUnknown);
 
+    // Records whose own parent prefix is absent are not assigned a guessed
+    // namespace (especially the standard slot-zero namespace).
+    EXPECT_EQ(records->FindNpcById(unresolvedNpcRawId), nullptr);
+    EXPECT_EQ(records->FindRaceById(unresolvedRaceRawId), nullptr);
+    EXPECT_EQ(records->FindActorReferenceById(0x7F009004), nullptr);
+    EXPECT_EQ(policy.ClassifyNpcBase(unresolvedNpcRawId).Class, ActorPopulationClass::kUnknown);
+
     const auto* const pUnresolvedBaseActorReference = records->FindActorReferenceById(0x04009003);
     ASSERT_NE(pUnresolvedBaseActorReference, nullptr);
     EXPECT_EQ(pUnresolvedBaseActorReference->m_baseObject.m_baseId, 0u);
@@ -1057,6 +1064,60 @@ void AddServerPlugin(ModsComponent& aMods, const char* apFilename, const uint16_
         plugin.m_standardId = static_cast<uint8_t>(aLoadOrderId);
 
     aMods.AddServerMod(plugin);
+}
+
+TEST(ESLoader, MissingMasterDoesNotAliasSlotZeroOrClassifyActor)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Skyrim.esm\n"
+                  << "MissingMasterDependent.esp\n";
+    }
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    constexpr uint32_t vanillaRaceRawId = 0x00001000;
+    Bytes vanilla = MakePluginHeaderWithMasters({});
+    AppendRecord(vanilla, FormEnum::RACE, vanillaRaceRawId, MakeRaceData("NordRace"));
+    AppendRecord(vanilla, FormEnum::NPC_, 0x00002000, MakeNpcData("VanillaNord", &vanillaRaceRawId));
+
+    Bytes dependent = MakePluginHeaderWithMaster("Absent.esm");
+    AppendRecord(dependent, FormEnum::NPC_, 0x01002000, MakeNpcData("OverrideNpc", &vanillaRaceRawId));
+    AppendRecord(dependent, FormEnum::ACHR, 0x01003000, MakeActorReferenceData(0x00002000));
+
+    ASSERT_TRUE(writePlugin("Skyrim.esm", vanilla));
+    ASSERT_TRUE(writePlugin("MissingMasterDependent.esp", dependent));
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+
+    // An unresolved MAST entry prevents indexing the dependent plugin. Its
+    // master-slot IDs must not alias vanilla records loaded at slot zero.
+    EXPECT_EQ(records->FindNpcById(0x01002000), nullptr);
+    EXPECT_EQ(records->FindActorReferenceById(0x01003000), nullptr);
+
+    ActorPopulationPolicy policy(records.get());
+    EXPECT_EQ(policy.ClassifyNpcBase(0x00002000).Class, ActorPopulationClass::kHumanoidNpc);
+    EXPECT_EQ(policy.ClassifyNpcBase(0x01002000).Class, ActorPopulationClass::kUnknown);
+
+    ModsComponent mods;
+    AddServerPlugin(mods, "MissingMasterDependent.esp", 1, false);
+    const auto networkModId = mods.AddStandard("MissingMasterDependent.esp");
+    ActorPopulationIdentityResolver resolver(mods, records.get(), policy);
+    const auto actor = resolver.Resolve(GameId(networkModId, 0x00003000));
+    EXPECT_EQ(actor.Source, ActorPopulationIdentitySource::kUnknown);
+    EXPECT_EQ(actor.Classification.Class, ActorPopulationClass::kUnknown);
 }
 
 TEST(ActorPopulationIdentityResolver, ResolvesStandardAndLightServerFormIds)

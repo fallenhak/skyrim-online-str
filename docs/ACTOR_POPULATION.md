@@ -118,11 +118,14 @@ unreadable header in an existing plugin file, the server skips that plugin
 instead of publishing a standard or light namespace. Missing plugin files keep
 the filename-derived load-order metadata, without trusting client-reported mod
 kind. During opt-in indexing, a plugin with any master absent from the known
-standard-master map is skipped before any of its records are indexed.
-Light-plugin master prefix mapping is not implemented yet, so an ESL-flagged
-`.esm` can load its own records but a dependent plugin that names it as a master
-is skipped safely. When full record loading is enabled, absent plugin files are
-warned about and skipped while the parsed metadata remains available.
+server master-prefix map is skipped before any of its records are indexed.
+An unresolved `MAST` entry never falls back to prefix zero, which could alias
+an unrelated record in the first load-order slot. Actor-population records with
+an unmapped own-form prefix are skipped; unresolved `RNAM`/`NAME` references
+keep the null form ID and therefore classify as `Unknown` when their target
+cannot be found.
+When full record loading is enabled, absent plugin files are warned about and
+skipped while the parsed metadata remains available.
 
 With it enabled, `World`
 asks ESLoader to parse server plugin files and build references. If the Data
