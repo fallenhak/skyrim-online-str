@@ -1,3 +1,8 @@
+#include <TiltedCore/Stl.hpp>
+#include <TiltedCore/Allocator.hpp>
+#include <TiltedCore/Buffer.hpp>
+#include <TiltedCore/Serialization.hpp>
+
 #include <Messages/ClientMessageFactory.h>
 #include <Services/PendingCombatObservationStore.h>
 
