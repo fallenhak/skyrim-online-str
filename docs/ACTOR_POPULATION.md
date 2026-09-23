@@ -110,6 +110,15 @@ Load-order metadata is kept in the file's declared order. Blank/comment lines,
 UTF-8 BOMs, CR/LF endings, and surrounding whitespace are normalized; duplicate
 or unsupported/unsafe plugin entries (including path-bearing or control-character
 names) are ignored without consuming an ID.
+For a readable plugin file, the server uses the TES4 header ESL flag
+(`0x00000200`) to promote an `.esp` or `.esm` into the light-plugin namespace.
+An `.esl` filename remains light even when the readable header omits that bit;
+the header never downgrades it to a standard namespace. For a malformed or
+unreadable header in an existing plugin file, the server skips that plugin
+instead of publishing a standard or light namespace. Missing plugin files keep
+the filename-derived load-order metadata, without trusting client-reported mod
+kind. During opt-in indexing, a plugin with any master absent from the known
+standard-master map is skipped before any of its records are indexed.
 When full record loading is enabled, absent plugin files are warned about and
 skipped while the parsed metadata remains available.
 

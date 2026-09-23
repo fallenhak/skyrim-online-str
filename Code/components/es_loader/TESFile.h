@@ -1,5 +1,8 @@
 #pragma once
 
+#include <filesystem>
+#include <optional>
+
 #include <RecordCollection.h>
 
 #include <Records/CLMT.h>
@@ -21,12 +24,14 @@ public:
 
     void Setup(uint8_t aStandardId);
     void Setup(uint16_t aLiteId);
+    [[nodiscard]] static std::optional<uint32_t> ReadHeaderFlags(const std::filesystem::path& acPath) noexcept;
     bool LoadFile(const std::filesystem::path& acPath) noexcept;
     bool IndexRecords(RecordCollection& aRecordCollection) noexcept;
 
     [[nodiscard]] static uint32_t GetFormIdPrefix(uint32_t aFormId, TiltedPhoques::Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept;
 
 private:
+    bool InitializeFormIdPrefixes() noexcept;
     bool ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aRecordCollection) noexcept;
 
     template <class T> T CopyAndParseRecord(Record* pRecordHeader);

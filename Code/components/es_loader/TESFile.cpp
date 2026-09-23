@@ -1,5 +1,7 @@
 #include "TESFile.h"
 
+#include <array>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
@@ -21,6 +23,38 @@ void TESFile::Setup(uint16_t aLiteId)
 {
     m_liteId = aLiteId;
     m_formIdPrefix = 0xFE000000 + (m_liteId * 0x1000);
+}
+
+std::optional<uint32_t> TESFile::ReadHeaderFlags(const std::filesystem::path& acPath) noexcept
+{
+    std::error_code fileSizeError;
+    const uintmax_t fileSize = std::filesystem::file_size(acPath, fileSizeError);
+    if (fileSizeError || fileSize < sizeof(Record))
+        return std::nullopt;
+
+    std::ifstream file(acPath, std::ios::binary);
+    if (!file)
+        return std::nullopt;
+
+    std::array<uint8_t, sizeof(Record)> header{};
+    file.read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size()));
+    if (file.gcount() != static_cast<std::streamsize>(header.size()))
+        return std::nullopt;
+
+    uint32_t formType = 0;
+    uint32_t dataSize = 0;
+    uint32_t flags = 0;
+    std::memcpy(&formType, header.data(), sizeof(formType));
+    std::memcpy(&dataSize, header.data() + sizeof(formType), sizeof(dataSize));
+    std::memcpy(&flags, header.data() + sizeof(formType) + sizeof(dataSize), sizeof(flags));
+
+    if (formType != static_cast<uint32_t>(FormEnum::TES4) ||
+        static_cast<uintmax_t>(dataSize) > fileSize - sizeof(Record))
+    {
+        return std::nullopt;
+    }
+
+    return flags;
 }
 
 bool TESFile::LoadFile(const std::filesystem::path& acPath) noexcept
@@ -62,6 +96,9 @@ bool TESFile::IndexRecords(RecordCollection& aRecordCollection) noexcept
     if (m_filename.size() == 0)
         return false;
 
+    if (!InitializeFormIdPrefixes())
+        return false;
+
     Buffer::Reader reader(&m_buffer);
 
     while (true)
@@ -70,6 +107,43 @@ bool TESFile::IndexRecords(RecordCollection& aRecordCollection) noexcept
             break;
     }
 
+    return true;
+}
+
+bool TESFile::InitializeFormIdPrefixes() noexcept
+{
+    if (m_buffer.GetSize() < sizeof(Record))
+    {
+        spdlog::warn("Plugin {} has no complete TES4 header", m_filename);
+        return false;
+    }
+
+    auto* pFileHeader = reinterpret_cast<TES4*>(m_buffer.GetWriteData());
+    if (pFileHeader->GetType() != FormEnum::TES4 || pFileHeader->GetDataSize() > m_buffer.GetSize() - sizeof(Record))
+    {
+        spdlog::warn("Plugin {} has an invalid TES4 header", m_filename);
+        return false;
+    }
+
+    TES4 fileHeader;
+    fileHeader.CopyRecordData(*pFileHeader);
+    fileHeader.ParseChunks(*pFileHeader, m_parentToFormIdPrefix);
+
+    uint8_t parentId = 0;
+    for (const Chunks::MAST& master : fileHeader.m_masterFiles)
+    {
+        const auto masterId = m_masterFiles.find(master.m_masterName);
+        if (masterId == std::end(m_masterFiles))
+        {
+            spdlog::warn("Plugin {} references unresolved master {}; skipping its records", m_filename, master.m_masterName);
+            m_parentToFormIdPrefix.clear();
+            return false;
+        }
+
+        m_parentToFormIdPrefix[parentId++] = static_cast<uint32_t>(masterId->second) << 24;
+    }
+
+    m_parentToFormIdPrefix[parentId] = m_formIdPrefix;
     return true;
 }
 
@@ -102,21 +176,6 @@ bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aReco
         {
         case FormEnum::TES4:
         {
-            TES4* pFileHeader = reinterpret_cast<TES4*>(pRecord);
-
-            TES4 fileHeader;
-            fileHeader.CopyRecordData(*pFileHeader);
-            fileHeader.ParseChunks(*pFileHeader, m_parentToFormIdPrefix);
-
-            uint8_t parentId = 0;
-            for (const Chunks::MAST& master : fileHeader.m_masterFiles)
-            {
-                m_parentToFormIdPrefix[parentId] = ((uint32_t)m_masterFiles[master.m_masterName]) << 24;
-                parentId++;
-            }
-
-            m_parentToFormIdPrefix[parentId] = m_formIdPrefix;
-
             break;
         }
         case FormEnum::ACHR:

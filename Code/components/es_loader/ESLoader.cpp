@@ -87,6 +87,24 @@ PluginType GetPluginType(const String& acFilename) noexcept
         return PluginType::kLite;
     return PluginType::kInvalid;
 }
+
+PluginType GetAuthoritativePluginType(const String& acFilename, const fs::path& acPath) noexcept
+{
+    const auto extensionType = GetPluginType(acFilename);
+    const auto headerFlags = TESFile::ReadHeaderFlags(acPath);
+    if (!headerFlags)
+        return PluginType::kInvalid;
+
+    // The TES4 ESL bit promotes an .esp or .esm into the FE/light namespace.
+    // It must not override the filename's established .esl light namespace.
+    if ((*headerFlags & Record::FLAGS::kESL) != 0)
+        return PluginType::kLite;
+
+    // A readable header never downgrades .esl. For .esp/.esm, the extension
+    // retains the standard/master namespace when the promotion bit is absent.
+
+    return extensionType;
+}
 } // namespace
 
 String ReadZString(Buffer::Reader& aReader) noexcept
@@ -182,10 +200,20 @@ bool ESLoader::LoadLoadOrder()
             continue;
         }
 
-        const auto pluginType = GetPluginType(line);
-        if (pluginType == PluginType::kInvalid)
+        const auto extensionType = GetPluginType(line);
+        if (extensionType == PluginType::kInvalid)
         {
             spdlog::warn("Ignoring unrecognized plugin entry in loadorder.txt: {}", line);
+            continue;
+        }
+
+        // Reading this fixed-size TES4 header establishes server-owned plugin
+        // namespace metadata; full record indexing remains opt-in below.
+        const auto pluginPath = GetPath(line);
+        const auto pluginType = pluginPath.empty() ? extensionType : GetAuthoritativePluginType(line, pluginPath);
+        if (pluginType == PluginType::kInvalid)
+        {
+            spdlog::warn("Ignoring plugin with invalid TES4 header: {}", line);
             continue;
         }
 
@@ -268,7 +296,19 @@ fs::path ESLoader::GetPath(const String& acFilename) const
 
     const fs::path pluginPath = m_directory / fs::path(acFilename);
     std::error_code error;
-    if (fs::is_regular_file(pluginPath, error))
+    const bool isRegularFile = fs::is_regular_file(pluginPath, error);
+    if (error)
+    {
+        // Only a confirmed missing path may use filename-derived metadata.
+        // Other lookup errors leave file existence unknown, so retain the path
+        // and let header reading fail closed instead of guessing a namespace.
+        if (error != std::errc::no_such_file_or_directory)
+            return pluginPath;
+
+        return {};
+    }
+
+    if (isRegularFile)
         return pluginPath;
 
     return fs::path();

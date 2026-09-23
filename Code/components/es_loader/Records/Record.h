@@ -16,6 +16,10 @@ public:
     enum FLAGS
     {
         kMasterFile = 1,
+        // TES4 header flag 0x00000200 marks a plugin as light/ESL. This is
+        // authoritative for the plugin namespace even when the filename has
+        // an .esp extension.
+        kESL = 0x200,
         kCompressed = 0x40000,
         kIgnored = 0x1000,
         kIsMarker = 0x800000,
