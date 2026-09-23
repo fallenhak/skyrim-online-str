@@ -55,6 +55,10 @@ export class ClientService implements OnDestroy {
   public characterSelectionResultChange =
     new Subject<SkyrimTogetherTypes.CharacterSelectionStatus>();
 
+  /** Character ID for the outstanding selection request, if any. */
+  public characterSelectionPendingIdChange =
+    new BehaviorSubject<SkyrimTogetherTypes.CharacterId | null>(null);
+
   /** Connect party info change. */
   public partyInfoChange = new Subject<PartyInfo>();
 
@@ -234,6 +238,11 @@ export class ClientService implements OnDestroy {
   public selectCharacter(
     characterId: SkyrimTogetherTypes.CharacterId,
   ): void {
+    if (this.characterSelectionPendingIdChange.value !== null) {
+      return;
+    }
+
+    this.characterSelectionPendingIdChange.next(characterId);
     skyrimtogether.selectCharacter(characterId);
   }
 
@@ -381,6 +390,7 @@ export class ClientService implements OnDestroy {
   private onDisconnect(isError: boolean): void {
     void this.zone.run(async () => {
       this.localPlayerId = undefined;
+      this.characterSelectionPendingIdChange.next(null);
       this.connectionStateChange.next(false);
       this.isConnectionInProgressChange.next(false);
 
@@ -416,6 +426,7 @@ export class ClientService implements OnDestroy {
     status: SkyrimTogetherTypes.CharacterSelectionStatus,
   ): void {
     this.zone.run(() => {
+      this.characterSelectionPendingIdChange.next(null);
       this.characterSelectionResultChange.next(status);
     });
   }

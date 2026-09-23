@@ -34,6 +34,8 @@
       "LEVEL": "Level {{level}}",
       "RACE_FORM": "Race form (base {{baseId}}, mod {{modId}})",
       "SEX": "Sex {{sex}}",
+      "SELECT": "Select",
+      "SELECTING": "Selecting...",
       "BACK": "Back",
       "ERROR": {
         "IDENTITY_NOT_READY": "The server identity is not ready. Try again after reconnecting.",

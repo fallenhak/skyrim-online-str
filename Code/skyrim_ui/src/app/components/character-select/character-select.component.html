@@ -51,6 +51,18 @@
             }}
           </span>
         </div>
+        <button
+          class="character-select-action"
+          data-style-ornament="simple"
+          [disabled]="pendingCharacterId !== null"
+          (click)="selectCharacter(character.characterId)"
+        >
+          {{
+            (pendingCharacterId === character.characterId
+              ? 'COMPONENT.CHARACTER_SELECT.SELECTING'
+              : 'COMPONENT.CHARACTER_SELECT.SELECT') | transloco
+          }}
+        </button>
       </li>
     </ul>
   </ng-container>

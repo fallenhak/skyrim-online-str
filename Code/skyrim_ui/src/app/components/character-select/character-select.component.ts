@@ -21,6 +21,7 @@ export class CharacterSelectComponent implements OnInit, OnDestroy {
   public state: CharacterSelectState = 'loading';
   public characters: SkyrimTogetherTypes.CharacterSummaryBridge[] = [];
   public messageKey = 'COMPONENT.CHARACTER_SELECT.LOADING';
+  public pendingCharacterId: SkyrimTogetherTypes.CharacterId | null = null;
 
   @Output() public done = new EventEmitter<void>();
 
@@ -48,6 +49,9 @@ export class CharacterSelectComponent implements OnInit, OnDestroy {
 
         this.messageKey = this.selectionErrorKey(status);
         this.state = 'error';
+      }),
+      this.client.characterSelectionPendingIdChange.subscribe(characterId => {
+        this.pendingCharacterId = characterId;
       }),
       this.client.connectionStateChange.subscribe(connected => {
         this.characters = [];
@@ -77,6 +81,14 @@ export class CharacterSelectComponent implements OnInit, OnDestroy {
     character: SkyrimTogetherTypes.CharacterSummaryBridge,
   ): SkyrimTogetherTypes.CharacterId {
     return character.characterId;
+  }
+
+  public selectCharacter(characterId: SkyrimTogetherTypes.CharacterId): void {
+    if (this.state !== 'list' || this.pendingCharacterId !== null) {
+      return;
+    }
+
+    this.client.selectCharacter(characterId);
   }
 
   @HostListener('window:keydown.escape', ['$event'])
