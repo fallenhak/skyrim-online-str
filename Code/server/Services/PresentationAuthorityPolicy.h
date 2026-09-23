@@ -7,10 +7,12 @@ struct PresentationAuthorityPolicy final
         const bool aHasFormId,
         const bool aHasCell,
         const bool aIsNpcCharacter,
-        const bool aIsObject,
         const bool aSenderInRange) noexcept
     {
-        return aEntityExists && aHasFormId && aHasCell && (aIsNpcCharacter || aIsObject) && aSenderInRange;
+        // ObjectService has no authoritative static-reference identity or
+        // location source. Client-discovered objects must not be animation
+        // relay sources until one exists.
+        return aEntityExists && aHasFormId && aHasCell && aIsNpcCharacter && aSenderInRange;
     }
 
     [[nodiscard]] static constexpr bool CanRelayNpcPresentation(

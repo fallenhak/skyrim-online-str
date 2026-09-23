@@ -57,7 +57,7 @@ boundary. A client-side send restriction is not treated as authority.
 | `RequestEquipmentChanges` / `InventoryService` | Actor equipment | server entity ID | sender must own a character | current nonzero epoch required | generated InWorld gate; target must have CharacterComponent and OwnerComponent; no range | A | Preserve owner-driven character equipment; reject object and other non-character inventories | A09 |
 | `ActivateRequest` / `ObjectService` | Activation relay | object ID, cell, activator ID | activator must be sender-owned; shared object use is gated by object trust | request has no epoch | object must be known and trusted; supplied cell must match stored cell; sender and activator must be in stored range; open state is bounded | C/D | Keep provisional references closed until an authoritative static-reference source is reviewed; add an epoch only with a protocol change | A09 |
 | `LockChangeRequest` / `ObjectService` | Lock state and peer relay for trusted references | object form ID + cell | no object owner check; shared use needs an authoritative outcome | none | object must be known; supplied cell must match stored cell; sender must be in stored range; provisional references and unvalidated client outcomes are rejected before mutation or relay | C/D | Establish a reviewed lock-outcome authority before applying client-reported results | A09 (all current client reports are rejected) |
-| `ScriptAnimationRequest` / `ObjectService` | Animation presentation | server entity ID resolved from the local form ID | no; nearby interaction may be non-owner | none | source must be a registered NPC/object with form and cell components; sender must be in its tracked range; fan-out is range-limited | D/E | Keep presentation-only and range-bound; object location remains provisional | A10 |
+| `ScriptAnimationRequest` / `ObjectService` | Animation presentation | server entity ID resolved from the local form ID | no; nearby interaction may be non-owner | none | source must be a registered NPC with form and cell components; sender must be in its tracked range; fan-out is range-limited; provisional objects are rejected | D/E | Preserve nearby NPC presentation; keep client-discovered objects closed until an authoritative identity and location source exists | A10 |
 | `DialogueRequest` / `CharacterService` | Voice presentation | server actor ID | no; non-owner interaction can be legitimate | none | source must be a registered non-player character with form and cell components; sender must be in range; fan-out is range-limited | C/D | Preserve nearby non-owner dialogue; sound filename remains client-reported presentation | A10 |
 | `SubtitleRequest` / `CharacterService` | Subtitle presentation | server actor ID | no; non-owner interaction can be legitimate | none | same registered-NPC and sender-range checks as dialogue; fan-out is range-limited | C/D | Preserve nearby non-owner dialogue; subtitle text/topic remain client-reported presentation | A10 |
 | `PlayerRespawnRequest` / `PlayerService` | Own persistent-player respawn and gold loss | sender's server character | sender's own player | server resolves sender | generated InWorld gate | A | Keep sender-derived identity | No |
@@ -155,6 +155,12 @@ The stock client currently compiles script-animation capture behind
 `OBJECT_ANIM_SYNC=0`; server-side source and range checks still apply to crafted
 or custom-client requests.
 
+`AssignObjectsRequest` creates client-discovered object entities with a
+provisional form ID and location. Script-animation requests cannot relay from
+these entities; there is no authoritative static-reference identity and
+location source to validate them. Nearby registered NPC presentation remains
+available to non-owners.
+
 ## High-confidence conclusions
 
 1. Health is the clear canonical-state vulnerability: the server currently
@@ -166,10 +172,10 @@ or custom-client requests.
    legitimate player and owner-controlled creature projectiles.
 3. Package and some object paths remain relay or mutation surfaces without a
    complete actor authority proof. Script animation now resolves through a
-   registered server entity and is limited to nearby NPC/object sources, while
-   dialogue and subtitles require a nearby registered NPC. Their content is
-   still client-reported presentation data. Spell cast, interrupt, AddTarget,
-   and RemoveSpell now bind requests to the current actor
+   registered server entity and is limited to nearby NPC sources; provisional
+   objects are rejected. Dialogue and subtitles require a nearby registered
+   NPC. Their content is still client-reported presentation data. Spell cast,
+   interrupt, AddTarget, and RemoveSpell now bind requests to the current actor
    incarnation. AddTarget preserves both caster-owned and target-owned
    environmental/incoming effects; magic range and effect observation remain
    client-reported and are not proven by the server.

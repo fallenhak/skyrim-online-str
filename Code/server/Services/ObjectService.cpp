@@ -239,7 +239,6 @@ void ObjectService::OnScriptAnimationRequest(const PacketEvent<ScriptAnimationRe
     const auto* pCellComponent = m_world.try_get<CellIdComponent>(source);
     const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(source);
     const bool isNpcCharacter = pCharacterComponent && !pCharacterComponent->IsPlayer();
-    const bool isObject = m_world.all_of<ObjectComponent>(source);
     const auto& senderCell = acMessage.pPlayer->GetCellComponent();
     const bool hasCell = pCellComponent && static_cast<bool>(*pCellComponent) && static_cast<bool>(senderCell);
     const bool isInRange = hasCell && ObjectInteractionPolicy::IsInSenderRange(
@@ -248,7 +247,7 @@ void ObjectService::OnScriptAnimationRequest(const PacketEvent<ScriptAnimationRe
         pCharacterComponent && pCharacterComponent->IsDragon());
     if (!PresentationAuthorityPolicy::CanRelayScriptAnimation(
             true, pFormIdComponent && pFormIdComponent->Id.BaseId != 0,
-            hasCell, isNpcCharacter, isObject, isInRange))
+            hasCell, isNpcCharacter, isInRange))
         return;
 
     NotifyScriptAnimation message{};
