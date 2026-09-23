@@ -959,6 +959,71 @@ TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
     EXPECT_EQ(unresolvedActor.Classification.Class, ActorPopulationClass::kUnknown);
 }
 
+TEST(ESLoader, LaterPluginsOverrideMasterPopulationRecordsInLoadOrder)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Prior.esm\n"
+                  << "PopulationMaster.esm\n"
+                  << "FirstOverride.esp\n"
+                  << "LastOverride.esp\n";
+    }
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    constexpr uint32_t masterNpcRawId = 0x00001000;
+    constexpr uint32_t masterRaceRawId = 0x00003000;
+    constexpr uint32_t masterActorReferenceRawId = 0x00002000;
+
+    Bytes master = MakePluginHeaderWithMasters({});
+    AppendRecord(master, FormEnum::RACE, masterRaceRawId, MakeRaceData("MasterRace"));
+    AppendRecord(master, FormEnum::NPC_, masterNpcRawId, MakeNpcData("MasterNpc", &masterRaceRawId));
+    AppendRecord(master, FormEnum::NPC_, 0x00001001, MakeNpcData("SecondMasterNpc", &masterRaceRawId));
+    AppendRecord(master, FormEnum::ACHR, masterActorReferenceRawId, MakeActorReferenceData(masterNpcRawId));
+
+    Bytes firstOverride = MakePluginHeaderWithMasters({"PopulationMaster.esm"});
+    AppendRecord(firstOverride, FormEnum::RACE, masterRaceRawId, MakeRaceData("FirstOverrideRace"));
+    AppendRecord(firstOverride, FormEnum::NPC_, masterNpcRawId, MakeNpcData("FirstOverrideNpc", &masterRaceRawId));
+    AppendRecord(firstOverride, FormEnum::ACHR, masterActorReferenceRawId, MakeActorReferenceData(0x00001001));
+
+    Bytes lastOverride = MakePluginHeaderWithMasters({"PopulationMaster.esm"});
+    AppendRecord(lastOverride, FormEnum::RACE, masterRaceRawId, MakeRaceData("LastOverrideRace"));
+    AppendRecord(lastOverride, FormEnum::NPC_, masterNpcRawId, MakeNpcData("LastOverrideNpc", &masterRaceRawId));
+    AppendRecord(lastOverride, FormEnum::ACHR, masterActorReferenceRawId, MakeActorReferenceData(masterNpcRawId));
+
+    ASSERT_TRUE(writePlugin("Prior.esm", MakePluginHeaderWithMasters({})));
+    ASSERT_TRUE(writePlugin("PopulationMaster.esm", master));
+    ASSERT_TRUE(writePlugin("FirstOverride.esp", firstOverride));
+    ASSERT_TRUE(writePlugin("LastOverride.esp", lastOverride));
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+
+    const auto* const pRace = records->FindRaceById(0x01003000);
+    ASSERT_NE(pRace, nullptr);
+    EXPECT_EQ(pRace->m_editorId, "LastOverrideRace");
+
+    const auto* const pNpc = records->FindNpcById(0x01001000);
+    ASSERT_NE(pNpc, nullptr);
+    EXPECT_EQ(pNpc->m_editorId, "LastOverrideNpc");
+    EXPECT_EQ(pNpc->m_raceId, 0x01003000);
+
+    const auto* const pActorReference = records->FindActorReferenceById(0x01002000);
+    ASSERT_NE(pActorReference, nullptr);
+    EXPECT_EQ(pActorReference->m_baseObject.m_baseId, 0x01001000);
+}
+
 TEST(ESLoader, MissingLoadOrderClearsPreviouslyLoadedMetadata)
 {
     TemporaryDirectory dataDirectory;
