@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import unittest
 from copy import deepcopy
 
@@ -202,7 +203,7 @@ from architect_review import ArchitectReviewMixin
 
 
 class DecisionHarness(ArchitectReviewMixin):
-    def __init__(self, review_type="CURRENT_PHASE_REVIEW", decision="APPROVE"):
+    def __init__(self, review_type="CURRENT_PHASE_REVIEW", decision="APPROVE", review_tier="architect"):
         self.config = {"required_workflows": ["Build linux"]}
         self.state = {
             "global_mode": "RUNNING",
@@ -211,7 +212,10 @@ class DecisionHarness(ArchitectReviewMixin):
                 "state": "NEEDS_SOL_REVIEW", "phase_id": "A06", "phase_title": "authority",
                 "worker_attempt": 1, "last_commit": EXPECTED["reviewed_sha"],
                 "review": {"type": review_type, "reviewed_phase": {"id": "A06"},
-                           "commit_sha": EXPECTED["reviewed_sha"], "next_phase": {"id": "A07"}},
+                           "commit_sha": EXPECTED["reviewed_sha"], "next_phase": {"id": "A07"},
+                           "review_tier": review_tier,
+                           "selected_model": "gpt-6-luna" if review_tier == "normal" else "gpt-6-sol",
+                           "selected_reasoning_effort": "high" if review_tier == "normal" else "medium"},
                 "ci": {"status": "NOT_RUN", "sha": EXPECTED["reviewed_sha"]},
                 "history": [], "success_since_review": 0,
             }},
@@ -229,6 +233,10 @@ class DecisionHarness(ArchitectReviewMixin):
             "review_type": review_type, "reviewed_sha": EXPECTED["reviewed_sha"],
             "review_state_sha256": EXPECTED["review_state_sha256"], "worker_attempt": 1,
             "control_plane_sha": "c" * 40, "status": "DECISION_PENDING",
+            "review_tier": review_tier,
+            "selected_model": "gpt-6-luna" if review_tier == "normal" else "gpt-6-sol",
+            "selected_reasoning_effort": "high" if review_tier == "normal" else "medium",
+            "prior_decisions": [],
             "decision": {
                 "decision": decision, "confidence": "high", "reason": "review result",
                 "findings": [], "required_actions": [],
@@ -373,6 +381,79 @@ class DecisionPolicyTests(unittest.TestCase):
         self.assertFalse(harness._apply_architect_decision(harness.item))
         self.assertEqual(harness.approvals, 0)
         self.assertNotEqual(harness.item["status"], "APPLIED")
+
+    def test_34_normal_luna_retry_is_bounded_and_does_not_invoke_sol(self):
+        harness = DecisionHarness("CURRENT_PHASE_REVIEW", "RETRY", "normal")
+        harness.item["decision"]["required_actions"] = [{
+            "action": "Fix the concrete local defect and rerun exact required CI.",
+            "evidence_refs": ["bundle.diff"],
+        }]
+        self.assertTrue(harness._apply_architect_decision(harness.item))
+        self.assertEqual(harness.item["status"], "APPLIED")
+        self.assertEqual(harness.state["lanes"]["authority"]["state"], "RECOVERING")
+        self.assertEqual(harness.state["lanes"]["authority"]["review"]["decision"], "LUNA_RETRY_CURRENT_PHASE")
+        self.assertNotIn("SOL", harness.state["lanes"]["authority"]["review"]["decision"])
+
+    def test_35_normal_luna_block_is_not_auto_architect_approval(self):
+        harness = DecisionHarness("CURRENT_PHASE_REVIEW", "BLOCK", "normal")
+        harness.item["decision"]["reason"] = "ordinary bounded defect requires a human hold"
+        self.assertTrue(harness._apply_architect_decision(harness.item))
+        self.assertEqual(harness.item["status"], "BLOCKED")
+        self.assertEqual(harness.state["lanes"]["authority"]["review"]["decision"], "LUNA_BLOCKED")
+        self.assertNotIn("SOL", harness.state["lanes"]["authority"]["review"]["decision"])
+
+    def test_36_normal_security_ambiguity_escalates_to_sol_medium(self):
+        harness = DecisionHarness("CURRENT_PHASE_REVIEW", "BLOCK", "normal")
+        harness.item["decision"]["reason"] = "security ambiguity needs architecture judgement"
+        self.assertTrue(harness._apply_architect_decision(harness.item))
+        lane = harness.state["lanes"]["authority"]
+        self.assertEqual(harness.item["status"], "ESCALATED_TO_ARCHITECT")
+        self.assertEqual(lane["state"], "NEEDS_SOL_REVIEW")
+        self.assertEqual(lane["review"]["review_tier"], "architect")
+        self.assertEqual(lane["review"]["selected_model"], "gpt-6-sol")
+        self.assertEqual(lane["review"]["selected_reasoning_effort"], "medium")
+
+    def test_37_two_same_material_normal_retries_escalate(self):
+        harness = DecisionHarness("CURRENT_PHASE_REVIEW", "RETRY", "normal")
+        harness.item["decision"]["findings"] = [{
+            "severity": "medium", "title": "Missing authority guard",
+            "details": "The handler trusts client-supplied ownership without a server-side check.",
+        }]
+        harness.item["decision"]["required_actions"] = [{
+            "action": "Fix the same concrete defect and rerun exact required CI.",
+            "evidence_refs": ["bundle.diff"],
+        }]
+        self.assertTrue(harness._apply_architect_decision(harness.item))
+        lane = harness.state["lanes"]["authority"]
+        lane["state"] = "NEEDS_SOL_REVIEW"
+        lane["review"]["decision"] = None
+        lane["last_commit"] = "e" * 40
+        lane["review"]["commit_sha"] = "e" * 40
+        harness.item["reviewed_sha"] = "e" * 40
+        harness.item["decision"]["required_actions"] = [{
+            "action": "Re-check and correct the handler's server-side ownership authorization.",
+            "evidence_refs": ["bundle.diff"],
+        }]
+        harness.item["status"] = "DECISION_PENDING"
+        self.assertTrue(harness._apply_architect_decision(harness.item))
+        self.assertEqual(harness.item["status"], "ESCALATED_TO_ARCHITECT")
+        self.assertEqual(lane["review"]["review_tier"], "architect")
+        retry = harness.state["architect_review"]["normal_retry_counters"]["authority:A06"]
+        self.assertEqual(retry["same_material_cycles"], 2)
+        self.assertEqual(retry["last_reviewed_sha"], "e" * 40)
+
+    def test_38_normal_checkpoint_approval_still_requires_exact_sha_ci(self):
+        harness = DecisionHarness("POST_PHASE_CHECKPOINT", "APPROVE", "normal")
+        harness.state["lanes"]["authority"]["ci"] = {
+            "status": "PASS", "sha": EXPECTED["reviewed_sha"],
+            "required_workflows": [{
+                "workflow": "Build linux", "status": "completed",
+                "conclusion": "success", "head_sha": EXPECTED["reviewed_sha"],
+            }],
+        }
+        self.assertTrue(harness._apply_architect_decision(harness.item))
+        self.assertEqual(harness.approvals, 1)
+        self.assertEqual(harness.item["status"], "APPLIED")
 
 
 
@@ -862,6 +943,31 @@ class V3ContinuationHarness(QueueEvidenceHarness):
         return lane.get("last_commit")
 
 class EvidenceQueueIsolationTests(unittest.TestCase):
+    def test_waiting_reviewer_is_not_rebuilt_or_requeued_before_backoff(self):
+        h = QueueEvidenceHarness(failed_lane="__none__")
+        lane = h.state["lanes"]["authority"]
+        lane["state"] = "WAITING_FOR_ARCHITECT_MODEL"
+        lane["review"]["review_tier"] = "architect"
+        waiting = {
+            "review_id": "waiting-authority", "lane": "authority", "phase": "A09",
+            "review_type": "CURRENT_PHASE_REVIEW", "review_tier": "architect",
+            "status": "WAITING_FOR_ARCHITECT_MODEL", "next_retry_at": time.time() + 3600,
+        }
+        h.state["architect_review"]["items"][waiting["review_id"]] = waiting
+        calls = []
+        original = h.build_review_bundle
+
+        def record_build(lane_name):
+            calls.append(lane_name)
+            return original(lane_name)
+
+        h.build_review_bundle = record_build
+        self.assertEqual(h.queue_sol_reviews(), 3)
+        self.assertNotIn("authority", calls)
+        self.assertEqual(waiting["status"], "WAITING_FOR_ARCHITECT_MODEL")
+        self.assertNotIn(waiting["review_id"], h.state["architect_review"]["queue"])
+        self.assertEqual(lane["state"], "WAITING_FOR_ARCHITECT_MODEL")
+
     def test_queue_propagates_operator_authorization_to_rebuilt_v3_items(self):
         h = QueueEvidenceHarness()
         h.state["architect_review"]["operator_v3_targets"] = [

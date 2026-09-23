@@ -1,3 +1,10 @@
+## V3.4 quota-aware reviewer routing — 2026-09-23
+
+- Route ordinary current-phase and post-phase reviews to GPT-6 Luna/high; reserve GPT-6 Sol/medium for deterministic architect escalation and disallow automatic Sol/max.
+- Preserve GPT-6 Luna/max development and existing worker/reviewer caps. Persist per-tier model availability/backoff and same-material Luna retry counters across restart.
+- Reclassify and rebuild legacy queued reviews under tier-bound evidence; keep availability waits lane-local and retain deferred reviewer items while other-tier work proceeds.
+- Preserve exact-SHA CI, review gates, bounded retry policy, and human-owned M01 runtime acceptance.
+
 ## V3.3 decision-drain and worker-smoke follow-up — 2026-09-23
 
 - Fixed autonomous review starvation by applying and revalidating completed Sol decisions before admitting another queued review; a still-pending result blocks admission while the existing exact-state stale checks and approval gates remain in force.

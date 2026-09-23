@@ -48,6 +48,27 @@
   "worker_smoke_timeout_seconds": 180,
   "codex_retry_base_seconds": 900,
   "codex_retry_max_seconds": 3600,
+  "model_probe_timeout_seconds": 60,
+  "model_routing": {
+    "development": {
+      "model": "gpt-6-luna",
+      "family": "luna",
+      "reasoning_effort": "max"
+    },
+    "review": {
+      "normal": {
+        "model": "gpt-6-luna",
+        "family": "luna",
+        "reasoning_effort": "high"
+      },
+      "architect": {
+        "model": "gpt-6-sol",
+        "family": "sol",
+        "reasoning_effort": "medium"
+      }
+    },
+    "luna_fallback_models": []
+  },
   "post_issue_updates": true,
   "lanes": {
     "combat": {
@@ -103,7 +124,10 @@
     "repo_root": "/srv/projects/skyrim-online-str/repo",
     "auth_file": "/home/skyrimdev/.codex/auth.json",
     "model": "gpt-6-sol",
-    "reasoning_effort": "max",
+    "reasoning_effort": "medium",
+    "normal_model": "gpt-6-luna",
+    "normal_reasoning_effort": "high",
+    "max_concurrent_reviewers": 1,
     "max_review_failures": 3,
     "max_retry_cycles": 3,
     "max_same_fingerprint_cycles": 3,

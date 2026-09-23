@@ -1,5 +1,15 @@
 # Skyrim Supervisor Roadmap / Dependency Control Plane review snapshot
 
+## V3.4 quota-aware reviewer routing — 2026-09-23
+
+Ordinary current-phase and post-phase reviews use GPT-6 Luna/high. Only
+deterministic architecture escalations use GPT-6 Sol/medium; automatic Sol/max
+is disabled. Development remains GPT-6 Luna/max, with the existing two-worker
+and one-reviewer caps. Per-tier availability/backoff and same-material Luna
+retry counters survive restart. Legacy queued V3.3 bundles are reclassified
+and rebuilt with tier-bound evidence before launch; exact-SHA CI, review gates,
+bounded retries, and human M01 runtime acceptance are unchanged.
+
 ## V3.3 live review follow-up — 2026-09-23
 
 Completed Sol decisions are now revalidated and applied before another queued review starts. The worker-smoke fixture now matches its exact-byte prompt. Canonical and installed suites pass 190 tests; worker and architect-review smoke checks pass. See [the dated runtime follow-up](verification/evidence-v3-20260923/final-report.md#autonomous-decision-drain-and-worker-smoke-follow-up--2026-09-23) and [machine-readable live state](verification/evidence-v3-20260923/live-follow-up-state-20260923T1236Z-redacted.json).

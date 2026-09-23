@@ -89,8 +89,17 @@ CONTROL_PLANE_FILES = (
     "roadmap.json",
 )
 CONTROL_REVIEW_STATES = {"NEEDS_SOL_REVIEW", "INVALID", "UNINITIALIZED"}
-TERMINAL_STATES = {"NEEDS_SOL_REVIEW", "BLOCKED"}
+TERMINAL_STATES = {
+    "NEEDS_SOL_REVIEW", "BLOCKED",
+    "WAITING_FOR_ARCHITECT_MODEL", "WAITING_FOR_LUNA_MODEL",
+}
 RUNNABLE_STATES = {"READY", "RECOVERING"}
+REVIEW_TIERS = {"normal", "architect"}
+REVIEW_WAITING_STATES = {
+    "NEEDS_SOL_REVIEW",
+    "WAITING_FOR_ARCHITECT_MODEL",
+    "WAITING_FOR_LUNA_MODEL",
+}
 
 ANSI_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 SECRET_RE = re.compile(
@@ -109,6 +118,11 @@ CODEX_USAGE_RE = re.compile(
 )
 CODEX_CONTEXT_RE = re.compile(r"(?i)(?:codex|chatgpt|openai|usage\s+allowance|token\s+budget|reset)")
 GITHUB_LIMIT_RE = re.compile(r"(?i)(?:github|github\.com|gh\s+(?:api|run|issue))")
+MODEL_UNAVAILABLE_RE = re.compile(
+    r"(?i)(?:model\s+(?:is\s+)?(?:not\s+found|unavailable|not\s+available|unsupported|does\s+not\s+exist)|"
+    r"unknown\s+model|invalid\s+model|model.*(?:access|permission).*(?:denied|forbidden)|"
+    r"no\s+such\s+model)"
+)
 UNMERGED_XY = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
 GENERATED_DIRS = {"node_modules", "build", "dist", "out", ".xmake", "obj"}
 MAX_UNTRACKED_REVIEW_FILE_BYTES = 64 * 1024
@@ -131,6 +145,13 @@ OPERATOR_MUTATION_COMMANDS = {
     "re-review-v3",
 }
 OPERATOR_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+
+
+def classify_codex_model_unavailable(return_code: int, output: str) -> bool:
+    """Classify an unavailable model separately from engineering failures."""
+    if return_code == 0:
+        return False
+    return bool(MODEL_UNAVAILABLE_RE.search(ANSI_RE.sub("", output or "")))
 
 
 def parse_porcelain_v1_z(output: bytes | str) -> list[dict[str, str | None]]:
@@ -597,9 +618,277 @@ class Supervisor(ArchitectReviewMixin):
         self.last_save = 0.0
         self._prepare_state()
 
+    @staticmethod
+    def _availability_record() -> dict[str, Any]:
+        return {
+            "status": "AVAILABLE",
+            "detected_at": None,
+            "next_retry_at": None,
+            "backoff_seconds": 0,
+            "retry_count": 0,
+            "probe_started_at": None,
+            "reason": "",
+            "configured_model": None,
+            "selected_model": None,
+            "selected_reasoning_effort": None,
+            "fallback_used": False,
+        }
+
+    @staticmethod
+    def _infer_model_family(model: str) -> str:
+        lowered = model.strip().lower()
+        if "luna" in lowered:
+            return "luna"
+        if "sol" in lowered:
+            return "sol"
+        return "unknown"
+
+    def _development_route(self) -> dict[str, str]:
+        routing = self.config.get("model_routing", {})
+        configured = routing.get("development", {}) if isinstance(routing, dict) else {}
+        if not isinstance(configured, dict):
+            configured = {}
+        model = str(
+            configured.get("model")
+            or self.config.get("development_model")
+            or "gpt-6-luna"
+        ).strip()
+        effort = str(
+            configured.get("reasoning_effort")
+            or self.config.get("development_reasoning_effort")
+            or "max"
+        ).strip()
+        family = str(configured.get("family") or self._infer_model_family(model)).strip().lower()
+        if family != "luna":
+            raise RuntimeError("development route must remain in the configured Luna model family")
+        return {"model": model, "reasoning_effort": effort, "family": family}
+
+    def _review_route(self, tier: str) -> dict[str, str]:
+        if tier not in REVIEW_TIERS:
+            raise ValueError(f"unknown review tier: {tier}")
+        routing = self.config.get("model_routing", {})
+        review_routing = routing.get("review", {}) if isinstance(routing, dict) else {}
+        if not isinstance(review_routing, dict):
+            review_routing = {}
+        if tier == "normal":
+            configured = review_routing.get("normal", {})
+            if not isinstance(configured, dict):
+                configured = {}
+            legacy = self.config.get("architect_review", {})
+            if not isinstance(legacy, dict):
+                legacy = {}
+            model = str(
+                configured.get("model")
+                or legacy.get("normal_model")
+                or "gpt-6-luna"
+            ).strip()
+            family = str(
+                configured.get("family") or self._infer_model_family(model)
+            ).strip().lower()
+            if family != "luna":
+                raise RuntimeError("normal review route must remain in the configured Luna model family")
+            # Normal review is deliberately bounded to high, never max.
+            return {"model": model, "reasoning_effort": "high", "family": family}
+
+        configured = review_routing.get("architect", {})
+        if not isinstance(configured, dict):
+            configured = {}
+        legacy = self.config.get("architect_review", {})
+        if not isinstance(legacy, dict):
+            legacy = {}
+        model = str(
+            configured.get("model")
+            or legacy.get("model")
+            or "gpt-6-sol"
+        ).strip()
+        family = str(
+            configured.get("family") or self._infer_model_family(model)
+        ).strip().lower()
+        if family != "sol":
+            raise RuntimeError("architect review route must remain in the configured Sol model family")
+        # Sol/max is forbidden for automatic review, including stale legacy config.
+        return {"model": model, "reasoning_effort": "medium", "family": family}
+
+    def _luna_fallback_routes(self, purpose: str) -> list[dict[str, str]]:
+        routing = self.config.get("model_routing", {})
+        configured = routing.get("luna_fallback_models", []) if isinstance(routing, dict) else []
+        if not isinstance(configured, list):
+            return []
+        routes: list[dict[str, str]] = []
+        for candidate in configured:
+            if isinstance(candidate, str):
+                model = candidate.strip()
+                family = self._infer_model_family(model)
+                effort = "max" if purpose == "development" else "high"
+            elif isinstance(candidate, dict):
+                model = str(candidate.get("model") or "").strip()
+                family = str(candidate.get("family") or self._infer_model_family(model)).strip().lower()
+                effort = "max" if purpose == "development" else "high"
+            else:
+                continue
+            if model and family == "luna":
+                routes.append({"model": model, "reasoning_effort": effort, "family": family})
+        return routes
+
+    def _review_availability(self, tier: str) -> dict[str, Any]:
+        if tier not in REVIEW_TIERS:
+            raise ValueError(f"unknown review tier: {tier}")
+        review_state = self.state.setdefault("architect_review", {})
+        legacy = review_state.get("availability")
+        by_tier = review_state.setdefault("tier_availability", {})
+        if not isinstance(by_tier, dict):
+            by_tier = {}
+            review_state["tier_availability"] = by_tier
+        record = by_tier.get(tier)
+        if not isinstance(record, dict):
+            record = self._availability_record()
+            if tier == "architect" and isinstance(legacy, dict):
+                record.update(legacy)
+            by_tier[tier] = record
+        defaults = self._availability_record()
+        for key, value in defaults.items():
+            record.setdefault(key, value)
+        # Keep the legacy flat field as an architect-only compatibility view.
+        if tier == "architect":
+            review_state["availability"] = record
+        return record
+
+    def _reviewer_limit(self) -> int:
+        configured = self._review_cfg()
+        try:
+            return max(1, int(configured.get("max_concurrent_reviewers", 1)))
+        except (TypeError, ValueError):
+            return 1
+
+    def _review_route_for_item(self, item: Mapping[str, Any]) -> dict[str, str]:
+        tier = str(item.get("review_tier") or "architect")
+        route = self._review_route(tier)
+        selected_model = str(item.get("selected_model") or "").strip()
+        if selected_model:
+            family = self._infer_model_family(selected_model)
+            configured_luna_models = {route["model"]}
+            if tier == "normal":
+                configured_luna_models.update(
+                    candidate["model"] for candidate in self._luna_fallback_routes("review")
+                )
+            if family != "luna" or tier != "normal" or selected_model not in configured_luna_models:
+                # Architect reviews never inherit an arbitrary persisted model;
+                # normal reviews may inherit only the configured Luna model or
+                # an explicit fallback that was previously probe-selected.
+                selected_model = ""
+            else:
+                route["model"] = selected_model
+                route["family"] = family
+        return route
+
+    def _probe_model_route(self, route: Mapping[str, str], purpose: str) -> tuple[bool, str]:
+        """Run a harmless read-only probe; its result is the availability source of truth."""
+        model = str(route.get("model") or "").strip()
+        effort = str(route.get("reasoning_effort") or "").strip()
+        if not model or str(route.get("family") or "") != "luna":
+            return False, "candidate is not an explicit Luna route"
+        with tempfile.TemporaryDirectory(prefix="skyrim-model-probe-") as probe_root:
+            command = [
+                "codex", "exec", "--model", model,
+                "--config", f'model_reasoning_effort="{effort}"',
+                "--config", 'approval_policy="never"',
+                "--sandbox", "read-only", "--cd", probe_root,
+                "--ephemeral", "--color", "never", "--skip-git-repo-check", "-",
+            ]
+            try:
+                result = subprocess.run(
+                    command,
+                    cwd=probe_root,
+                    env=self.worker_env(),
+                    input="Reply with exactly MODEL_OK and do not use tools.",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=max(10, int(self.config.get("model_probe_timeout_seconds", 60))),
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return False, f"{purpose} Luna read-only probe failed: {type(exc).__name__}"
+        output = redact(result.stdout or "")[-2000:]
+        if result.returncode == 0 and "MODEL_OK" in output:
+            return True, output
+        return False, output or f"probe exited {result.returncode}"
+
+    def _resolve_luna_route(self, purpose: str, availability: dict[str, Any]) -> dict[str, str] | None:
+        configured_primary = self._development_route() if purpose == "development" else self._review_route("normal")
+        selected = str(availability.get("selected_model") or "").strip()
+        candidates = [configured_primary, *self._luna_fallback_routes(purpose)]
+        if selected:
+            selected_route = next((route for route in candidates if route["model"] == selected), None)
+            if selected_route is not None:
+                candidates.remove(selected_route)
+                candidates.insert(0, selected_route)
+        unique: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for route in candidates:
+            identity = (route["model"], route["reasoning_effort"])
+            if identity not in seen:
+                seen.add(identity)
+                unique.append(route)
+        candidates = unique
+        for route in candidates:
+            ok, evidence = self._probe_model_route(route, purpose)
+            if ok:
+                availability.update({
+                    "status": "AVAILABLE",
+                    "next_retry_at": None,
+                    "backoff_seconds": 0,
+                    "retry_count": 0,
+                    "probe_started_at": None,
+                    "reason": "Luna capability probe succeeded",
+                    "selected_model": route["model"],
+                    "selected_reasoning_effort": route["reasoning_effort"],
+                    "configured_model": configured_primary["model"],
+                    "fallback_used": route["model"] != configured_primary["model"],
+                })
+                return route
+            availability["reason"] = redact(evidence)[:1000]
+        return None
+
+    def _review_tier_for_request(
+        self,
+        lane_name: str,
+        review_type: str,
+        reasons: list[str],
+        explicit_tier: str | None = None,
+        explicit_reason: str | None = None,
+    ) -> tuple[str, str | None]:
+        if explicit_tier is not None:
+            if explicit_tier not in REVIEW_TIERS:
+                raise ValueError(f"unknown review tier: {explicit_tier}")
+            return explicit_tier, redact(explicit_reason or "explicit architect escalation") if explicit_tier == "architect" else None
+        if review_type == "FINAL_MILESTONE_OR_QUEUE_REVIEW":
+            return "architect", "final integration/milestone architecture checkpoint"
+        material = " ".join(reasons).lower()
+        direct_patterns = (
+            ("persistent database/schema or migration surface changed", "persistence schema or protocol authority boundary change"),
+            ("protocol or wire-compatibility surface changed", "persistence schema or protocol authority boundary change"),
+            ("cross-lane ownership boundary was crossed", "cross-lane integration architecture decision"),
+            ("cross-lane integration", "cross-lane integration architecture decision"),
+            ("cross-lane or forbidden path changed", "cross-lane integration architecture decision"),
+        )
+        for marker, reason in direct_patterns:
+            if marker in material:
+                return "architect", reason
+        scheduler = self.state.get("scheduler", {})
+        task_id = self.state.get("lanes", {}).get(lane_name, {}).get("scheduler_task_id")
+        task_record = scheduler.get("tasks", {}).get(task_id, {}) if isinstance(scheduler, dict) else {}
+        if isinstance(task_record, dict) and task_record.get("requires_sol_review"):
+            return "architect", "roadmap explicitly requires stronger architectural review"
+        # Security/trust/authority findings are initially given to Luna. They
+        # escalate only when Luna reports that architecture judgement is needed.
+        return "normal", None
+
     def _new_state(self) -> dict[str, Any]:
         return {
-            "version": 4,
+            "version": 6,
             "created_at": utc_now(),
             "updated_at": utc_now(),
             "global_mode": "PAUSED",
@@ -613,19 +902,22 @@ class Supervisor(ArchitectReviewMixin):
                 "retry_count": 0,
                 "probe_started_at": None,
                 "reason": "",
+                "configured_model": None,
+                "selected_model": None,
+                "selected_reasoning_effort": None,
+                "fallback_used": False,
             },
             "architect_review": {
                 "enabled": True,
                 "queue": [],
                 "items": {},
                 "phase_counters": {},
+                "normal_retry_counters": {},
                 "active_review_id": None,
-                "availability": {
-                    "status": "AVAILABLE",
-                    "next_retry_at": None,
-                    "backoff_seconds": 0,
-                    "retry_count": 0,
-                    "reason": "",
+                "availability": self._availability_record(),
+                "tier_availability": {
+                    "normal": self._availability_record(),
+                    "architect": self._availability_record(),
                 },
                 "last_progress_at": utc_now(),
                 "last_worker_completion_at": None,
@@ -680,9 +972,9 @@ class Supervisor(ArchitectReviewMixin):
 
     def _prepare_state(self) -> None:
         try:
-            self.state["version"] = max(int(self.state.get("version", 1)), 4)
+            self.state["version"] = max(int(self.state.get("version", 1)), 6)
         except (TypeError, ValueError):
-            self.state["version"] = 4
+            self.state["version"] = 6
         self.state.setdefault("created_at", utc_now())
         self.state.setdefault("global_mode", "PAUSED")
         self.state.setdefault("mode_reason", "installation default")
@@ -706,6 +998,10 @@ class Supervisor(ArchitectReviewMixin):
         availability.setdefault("retry_count", 0)
         availability.setdefault("probe_started_at", None)
         availability.setdefault("reason", "")
+        availability.setdefault("configured_model", None)
+        availability.setdefault("selected_model", None)
+        availability.setdefault("selected_reasoning_effort", None)
+        availability.setdefault("fallback_used", False)
         if self.runtime_owner:
             self._reconcile_startup_runtime()
         self.state.setdefault("lanes", {})
@@ -732,6 +1028,10 @@ class Supervisor(ArchitectReviewMixin):
                     "commit_sha": None,
                     "next_phase": None,
                     "created_at": None,
+                    "review_tier": None,
+                    "selected_model": None,
+                    "selected_reasoning_effort": None,
+                    "escalation_reason": None,
                 },
                 "history": [],
                 "success_since_review": 0,
@@ -759,6 +1059,10 @@ class Supervisor(ArchitectReviewMixin):
                 "commit_sha": None,
                 "next_phase": None,
                 "created_at": None,
+                "review_tier": None,
+                "selected_model": None,
+                "selected_reasoning_effort": None,
+                "escalation_reason": None,
             })
             if not isinstance(lane.get("review"), dict):
                 lane["review"] = {
@@ -767,7 +1071,24 @@ class Supervisor(ArchitectReviewMixin):
                     "commit_sha": None,
                     "next_phase": None,
                     "created_at": None,
+                    "review_tier": None,
+                    "selected_model": None,
+                    "selected_reasoning_effort": None,
+                    "escalation_reason": None,
                 }
+            review_metadata = lane["review"]
+            review_metadata.setdefault("review_tier", None)
+            review_metadata.setdefault("selected_model", None)
+            review_metadata.setdefault("selected_reasoning_effort", None)
+            review_metadata.setdefault("escalation_reason", None)
+            if (
+                review_metadata.get("type")
+                and review_metadata.get("review_tier") is None
+                and lane.get("state") not in REVIEW_WAITING_STATES
+            ):
+                # Preserve historical decisions outside a pending V3.3 review
+                # gate. Pending legacy reviews are classified below.
+                review_metadata["review_tier"] = "architect"
             lane.setdefault("worker_attempt", 0)
             lane.setdefault("worker_result", None)
             if not isinstance(lane.get("validation_gap"), dict):
@@ -856,13 +1177,12 @@ class Supervisor(ArchitectReviewMixin):
             "queue": [],
             "items": {},
             "phase_counters": {},
+            "normal_retry_counters": {},
             "active_review_id": None,
-            "availability": {
-                "status": "AVAILABLE",
-                "next_retry_at": None,
-                "backoff_seconds": 0,
-                "retry_count": 0,
-                "reason": "",
+            "availability": self._availability_record(),
+            "tier_availability": {
+                "normal": self._availability_record(),
+                "architect": self._availability_record(),
             },
             "last_progress_at": utc_now(),
             "last_worker_completion_at": None,
@@ -878,11 +1198,118 @@ class Supervisor(ArchitectReviewMixin):
             review["items"] = {}
         if not isinstance(review.get("phase_counters"), dict):
             review["phase_counters"] = {}
+        if not isinstance(review.get("normal_retry_counters"), dict):
+            review["normal_retry_counters"] = {}
         if not isinstance(review.get("availability"), dict):
             review["availability"] = defaults["availability"].copy()
         availability = review["availability"]
         for key, value in defaults["availability"].items():
             availability.setdefault(key, value)
+        if not isinstance(review.get("tier_availability"), dict):
+            review["tier_availability"] = {}
+        for tier in REVIEW_TIERS:
+            record = review["tier_availability"].get(tier)
+            if not isinstance(record, dict):
+                record = self._availability_record()
+                if tier == "architect":
+                    record.update(availability)
+                review["tier_availability"][tier] = record
+            for key, value in self._availability_record().items():
+                record.setdefault(key, value)
+        # V3.3 stored a single Sol availability record. Preserve it as the
+        # architect view while giving normal Luna reviews an independent lane.
+        review["availability"] = review["tier_availability"]["architect"]
+        for review_id, item in review["items"].items():
+            if not isinstance(item, dict):
+                continue
+            lane_name = str(item.get("lane") or "")
+            lane = self.state.get("lanes", {}).get(lane_name, {})
+            lane_review = lane.setdefault("review", {}) if isinstance(lane, dict) else {}
+            status = str(item.get("status") or "")
+            pending = status in {
+                "QUEUED", "WAITING_FOR_ARCHITECT_MODEL", "WAITING_FOR_LUNA_MODEL",
+            }
+            item_tier = item.get("review_tier")
+            legacy_unclassified = item_tier not in REVIEW_TIERS
+            tier_reason = item.get("escalation_reason")
+            if item_tier not in REVIEW_TIERS:
+                lane_tier = lane_review.get("review_tier") if isinstance(lane_review, dict) else None
+                if lane_tier in REVIEW_TIERS:
+                    item_tier = lane_tier
+                elif status == "WAITING_FOR_ARCHITECT_MODEL":
+                    item_tier, tier_reason = "architect", "architect reviewer availability backoff"
+                elif status == "WAITING_FOR_LUNA_MODEL":
+                    item_tier, tier_reason = "normal", None
+                elif pending and isinstance(lane, dict):
+                    item_tier, tier_reason = self._review_tier_for_request(
+                        lane_name, str(item.get("review_type") or ""),
+                        lane.get("review_reasons", []) if isinstance(lane.get("review_reasons", []), list) else [],
+                    )
+                else:
+                    # A running or completed V3.3 item was actually reviewed by
+                    # Sol; preserve its historical decision semantics.
+                    item_tier = "architect"
+            item["review_tier"] = item_tier
+            route = self._review_route(str(item_tier))
+            if pending and isinstance(lane_review, dict):
+                selected = str(item.get("selected_model") or "")
+                if item_tier != "normal" or self._infer_model_family(selected) != "luna":
+                    selected = route["model"]
+                item.update({
+                    "selected_model": selected,
+                    "selected_reasoning_effort": route["reasoning_effort"],
+                })
+                lane_review.update({
+                    "review_tier": item_tier,
+                    "selected_model": selected,
+                    "selected_reasoning_effort": route["reasoning_effort"],
+                    "escalation_reason": tier_reason or lane_review.get("escalation_reason"),
+                })
+                if tier_reason:
+                    item["escalation_reason"] = tier_reason
+                # V3.3 queued bundles did not bind a review tier. Never launch
+                # them under a newly classified route; the current exact-state
+                # bundle will be rebuilt by queue_sol_reviews().
+                if status == "QUEUED" and legacy_unclassified and self.runtime_owner:
+                    item.update({
+                        "status": "STALE",
+                        "last_error": "legacy queued bundle superseded by V3.4 tier-bound evidence",
+                    })
+                    review["queue"][:] = [queued for queued in review["queue"] if str(queued) != str(review_id)]
+            elif legacy_unclassified:
+                # These are completed/in-flight V3.3 decisions and therefore
+                # reflect the former Sol/max route, not the new Sol/medium one.
+                item["selected_model"] = "gpt-6-sol"
+                item["selected_reasoning_effort"] = "max"
+            else:
+                item.setdefault("selected_model", route["model"])
+                item.setdefault("selected_reasoning_effort", route["reasoning_effort"])
+            item.setdefault("selected_model", None)
+            item.setdefault("selected_reasoning_effort", None)
+            item.setdefault("escalation_reason", None)
+            item.setdefault("prior_decisions", [])
+        for lane_name, lane in self.state.get("lanes", {}).items():
+            if not isinstance(lane, dict) or lane.get("state") not in REVIEW_WAITING_STATES:
+                continue
+            lane_review = lane.setdefault("review", {})
+            if lane_review.get("review_tier") in REVIEW_TIERS:
+                continue
+            if lane.get("state") == "WAITING_FOR_ARCHITECT_MODEL":
+                tier, reason = "architect", "architect reviewer availability backoff"
+            elif lane.get("state") == "WAITING_FOR_LUNA_MODEL":
+                tier, reason = "normal", None
+            else:
+                tier, reason = self._review_tier_for_request(
+                    str(lane_name), str(lane_review.get("type") or ""),
+                    lane.get("review_reasons", []) if isinstance(lane.get("review_reasons", []), list) else [],
+                )
+            route = self._review_route(tier)
+            lane_review.update({
+                "review_tier": tier,
+                "selected_model": route["model"],
+                "selected_reasoning_effort": route["reasoning_effort"],
+                "escalation_reason": reason,
+            })
         review["enabled"] = bool(configured.get("enabled", review.get("enabled", True)))
         if self.runtime_owner:
             self._reconcile_architect_review_runtime()
@@ -1408,7 +1835,7 @@ class Supervisor(ArchitectReviewMixin):
 
         availability = self.state.get("codex_availability", {})
         if (
-            availability.get("status") != "RATE_LIMITED"
+            availability.get("status") not in {"RATE_LIMITED", "MODEL_UNAVAILABLE"}
             or not availability.get("probe_started_at")
             or active_lanes
         ):
@@ -1968,16 +2395,21 @@ class Supervisor(ArchitectReviewMixin):
                 elif (
                     task.source == "EXISTING_PLAN" and lane.get("phase_id") == task_id
                     and lane.get("state") == "BLOCKED"
-                    and lane.get("review", {}).get("decision") == "SOL_BLOCKED"
+                    and lane.get("review", {}).get("decision") in {"SOL_BLOCKED", "LUNA_BLOCKED"}
                     and str(lane.get("review", {}).get("commit_sha") or "") == str(lane.get("last_commit") or "")
                 ):
-                    new_state, reason = "BLOCKED_REVIEW", "terminal architect BLOCK is active for this exact phase and HEAD"
+                    new_state, reason = (
+                        "BLOCKED_REVIEW",
+                        "terminal architect BLOCK is active for this exact phase and HEAD"
+                        if lane.get("review", {}).get("decision") == "SOL_BLOCKED"
+                        else "terminal Luna BLOCK is active for this exact phase and HEAD",
+                    )
                 elif task.source == "EXISTING_PLAN" and lane.get("phase_id") == task_id:
                     review = lane.get("review", {})
-                    if lane.get("state") == "NEEDS_SOL_REVIEW":
+                    if lane.get("state") in REVIEW_WAITING_STATES:
                         new_state, reason = (
                             "NEEDS_SOL_REVIEW",
-                            f"lane review pending: {review.get('type') or 'operator review'}",
+                            f"lane review pending ({review.get('review_tier') or 'architect'}): {review.get('type') or 'operator review'}",
                         )
                     else:
                         new_state, reason = dependency_evaluation(
@@ -2243,10 +2675,11 @@ class Supervisor(ArchitectReviewMixin):
         operator_probe = operator_probe or (
             operator_request_paths(self.config)["inbox"] / "worker-smoke-probe"
         )
+        route = self._development_route()
         return [
             "codex", "exec",
-            "--model", "gpt-6-luna",
-            "--config", 'model_reasoning_effort="max"',
+            "--model", route["model"],
+            "--config", f'model_reasoning_effort="{route["reasoning_effort"]}"',
             "--config", 'approval_policy="never"',
             "--sandbox", "workspace-write",
             "--cd", str(scratch),
@@ -2270,7 +2703,11 @@ class Supervisor(ArchitectReviewMixin):
 
     def _pids_with_command_marker(self, marker: str) -> list[int]:
         matches: list[int] = []
-        for entry in Path("/proc").iterdir():
+        try:
+            entries = Path("/proc").iterdir()
+        except OSError:
+            return matches
+        for entry in entries:
             if not entry.name.isdigit() or int(entry.name) == os.getpid():
                 continue
             try:
@@ -2885,12 +3322,37 @@ an actually failing command is not a validation gap.
         if lane_name in self.processes or len(self.processes) >= self._worker_limit():
             return False
         availability = self.state.get("codex_availability", {})
-        if availability.get("status") == "RATE_LIMITED":
+        route = self._development_route()
+        if availability.get("status") in {"RATE_LIMITED", "MODEL_UNAVAILABLE"}:
             retry_at = parse_time(availability.get("next_retry_at"))
             if retry_at and time.time() < retry_at:
                 return False
             if availability.get("probe_started_at"):
                 return False
+            availability["probe_started_at"] = utc_now()
+            route = self._resolve_luna_route("development", availability)
+            if route is None:
+                backoff = next_codex_backoff(
+                    int(availability.get("backoff_seconds") or 0),
+                    int(self.config.get("codex_retry_base_seconds", 900)),
+                    int(self.config.get("codex_retry_max_seconds", 3600)),
+                )
+                availability.update({
+                    "status": "MODEL_UNAVAILABLE",
+                    "backoff_seconds": backoff,
+                    "next_retry_at": dt.datetime.fromtimestamp(
+                        time.time() + backoff, dt.timezone.utc
+                    ).isoformat(timespec="seconds"),
+                    "probe_started_at": None,
+                })
+                return False
+        elif availability.get("selected_model"):
+            selected = str(availability.get("selected_model"))
+            if self._infer_model_family(selected) == "luna":
+                route["model"] = selected
+                route["reasoning_effort"] = str(
+                    availability.get("selected_reasoning_effort") or route["reasoning_effort"]
+                )
         lane = self.state["lanes"][lane_name]
         scheduled = None
         if "scheduler" in self.state:
@@ -2932,8 +3394,8 @@ an actually failing command is not a validation gap.
         self._prune_worker_logs(lane_name)
         args = [
             "codex", "exec",
-            "--model", "gpt-6-luna",
-            "--config", 'model_reasoning_effort="max"',
+            "--model", route["model"],
+            "--config", f'model_reasoning_effort="{route["reasoning_effort"]}"',
             "--config", 'approval_policy="never"',
             "--sandbox", "workspace-write",
             "--cd", lane["worktree"],
@@ -2956,8 +3418,14 @@ an actually failing command is not a validation gap.
             self.event(lane["last_error"], lane_name)
             return False
         self.processes[lane_name] = process
-        if availability.get("status") == "RATE_LIMITED":
+        if availability.get("status") in {"RATE_LIMITED", "MODEL_UNAVAILABLE"}:
             availability["probe_started_at"] = utc_now()
+        availability.update({
+            "configured_model": self._development_route()["model"],
+            "selected_model": route["model"],
+            "selected_reasoning_effort": route["reasoning_effort"],
+            "fallback_used": route["model"] != self._development_route()["model"],
+        })
         lane.update({
             "state": "CODING",
             "phase_id": phase["id"],
@@ -3066,9 +3534,38 @@ an actually failing command is not a validation gap.
             f"(backoff {backoff}s)", lane_name,
         )
 
+    def handle_codex_model_unavailable(self, lane_name: str, output: str) -> None:
+        availability = self.state.setdefault("codex_availability", {})
+        previous = int(availability.get("backoff_seconds") or 0)
+        backoff = next_codex_backoff(
+            previous,
+            int(self.config.get("codex_retry_base_seconds", 900)),
+            int(self.config.get("codex_retry_max_seconds", 3600)),
+        )
+        retry_count = int(availability.get("retry_count") or 0) + 1
+        retry_at = time.time() + backoff
+        availability.update({
+            "status": "MODEL_UNAVAILABLE",
+            "detected_at": utc_now(),
+            "next_retry_at": dt.datetime.fromtimestamp(
+                retry_at, dt.timezone.utc
+            ).isoformat(timespec="seconds"),
+            "backoff_seconds": backoff,
+            "retry_count": retry_count,
+            "probe_started_at": None,
+            "reason": redact("configured Luna model unavailable: " + (output or "")[-1000:]),
+        })
+        lane = self.state["lanes"][lane_name]
+        lane["last_error"] = "configured Luna model is unavailable; dirty diff preserved"
+        lane["state"] = "RECOVERING" if self.git_dirty(lane["worktree"]) else "READY"
+        self.event(
+            f"configured Luna model unavailable; no new workers until {availability['next_retry_at']} "
+            f"(backoff {backoff}s)", lane_name,
+        )
+
     def mark_codex_available(self) -> None:
         availability = self.state.setdefault("codex_availability", {})
-        if availability.get("status") != "RATE_LIMITED":
+        if availability.get("status") not in {"RATE_LIMITED", "MODEL_UNAVAILABLE"}:
             return
         availability.update({
             "status": "AVAILABLE",
@@ -3111,6 +3608,9 @@ an actually failing command is not a validation gap.
             architect_state["last_worker_completion_at"] = utc_now()
             if classify_codex_usage_limit(return_code, worker_output):
                 self.handle_codex_rate_limited(lane_name, worker_output)
+                continue
+            if classify_codex_model_unavailable(return_code, worker_output):
+                self.handle_codex_model_unavailable(lane_name, worker_output)
                 continue
             self.mark_codex_available()
             if return_code == 0 and result in {"COMPLETE", "COMPLETE_WITH_VALIDATION_GAP"}:
@@ -3984,6 +4484,8 @@ an actually failing command is not a validation gap.
         commit_sha: str | None = None,
         next_phase: dict[str, Any] | None = None,
         notify_external: bool = True,
+        review_tier: str | None = None,
+        escalation_reason: str | None = None,
     ) -> None:
         lane = self.state["lanes"][lane_name]
         clean = sorted(set(redact(reason) for reason in reasons if reason))
@@ -4003,6 +4505,14 @@ an actually failing command is not a validation gap.
                 "title": lane.get("phase_title"),
                 "action": "retry_current_phase",
             }
+        selected_tier, selected_escalation_reason = self._review_tier_for_request(
+            lane_name,
+            review_type,
+            lane["review_reasons"],
+            explicit_tier=review_tier,
+            explicit_reason=escalation_reason,
+        )
+        route = self._review_route(selected_tier)
         lane["review"] = {
             "type": review_type,
             "reviewed_phase": current_phase,
@@ -4010,6 +4520,10 @@ an actually failing command is not a validation gap.
             "next_phase": next_phase,
             "created_at": utc_now(),
             "decision": None,
+            "review_tier": selected_tier,
+            "selected_model": route["model"],
+            "selected_reasoning_effort": route["reasoning_effort"],
+            "escalation_reason": selected_escalation_reason,
         }
         lane["state"] = "NEEDS_SOL_REVIEW"
         lane["worker_pid"] = None
@@ -4031,7 +4545,10 @@ an actually failing command is not a validation gap.
         lane["review_packet"] = str(packet)
         if notify_external:
             self.post_issue_update(lane_name, lane["review_reasons"])
-        self.event("lane stopped for Sol review", lane_name)
+        self.event(
+            f"lane stopped for {selected_tier} review using {route['model']}/{route['reasoning_effort']}",
+            lane_name,
+        )
 
     def approve_review(self, lane_name: str) -> int:
         lane = self.state["lanes"].get(lane_name)
@@ -4365,6 +4882,10 @@ Scheduler task identity: {lane.get('scheduler_task_id') or phase}
 ## Explicit review metadata
 
 - review type: {review_info.get('type') or 'unknown'}
+- review tier: {review_info.get('review_tier') or 'architect'}
+- selected model: {review_info.get('selected_model') or 'not selected'}
+- selected reasoning effort: {review_info.get('selected_reasoning_effort') or 'not selected'}
+- escalation reason: {review_info.get('escalation_reason') or 'ordinary bounded review'}
 - reviewed phase: {json.dumps(review_info.get('reviewed_phase'), sort_keys=True)}
 - commit SHA: {review_info.get('commit_sha') or 'none'}
 - next phase/action: {json.dumps(next_phase, sort_keys=True) if next_phase else 'none'}
@@ -4630,12 +5151,12 @@ operator decision.
             review = lane.get("review", {})
             terminal_architect_block = (
                 lane.get("state") == "BLOCKED"
-                and review.get("decision") == "SOL_BLOCKED"
+                and review.get("decision") in {"SOL_BLOCKED", "LUNA_BLOCKED"}
                 and str(review.get("commit_sha") or "") == str(lane.get("last_commit") or "")
             )
-            if lane.get("state") == "NEEDS_SOL_REVIEW" or terminal_architect_block:
+            if lane.get("state") in REVIEW_WAITING_STATES or terminal_architect_block:
                 review_gated.append(lane_name)
-            if (lane.get("state") == "NEEDS_SOL_REVIEW" or terminal_architect_block) and review.get("type") == "POST_PHASE_CHECKPOINT":
+            if (lane.get("state") in REVIEW_WAITING_STATES or terminal_architect_block) and review.get("type") == "POST_PHASE_CHECKPOINT":
                 waiting_checkpoint.append(lane_name)
             record = records.get(lane.get("phase_id")) if isinstance(records, dict) else None
             if (
@@ -4655,7 +5176,9 @@ operator decision.
         review_items = architect.get("items", {}) if isinstance(architect, dict) else {}
         queued_reviews = sorted(
             review_id for review_id, item in review_items.items()
-            if isinstance(item, dict) and item.get("status") == "QUEUED"
+            if isinstance(item, dict) and item.get("status") in {
+                "QUEUED", "WAITING_FOR_ARCHITECT_MODEL", "WAITING_FOR_LUNA_MODEL"
+            }
         ) if isinstance(review_items, dict) else []
         evidence_errors = architect.get("evidence_errors", {}) if isinstance(architect, dict) else {}
         evidence_error_lanes = sorted({
@@ -4664,13 +5187,23 @@ operator decision.
         }) if isinstance(evidence_errors, dict) else []
         active_review = architect.get("active_review_id") if isinstance(architect, dict) else None
         availability = architect.get("availability", {}) if isinstance(architect, dict) else {}
+        tier_availability = architect.get("tier_availability", {}) if isinstance(architect, dict) else {}
+        if not isinstance(tier_availability, dict):
+            tier_availability = {}
         if runnable:
             idle_reason = "runnable work is waiting for Luna worker capacity or availability"
         elif active_review:
             idle_reason = "the independent Sol architect reviewer is working"
         elif queued_reviews:
-            retry_at = availability.get("next_retry_at") if isinstance(availability, dict) else None
-            idle_reason = f"Sol architect review is queued; retry after {retry_at}" if retry_at else "Sol architect review is queued"
+            waits = []
+            for review_id in queued_reviews:
+                item = review_items.get(review_id, {}) if isinstance(review_items, dict) else {}
+                tier = str(item.get("review_tier") or "architect") if isinstance(item, dict) else "architect"
+                record = tier_availability.get(tier, {})
+                retry_at = record.get("next_retry_at") if isinstance(record, dict) else None
+                if retry_at:
+                    waits.append(f"{tier} until {retry_at}")
+            idle_reason = "review is queued" + ("; backoff " + ", ".join(waits) if waits else "")
         elif evidence_error_lanes:
             idle_reason = "review evidence failure requires infrastructure review for " + ", ".join(evidence_error_lanes)
         elif review_gated and external:
@@ -4696,6 +5229,8 @@ operator decision.
             "queued_reviews": queued_reviews,
             "active_review": active_review,
             "reviewer_availability": availability.get("status", "UNKNOWN") if isinstance(availability, dict) else "UNKNOWN",
+            "reviewer_availability_by_tier": tier_availability,
+            "reviewer_cap": self._reviewer_limit(),
             "idle_reason": idle_reason,
         }
 
@@ -4762,6 +5297,12 @@ operator decision.
                     f"review: {review.get('type')} phase={review.get('reviewed_phase')} "
                     f"next={review.get('next_phase') or 'none'}"
                 )
+                print(
+                    f"  tier={review.get('review_tier') or 'architect'} "
+                    f"model={review.get('selected_model') or 'not selected'} "
+                    f"effort={review.get('selected_reasoning_effort') or 'not selected'} "
+                    f"escalation={review.get('escalation_reason') or 'ordinary bounded review'}"
+                )
             if lane.get("review_packet"):
                 print(f"review packet: {lane['review_packet']}")
             print()
@@ -4777,11 +5318,22 @@ operator decision.
         ) if isinstance(architect_items, dict) else 0
         active_review = architect.get("active_review_id") if isinstance(architect, dict) else None
         availability = architect.get("availability", {}) if isinstance(architect, dict) else {}
+        tier_availability = architect.get("tier_availability", {}) if isinstance(architect, dict) else {}
         print("AUTONOMOUS SOL REVIEW")
         print(f"enabled: {bool(architect.get('enabled')) if isinstance(architect, dict) else False}")
         print(f"active review: {active_review or 'none'}")
         print(f"queued reviews: {queued_reviews}")
         print(f"reviewer availability: {availability.get('status', 'UNKNOWN') if isinstance(availability, dict) else 'UNKNOWN'}")
+        if isinstance(tier_availability, dict):
+            for tier in ("normal", "architect"):
+                record = tier_availability.get(tier, {})
+                print(
+                    f"  {tier}: {record.get('status', 'UNKNOWN')} "
+                    f"model={record.get('selected_model') or record.get('configured_model') or 'not selected'} "
+                    f"effort={record.get('selected_reasoning_effort') or 'not selected'} "
+                    f"next_retry_at={record.get('next_retry_at') or 'none'}"
+                )
+        print(f"reviewer cap: {self._reviewer_limit()}")
         print(f"idle reason: {architect.get('idle_reason') or 'none' if isinstance(architect, dict) else 'unavailable'}")
         if self.state.get("global_mode") == "RUNNING":
             idle = self.scheduler_idle_summary()
@@ -4879,15 +5431,30 @@ operator decision.
                 print(f"  next_phase: {json.dumps(review.get('next_phase'), sort_keys=True) if review.get('next_phase') else 'none'}")
                 print(f"  reasons: {'; '.join(lane.get('review_reasons', [])) or 'none'}")
                 print(f"  decision: {review.get('decision') or 'pending'}")
+                print(f"  tier: {review.get('review_tier') or 'architect'}")
+                print(f"  selected_model: {review.get('selected_model') or 'not selected'}")
+                print(f"  selected_reasoning_effort: {review.get('selected_reasoning_effort') or 'not selected'}")
+                print(f"  escalation_reason: {review.get('escalation_reason') or 'ordinary bounded review'}")
         architect = self.state.get("architect_review", {})
         if isinstance(architect, dict):
             availability = architect.get("availability", {})
+            tier_availability = architect.get("tier_availability", {})
             print("AUTONOMOUS SOL REVIEW")
             print(f"  enabled: {bool(architect.get('enabled'))}")
             print(f"  active_review_id: {architect.get('active_review_id') or 'none'}")
             print(f"  queued: {len(architect.get('queue', []))}")
             print(f"  availability: {availability.get('status', 'UNKNOWN') if isinstance(availability, dict) else 'UNKNOWN'}")
             print(f"  next_retry_at: {availability.get('next_retry_at') or 'none' if isinstance(availability, dict) else 'none'}")
+            if isinstance(tier_availability, dict):
+                for tier in ("normal", "architect"):
+                    record = tier_availability.get(tier, {})
+                    print(
+                        f"  {tier}: status={record.get('status', 'UNKNOWN')} "
+                        f"model={record.get('selected_model') or record.get('configured_model') or 'not selected'} "
+                        f"effort={record.get('selected_reasoning_effort') or 'not selected'} "
+                        f"next_retry_at={record.get('next_retry_at') or 'none'}"
+                    )
+            print(f"  reviewer_cap: {self._reviewer_limit()}")
             print(f"  idle_reason: {architect.get('idle_reason') or 'none'}")
             evidence_errors = architect.get("evidence_errors", {})
             if isinstance(evidence_errors, dict):
@@ -5138,6 +5705,7 @@ def main() -> int:
     sub.add_parser("self-test")
     sub.add_parser("worker-smoke-test")
     sub.add_parser("architect-review-smoke-test")
+    sub.add_parser("normal-review-smoke-test")
     re_review = sub.add_parser("re-review-v3")
     re_review.add_argument("--target", action="append", nargs=3, required=True,
                            metavar=("LANE", "PHASE", "SHA"))
@@ -5219,6 +5787,8 @@ def main() -> int:
         return supervisor.worker_smoke_test()
     if args.command == "architect-review-smoke-test":
         return supervisor.architect_review_smoke_test()
+    if args.command == "normal-review-smoke-test":
+        return supervisor.normal_review_smoke_test()
     raise AssertionError(f"unhandled command: {args.command}")
 
 

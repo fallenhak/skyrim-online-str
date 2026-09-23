@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import supervisor
+import architect_review
 
 
 class Harness(supervisor.Supervisor):
@@ -1766,6 +1767,287 @@ class SupervisorLogicTests(unittest.TestCase):
         before = ownership_snapshot(h)
         self.assertEqual(h.config["lanes"]["combat"]["worktree"], "")
         self.assertEqual(ownership_snapshot(h), before)
+
+
+class V34ReviewerRoutingTests(unittest.TestCase):
+    def test_ordinary_review_routes_to_luna_high(self) -> None:
+        h = Harness()
+        tier, reason = h._review_tier_for_request(
+            "combat", "POST_PHASE_CHECKPOINT", ["ordinary implementation review"]
+        )
+        self.assertEqual((tier, reason), ("normal", None))
+        self.assertEqual(h._review_route(tier), {
+            "model": "gpt-6-luna", "reasoning_effort": "high", "family": "luna",
+        })
+
+    def test_ordinary_review_never_inherits_architect_sol_route(self) -> None:
+        h = Harness()
+        h.config["architect_review"] = {"model": "gpt-6-sol", "reasoning_effort": "max"}
+        self.assertEqual(h._review_route("normal")["model"], "gpt-6-luna")
+        self.assertEqual(h._review_route("normal")["reasoning_effort"], "high")
+        self.assertEqual(h._review_route("architect")["model"], "gpt-6-sol")
+        self.assertEqual(h._review_route("architect")["reasoning_effort"], "medium")
+
+    def test_explicit_architect_escalation_routes_sol_medium(self) -> None:
+        h = Harness()
+        tier, reason = h._review_tier_for_request(
+            "authority", "FINAL_MILESTONE_OR_QUEUE_REVIEW", ["queue complete"]
+        )
+        self.assertEqual(tier, "architect")
+        self.assertIn("final integration/milestone", reason or "")
+        self.assertEqual(h._review_route("architect")["model"], "gpt-6-sol")
+        self.assertEqual(h._review_route("architect")["reasoning_effort"], "medium")
+
+    def test_direct_architecture_boundaries_escalate_and_validation_gap_does_not(self) -> None:
+        h = Harness()
+        tier, _ = h._review_tier_for_request(
+            "authority", "CURRENT_PHASE_REVIEW",
+            ["persistent database/schema or migration surface changed"],
+        )
+        self.assertEqual(tier, "architect")
+        tier, _ = h._review_tier_for_request(
+            "combat", "POST_PHASE_CHECKPOINT",
+            ["phase size validation gap was recorded; exact CI passed"],
+        )
+        self.assertEqual(tier, "normal")
+
+    def test_sol_unavailability_waits_only_architect_lane(self) -> None:
+        h = Harness()
+        h.review_process = None
+        h.review_output_thread = None
+        h.review_log_path = None
+        h.active_review_id = None
+        h.state["architect_review"] = {
+            "enabled": True, "queue": ["architect-item", "normal-item"],
+            "items": {}, "phase_counters": {},
+            "tier_availability": {
+                "normal": h._availability_record(),
+                "architect": h._availability_record(),
+            },
+        }
+        h.state["lanes"] = {
+            "authority": {"state": "NEEDS_SOL_REVIEW", "review": {"review_tier": "architect"}},
+            "combat": {"state": "NEEDS_SOL_REVIEW", "review": {"review_tier": "normal"}},
+        }
+        architect_item = {
+            "review_id": "architect-item", "lane": "authority", "review_tier": "architect",
+            "status": "RUNNING", "failure_count": 0,
+        }
+        normal_item = {
+            "review_id": "normal-item", "lane": "combat", "review_tier": "normal",
+            "status": "QUEUED", "failure_count": 0,
+        }
+        h.state["architect_review"]["items"] = {
+            "architect-item": architect_item, "normal-item": normal_item,
+        }
+        h._review_failure(architect_item, "model unavailable", model_unavailable=True)
+        self.assertEqual(architect_item["status"], "WAITING_FOR_ARCHITECT_MODEL")
+        self.assertEqual(h.state["lanes"]["authority"]["state"], "WAITING_FOR_ARCHITECT_MODEL")
+        self.assertEqual(h.state["lanes"]["combat"]["state"], "NEEDS_SOL_REVIEW")
+        self.assertEqual(normal_item["status"], "QUEUED")
+        self.assertEqual(
+            h.state["architect_review"]["tier_availability"]["architect"]["status"],
+            "MODEL_UNAVAILABLE",
+        )
+        self.assertEqual(
+            h.state["architect_review"]["tier_availability"]["normal"]["status"],
+            "AVAILABLE",
+        )
+
+    def test_unconfigured_luna_fallback_is_not_assumed(self) -> None:
+        h = Harness()
+        h.config["model_routing"] = {
+            "development": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "max"},
+            "review": {"normal": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "high"}},
+            "luna_fallback_models": [],
+        }
+        availability = h._availability_record()
+        with patch.object(h, "_probe_model_route", return_value=(False, "model unavailable")) as probe:
+            self.assertIsNone(h._resolve_luna_route("review", availability))
+        probe.assert_called_once()
+
+    def test_configured_luna_fallback_requires_successful_read_only_probe(self) -> None:
+        h = Harness()
+        h.config["model_routing"] = {
+            "development": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "max"},
+            "review": {"normal": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "high"}},
+            "luna_fallback_models": [{"model": "gpt-6-luna-reserve", "family": "luna", "reasoning_effort": "max"}],
+        }
+        availability = h._availability_record()
+        with patch.object(h, "_probe_model_route", side_effect=[(False, "primary unavailable"), (True, "MODEL_OK")]) as probe:
+            route = h._resolve_luna_route("review", availability)
+        self.assertEqual(route["model"], "gpt-6-luna-reserve")
+        self.assertEqual(route["reasoning_effort"], "high")
+        self.assertTrue(availability["fallback_used"])
+        self.assertEqual(probe.call_count, 2)
+        with patch.object(h, "_probe_model_route", side_effect=[(False, "fallback unavailable"), (True, "MODEL_OK")]) as probe:
+            route = h._resolve_luna_route("review", availability)
+        self.assertEqual(route["model"], "gpt-6-luna")
+        self.assertEqual(probe.call_count, 2)
+
+    def test_legacy_queued_review_is_reclassified_and_old_bundle_not_launched(self) -> None:
+        h = Harness()
+        h._reconcile_architect_review_runtime = lambda: None
+        h.config["model_routing"] = {
+            "development": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "max"},
+            "review": {
+                "normal": {"model": "gpt-6-luna", "family": "luna", "reasoning_effort": "high"},
+                "architect": {"model": "gpt-6-sol", "family": "sol", "reasoning_effort": "max"},
+            },
+            "luna_fallback_models": [],
+        }
+        legacy_id = "legacy-sol-bundle"
+        h.state.update({
+            "lanes": {"authority": {
+                "state": "NEEDS_SOL_REVIEW", "phase_id": "A09", "review_reasons": ["ordinary phase review"],
+                "review": {"type": "CURRENT_PHASE_REVIEW", "reviewed_phase": {"id": "A09"}, "commit_sha": "a" * 40},
+            }},
+            "architect_review": {
+                "enabled": True, "queue": [legacy_id],
+                "items": {legacy_id: {
+                    "review_id": legacy_id, "lane": "authority", "phase": "A09",
+                    "review_type": "CURRENT_PHASE_REVIEW", "reviewed_sha": "a" * 40, "status": "QUEUED",
+                }},
+            },
+            "scheduler": {"tasks": {}},
+        })
+        observer = Harness()
+        observer.runtime_owner = False
+        observer.config["model_routing"] = deepcopy(h.config["model_routing"])
+        observer.state = deepcopy(h.state)
+        observer._prepare_architect_review_state()
+        self.assertEqual(observer.state["architect_review"]["items"][legacy_id]["status"], "QUEUED")
+        self.assertEqual(observer.state["architect_review"]["queue"], [legacy_id])
+        self.assertEqual(observer.state["architect_review"]["items"][legacy_id]["review_tier"], "normal")
+
+        h._prepare_architect_review_state()
+        item = h.state["architect_review"]["items"][legacy_id]
+        lane_review = h.state["lanes"]["authority"]["review"]
+        self.assertEqual(item["status"], "STALE")
+        self.assertEqual(item["review_tier"], "normal")
+        self.assertEqual(lane_review["review_tier"], "normal")
+        self.assertEqual(lane_review["selected_model"], "gpt-6-luna")
+        self.assertEqual(lane_review["selected_reasoning_effort"], "high")
+        self.assertEqual(h.state["architect_review"]["queue"], [])
+
+    def test_model_availability_backoff_survives_json_state_restart(self) -> None:
+        h = Harness()
+        h.runtime_owner = False
+        architect_retry = "2030-01-01T00:00:00+00:00"
+        luna_retry = "2030-01-01T00:15:00+00:00"
+        h.state = json.loads(json.dumps({
+            "global_mode": "RUNNING",
+            "lanes": {"authority": {
+                "state": "WAITING_FOR_ARCHITECT_MODEL",
+                "review": {"review_tier": "architect", "type": "CURRENT_PHASE_REVIEW"},
+            }},
+            "architect_review": {
+                "enabled": True, "queue": [], "items": {
+                    "arch-wait": {"lane": "authority", "review_tier": "architect",
+                                  "status": "WAITING_FOR_ARCHITECT_MODEL", "next_retry_at": architect_retry},
+                },
+                "availability": {"status": "RATE_LIMITED", "retry_count": 4,
+                                 "backoff_seconds": 3600, "next_retry_at": architect_retry},
+                "tier_availability": {
+                    "normal": {"status": "MODEL_UNAVAILABLE", "retry_count": 2,
+                               "backoff_seconds": 1800, "next_retry_at": luna_retry},
+                    "architect": {"status": "RATE_LIMITED", "retry_count": 4,
+                                  "backoff_seconds": 3600, "next_retry_at": architect_retry},
+                },
+                "normal_retry_counters": {"authority:A09": {"same_material_cycles": 1}},
+            },
+        }))
+        h._prepare_architect_review_state()
+        state = h.state["architect_review"]
+        self.assertEqual(state["tier_availability"]["architect"]["next_retry_at"], architect_retry)
+        self.assertEqual(state["tier_availability"]["normal"]["next_retry_at"], luna_retry)
+        self.assertEqual(state["items"]["arch-wait"]["next_retry_at"], architect_retry)
+        self.assertEqual(state["normal_retry_counters"]["authority:A09"]["same_material_cycles"], 1)
+        self.assertEqual(state["availability"], state["tier_availability"]["architect"])
+
+    def test_reviewer_cap_is_one_and_worker_cap_remains_two(self) -> None:
+        h = Harness()
+        h.config["architect_review"] = {"max_concurrent_reviewers": 1}
+        h.config["max_concurrent_workers"] = 2
+        self.assertEqual(h._reviewer_limit(), 1)
+        self.assertEqual(h._worker_limit(), 2)
+
+    def test_model_unavailable_classifier_is_separate_from_generic_failure(self) -> None:
+        self.assertTrue(supervisor.classify_codex_model_unavailable(1, "unknown model gpt-6-luna"))
+        self.assertTrue(supervisor.classify_codex_model_unavailable(1, "model access permission denied"))
+        self.assertFalse(supervisor.classify_codex_model_unavailable(1, "pytest assertion failed"))
+        self.assertFalse(supervisor.classify_codex_model_unavailable(0, "unknown model"))
+
+    def test_starting_normal_review_builds_luna_high_command(self) -> None:
+        h = Harness()
+        h.review_process = None
+        h.review_output_thread = None
+        h.review_log_path = None
+        h.active_review_id = None
+        h._control_plane_valid = lambda: True
+        with tempfile.TemporaryDirectory(prefix="review-route-test-") as root:
+            root_path = Path(root)
+            h._review_root = lambda: root_path
+            review_id = "a" * 64
+            bundle_dir = root_path / "bundles" / review_id
+            bundle_dir.mkdir(parents=True)
+            bundle_path = bundle_dir / "bundle.json"
+            bundle = {
+                "review_id": review_id, "review_state_sha256": "b" * 64,
+                "lane": "combat", "phase": "C01", "review_type": "CURRENT_PHASE_REVIEW",
+                "reviewed_sha": "c" * 40, "evidence_ids": ["bundle.diff"],
+            }
+            bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+            h.state["lanes"] = {
+                "combat": {"state": "NEEDS_SOL_REVIEW", "review": {"type": "CURRENT_PHASE_REVIEW"}},
+            }
+            architect_wait_id = "f" * 64
+            h.state["architect_review"] = {
+                "enabled": True, "queue": [architect_wait_id, review_id], "items": {},
+                "phase_counters": {}, "active_review_id": None,
+                "tier_availability": {
+                    "normal": h._availability_record(),
+                    "architect": {**h._availability_record(), "status": "RATE_LIMITED",
+                                  "next_retry_at": time.time() + 3600, "backoff_seconds": 3600},
+                },
+            }
+            h.state["architect_review"]["items"][architect_wait_id] = {
+                "review_id": architect_wait_id, "lane": "authority", "phase": "A09",
+                "review_type": "CURRENT_PHASE_REVIEW", "review_tier": "architect",
+                "status": "QUEUED", "failure_count": 0,
+            }
+            item = {
+                **bundle, "bundle_dir": str(bundle_dir), "bundle_path": str(bundle_path),
+                "evidence_version": 3, "control_plane_sha": "d" * 40,
+                "worker_attempt": 1, "status": "QUEUED", "review_tier": "normal",
+                "launch_attempts": 0, "failure_count": 0,
+            }
+            h.state["architect_review"]["items"][review_id] = item
+            h._validate_current_review_state = lambda _item: (True, "", bundle)
+            runtime = root_path / "runtime"
+            result_dir = runtime / "result"
+            codex_home = runtime / "codex-home"
+            result_dir.mkdir(parents=True)
+            codex_home.mkdir()
+            h._prepare_review_runtime = lambda _item: (runtime, result_dir, codex_home, root_path / "review.log")
+
+            class FakeProcess:
+                pid = 4321
+
+                def __init__(self):
+                    self.stdin = io.StringIO()
+                    self.stdout = io.StringIO()
+
+            process = FakeProcess()
+            with patch.object(supervisor.subprocess, "Popen", return_value=process), \
+                    patch.object(architect_review, "build_bwrap_command", return_value=["bwrap-test"]) as build:
+                self.assertTrue(h.start_next_reviewer())
+            self.assertEqual(item["selected_model"], "gpt-6-luna")
+            self.assertEqual(item["selected_reasoning_effort"], "high")
+            self.assertEqual(build.call_args.args[-2:], ("gpt-6-luna", "high"))
+            self.assertNotEqual(build.call_args.args[-2], "gpt-6-sol")
+            self.assertEqual(h.state["architect_review"]["queue"], [architect_wait_id])
+            self.assertEqual(h.state["architect_review"]["items"][architect_wait_id]["status"], "QUEUED")
 
 
 if __name__ == "__main__":
