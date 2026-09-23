@@ -1,6 +1,7 @@
 #pragma once
 
 #include <include/internal/cef_ptr.h>
+#include <cstdint>
 
 namespace TiltedPhoques
 {
@@ -100,6 +101,7 @@ private:
 
     bool m_active = false;
     bool m_inGame = false;
+    std::uint32_t m_characterConnectionGeneration = 0;
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_connectedConnection;

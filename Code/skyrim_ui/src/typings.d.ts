@@ -32,10 +32,13 @@ declare namespace SkyrimTogetherTypes {
   ) => void;
 
   /** Connection callback */
-  type ConnectCallback = () => void;
+  type ConnectCallback = (connectionGeneration: number) => void;
 
   /** Disconnection callback */
-  type DisconnectCallback = (isError: boolean) => void;
+  type DisconnectCallback = (
+    isError: boolean,
+    connectionGeneration: number,
+  ) => void;
 
   /** Name change callback */
   type SetNameCallback = (name: string) => void;
@@ -136,7 +139,10 @@ declare namespace SkyrimTogetherTypes {
     | 'awaitingPlayerAssignment'
     | 'inWorld';
 
-  type CharacterListCallback = (rows: CharacterSummaryWireRow[]) => void;
+  type CharacterListCallback = (
+    rows: CharacterSummaryWireRow[],
+    connectionGeneration: number,
+  ) => void;
 
   type CharacterSelectionResultCallback = (
     status: CharacterSelectionStatus,

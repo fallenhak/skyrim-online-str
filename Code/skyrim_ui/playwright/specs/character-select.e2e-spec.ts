@@ -23,9 +23,21 @@ test.describe('Character Select', () => {
       .toBeVisible();
 
     await page.evaluate(() => {
-      (window as any).skyrimtogether.emit('characterList', [
-        ['18446744073709551615', 'Server Character', '4294967295', '0', 1, 17],
-      ]);
+      const client = (window as any).skyrimtogether;
+      client.emit(
+        'characterList',
+        [
+          [
+            '18446744073709551615',
+            'Server Character',
+            '4294967295',
+            '0',
+            1,
+            17,
+          ],
+        ],
+        client.characterConnectionGeneration,
+      );
     });
     await expect(page.locator('[data-character-select-state="list"]'))
       .toBeVisible();
@@ -42,7 +54,8 @@ test.describe('Character Select', () => {
     await expect(character).toContainText('Sex 1');
 
     await page.evaluate(() => {
-      (window as any).skyrimtogether.emit('characterList', []);
+      const client = (window as any).skyrimtogether;
+      client.emit('characterList', [], client.characterConnectionGeneration);
     });
     await expect(page.locator('[data-character-select-state="empty"]'))
       .toContainText('No characters are available on this server');
@@ -56,6 +69,112 @@ test.describe('Character Select', () => {
     await expect(page.locator('[data-character-select-state="error"]'))
       .toContainText('This character is unavailable for this account');
   });
+
+  test(
+    'clears old server data on errors and connection changes',
+    async ({ page }) => {
+      await page.evaluate(() => {
+        (window as any).skyrimtogether.requestCharacterList = () => {};
+      });
+
+      await page.locator('app-connect input').nth(0).fill('character-server');
+      await page
+        .locator('app-connect app-action-buttons button')
+        .nth(0)
+        .click();
+
+      const characterSelect = page.locator('app-character-select');
+      await expect(
+        characterSelect.locator('[data-character-select-state="loading"]'),
+      ).toBeVisible();
+
+      const oldConnectionGeneration = await page.evaluate(
+        () => (window as any).skyrimtogether.characterConnectionGeneration,
+      );
+      await page.evaluate(() => {
+        const client = (window as any).skyrimtogether;
+        client.emit(
+          'characterList',
+          [['100', 'Old Connection Character', '0', '0', 0, 1]],
+          client.characterConnectionGeneration,
+        );
+      });
+      await expect(
+        characterSelect.locator('[data-character-id="100"]'),
+      ).toBeVisible();
+
+      await page.evaluate(() => {
+        (window as any).skyrimtogether.emit(
+          'triggerError',
+          JSON.stringify({ error: 'server_full' }),
+        );
+      });
+      await expect(
+        characterSelect.locator('[data-character-select-state="error"]'),
+      ).toBeVisible();
+      await expect(
+        characterSelect.locator('.character-list li'),
+      ).toHaveCount(0);
+
+      await page.evaluate(generation => {
+        const client = (window as any).skyrimtogether;
+        client.emit(
+          'characterList',
+          [['100', 'Old Connection Character', '0', '0', 0, 1]],
+          generation,
+        );
+      }, oldConnectionGeneration);
+      await expect(
+        characterSelect.locator('.character-list li'),
+      ).toHaveCount(0);
+
+      await page.evaluate(() => {
+        const client = (window as any).skyrimtogether;
+        client.characterConnectionGeneration += 1;
+        client.emit('connect', client.characterConnectionGeneration);
+      });
+
+      await expect(
+        characterSelect.locator('[data-character-select-state="loading"]'),
+      ).toBeVisible();
+      await page.evaluate(generation => {
+        // A delayed notification from the previous session must not restore it.
+        const client = (window as any).skyrimtogether;
+        client.emit(
+          'characterList',
+          [['100', 'Old Connection Character', '0', '0', 0, 1]],
+          generation,
+        );
+      }, oldConnectionGeneration);
+      await expect(
+        characterSelect.locator('.character-list li'),
+      ).toHaveCount(0);
+      await page.evaluate(() => {
+        const client = (window as any).skyrimtogether;
+        client.emit(
+          'characterList',
+          [['200', 'New Connection Character', '0', '0', 0, 2]],
+          client.characterConnectionGeneration,
+        );
+      });
+      await expect(
+        characterSelect.locator('[data-character-id="200"]'),
+      ).toBeVisible();
+      await expect(
+        characterSelect.locator('[data-character-id="100"]'),
+      ).toHaveCount(0);
+
+      await page.evaluate(() => {
+        (window as any).skyrimtogether.disconnect();
+      });
+      await expect(
+        characterSelect.locator('[data-character-select-state="error"]'),
+      ).toBeVisible();
+      await expect(
+        characterSelect.locator('.character-list li'),
+      ).toHaveCount(0);
+    },
+  );
 
   test(
     'keeps selection open until the server confirms the character is in world',

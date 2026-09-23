@@ -289,16 +289,23 @@ void OverlayService::OnUpdate(const UpdateEvent&) noexcept
 
 void OverlayService::OnConnectedEvent(const ConnectedEvent& acEvent) noexcept
 {
-    m_pOverlay->ExecuteAsync("connect");
-
+    ++m_characterConnectionGeneration;
     auto pArguments = CefListValue::Create();
-    pArguments->SetInt(0, acEvent.PlayerId);
-    m_pOverlay->ExecuteAsync("setLocalPlayerId", pArguments);
+    pArguments->SetDouble(0, static_cast<double>(m_characterConnectionGeneration));
+    m_pOverlay->ExecuteAsync("connect", pArguments);
+
+    auto pPlayerArguments = CefListValue::Create();
+    pPlayerArguments->SetInt(0, acEvent.PlayerId);
+    m_pOverlay->ExecuteAsync("setLocalPlayerId", pPlayerArguments);
 }
 
 void OverlayService::OnDisconnectedEvent(const DisconnectedEvent&) noexcept
 {
-    m_pOverlay->ExecuteAsync("disconnect");
+    ++m_characterConnectionGeneration;
+    auto pArguments = CefListValue::Create();
+    pArguments->SetBool(0, false);
+    pArguments->SetDouble(1, static_cast<double>(m_characterConnectionGeneration));
+    m_pOverlay->ExecuteAsync("disconnect", pArguments);
 }
 
 void OverlayService::OnWaitingFor3DRemoved(entt::registry& aRegistry, entt::entity aEntity) const noexcept
@@ -465,6 +472,7 @@ void OverlayService::OnCharacterListReceived(const CharacterListReceivedEvent& a
     }
 
     pArguments->SetList(0, pCharacters);
+    pArguments->SetDouble(1, static_cast<double>(m_characterConnectionGeneration));
     m_pOverlay->ExecuteAsync("characterList", pArguments);
 }
 

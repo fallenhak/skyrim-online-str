@@ -25,6 +25,7 @@ const playerStore = createStore(
 
 export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
   private connected = false;
+  public characterConnectionGeneration = 0;
   private active = false;
   private version = 'browser';
   private playerName = 'Local Player';
@@ -85,7 +86,12 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
       }
       setTimeout(() => {
         this.connected = !error;
-        this.emit(!!error ? 'disconnect' : 'connect');
+        const connectionGeneration = ++this.characterConnectionGeneration;
+        if (error) {
+          this.emit('disconnect', false, connectionGeneration);
+        } else {
+          this.emit('connect', connectionGeneration);
+        }
         if (error && typeof error !== 'boolean') {
           this.emit('triggerError', JSON.stringify(error));
         } else {
@@ -107,8 +113,9 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
 
   disconnect(): void {
     if (this.connected) {
-      this.emit('disconnect');
       this.connected = false;
+      const connectionGeneration = ++this.characterConnectionGeneration;
+      this.emit('disconnect', false, connectionGeneration);
     }
   }
 
@@ -127,6 +134,7 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
             character.level,
           ],
         ),
+        this.characterConnectionGeneration,
       );
     }
   }

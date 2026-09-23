@@ -79,11 +79,29 @@ export class CharacterSelectComponent implements OnInit, OnDestroy {
             break;
           case 'disconnected':
             this.selectionFlowActive = false;
+            this.characters = [];
+            this.messageKey = 'COMPONENT.CHARACTER_SELECT.DISCONNECTED';
+            this.state = 'error';
             break;
         }
       }),
       this.client.characterSelectionPendingIdChange.subscribe(characterId => {
         this.pendingCharacterId = characterId;
+      }),
+      this.client.characterUiResetChange.subscribe(reason => {
+        this.characters = [];
+        this.selectionFlowActive = false;
+
+        if (reason === 'connecting') {
+          this.messageKey = 'COMPONENT.CHARACTER_SELECT.LOADING';
+          this.state = 'loading';
+        } else if (reason === 'disconnected') {
+          this.messageKey = 'COMPONENT.CHARACTER_SELECT.DISCONNECTED';
+          this.state = 'error';
+        } else {
+          this.messageKey = 'COMPONENT.CHARACTER_SELECT.ERROR.GENERIC';
+          this.state = 'error';
+        }
       }),
       this.client.connectionStateChange.subscribe(connected => {
         this.characters = [];
