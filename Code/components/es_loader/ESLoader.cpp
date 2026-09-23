@@ -262,14 +262,6 @@ bool ESLoader::LoadLoadOrder()
         case PluginType::kInvalid: break;
         }
 
-        // MAST lists may name any preceding plugin, including .esp masters and
-        // light plugins. Store the complete server prefix so each parent slot
-        // resolves to the target plugin's load-order namespace.
-        const uint32_t formIdPrefix = plugin.IsLite()
-                                          ? 0xFE000000u | (static_cast<uint32_t>(plugin.m_liteId) << 12)
-                                          : static_cast<uint32_t>(plugin.m_standardId) << 24;
-        m_masterFiles.emplace(plugin.m_filename, formIdPrefix);
-
         m_loadOrder.push_back(plugin);
     }
 
@@ -291,24 +283,26 @@ UniquePtr<RecordCollection> ESLoader::LoadFiles()
     for (PluginData& plugin : m_loadOrder)
     {
         fs::path pluginPath = GetPath(plugin.m_filename);
-        if (pluginPath.empty())
+        if (!pluginPath.empty())
+        {
+            TESFile pluginFile(m_masterFiles);
+            const bool setupResult = plugin.IsLite() ? pluginFile.Setup(static_cast<uint16_t>(plugin.m_liteId))
+                                                     : pluginFile.Setup(static_cast<uint8_t>(plugin.m_standardId));
+            if (setupResult && pluginFile.LoadFile(pluginPath))
+                pluginFile.IndexRecords(*recordCollection);
+        }
+        else
         {
             spdlog::warn("Path to plugin file not found: {}", plugin.m_filename);
-            continue;
         }
 
-        TESFile pluginFile(m_masterFiles);
-        const bool setupResult = plugin.IsLite() ? pluginFile.Setup(static_cast<uint16_t>(plugin.m_liteId))
-                                                 : pluginFile.Setup(static_cast<uint8_t>(plugin.m_standardId));
-        if (!setupResult)
-            continue;
-
-        bool loadResult = pluginFile.LoadFile(pluginPath);
-
-        if (!loadResult)
-            continue;
-
-        pluginFile.IndexRecords(*recordCollection);
+        // The resolver for the current plugin saw only earlier prefixes. Add
+        // this namespace now so later plugins can refer to it. If records are
+        // absent, RecordCollection lookups still leave the target unresolved.
+        const uint32_t formIdPrefix = plugin.IsLite()
+                                          ? 0xFE000000u | (static_cast<uint32_t>(plugin.m_liteId) << 12)
+                                          : static_cast<uint32_t>(plugin.m_standardId) << 24;
+        m_masterFiles.emplace(plugin.m_filename, formIdPrefix);
     }
 
     return recordCollection;

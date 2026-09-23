@@ -708,7 +708,8 @@ TEST(ESLoader, RejectsMasterListsWithoutDistinctSelfParentSlot)
     masterNames.reserve(256);
     for (uint16_t i = 0; i < 256; ++i)
     {
-        String masterName = "Master" + std::to_string(i) + ".esm";
+        const std::string masterNameValue = "Master" + std::to_string(i) + ".esm";
+        String masterName(masterNameValue.c_str());
         masterPrefixes.emplace(masterName, static_cast<uint32_t>(i) << 24);
         masterNames.push_back(std::move(masterName));
     }
@@ -742,7 +743,7 @@ TEST(ESLoader, RejectsMasterListsWithoutDistinctSelfParentSlot)
     ASSERT_TRUE(writePlugin("TooManyMasters.esp", makePluginWithMasters(256, 0x00000001)));
 
     ESLoader::TESFile maxMastersFile(masterPrefixes);
-    ASSERT_TRUE(maxMastersFile.Setup(1));
+    ASSERT_TRUE(maxMastersFile.Setup(uint8_t{1}));
     ASSERT_TRUE(maxMastersFile.LoadFile(dataDirectory.Path() / "MaxMasters.esp"));
     ESLoader::RecordCollection maxMastersRecords;
     EXPECT_TRUE(maxMastersFile.IndexRecords(maxMastersRecords));
@@ -751,11 +752,59 @@ TEST(ESLoader, RejectsMasterListsWithoutDistinctSelfParentSlot)
     EXPECT_EQ(pBoundaryRace->m_editorId, "ParentSlotBoundaryRace");
 
     ESLoader::TESFile tooManyMastersFile(masterPrefixes);
-    ASSERT_TRUE(tooManyMastersFile.Setup(1));
+    ASSERT_TRUE(tooManyMastersFile.Setup(uint8_t{1}));
     ASSERT_TRUE(tooManyMastersFile.LoadFile(dataDirectory.Path() / "TooManyMasters.esp"));
     ESLoader::RecordCollection tooManyMastersRecords;
     EXPECT_FALSE(tooManyMastersFile.IndexRecords(tooManyMastersRecords));
     EXPECT_FALSE(tooManyMastersRecords.HasAnyRecords());
+}
+
+TEST(ESLoader, RejectsSelfAndForwardMasterReferences)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "SelfRef.esp\n"
+                  << "ForwardRef.esp\n"
+                  << "LaterMaster.esm\n";
+    }
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    Bytes selfReference = MakePluginHeaderWithMasters({"SelfRef.esp"});
+    AppendRecord(selfReference, FormEnum::ACHR, 0x01000001, MakeActorReferenceData(0x00002000));
+
+    Bytes forwardReference = MakePluginHeaderWithMasters({"LaterMaster.esm"});
+    AppendRecord(forwardReference, FormEnum::ACHR, 0x01000002, MakeActorReferenceData(0x00002000));
+
+    Bytes laterMaster = MakePluginHeaderWithMasters({});
+    AppendRecord(laterMaster, FormEnum::NPC_, 0x00002000, MakeNpcData("LaterMasterNpc", nullptr));
+
+    ASSERT_TRUE(writePlugin("SelfRef.esp", selfReference));
+    ASSERT_TRUE(writePlugin("ForwardRef.esp", forwardReference));
+    ASSERT_TRUE(writePlugin("LaterMaster.esm", laterMaster));
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+
+    // Both malformed plugins contain otherwise parseable actor references.
+    // Their records must remain absent when MAST names self or a later plugin.
+    EXPECT_EQ(records->FindActorReferenceById(0x00000001), nullptr);
+    EXPECT_EQ(records->FindActorReferenceById(0x01000002), nullptr);
+
+    const auto* const pLaterMasterNpc = records->FindNpcById(0x02002000);
+    ASSERT_NE(pLaterMasterNpc, nullptr);
+    EXPECT_EQ(pLaterMasterNpc->m_editorId, "LaterMasterNpc");
 }
 
 TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
