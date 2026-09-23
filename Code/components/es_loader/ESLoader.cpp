@@ -352,7 +352,8 @@ fs::path ESLoader::GetPath(const String& acFilename) const
     while (it != end)
     {
         String entryKey;
-        const String entryFilename = it->path().filename().string();
+        const auto entryFilenameValue = it->path().filename().string();
+        const String entryFilename(entryFilenameValue.c_str());
         if (GetPluginFilenameKey(entryFilename, entryKey) && entryKey == filenameKey)
         {
             // Distinct names that compare equal by case are ambiguous. Do not
