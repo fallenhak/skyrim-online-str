@@ -376,7 +376,7 @@ TEST(ESLoader, ParsesLoadOrderMetadataSafelyWithoutPluginFiles)
     }
 
     ESLoader::ESLoader loader(dataDirectory.Path());
-    const auto metadataOnly = loader.BuildRecordCollection(false);
+    const auto metadataOnly = loader.BuildRecordCollection();
     ASSERT_NE(metadataOnly, nullptr);
 
     const auto& plugins = loader.GetLoadOrder();
@@ -629,6 +629,7 @@ TEST(ESLoader, ResolvesReferencesToLightMasters)
     constexpr uint32_t nextLightNpcRaceRawId = 0x00000010;
     AppendRecord(nextLight, FormEnum::NPC_, 0x01000001, MakeNpcData("NextLightNpc", &nextLightNpcRaceRawId));
     AppendRecord(nextLight, FormEnum::ACHR, 0x01000031, MakeActorReferenceData(0x00001001));
+    AppendRecord(nextLight, FormEnum::ACHR, 0x01000032, MakeActorReferenceData(0x00000FFF));
     {
         std::ofstream file(dataDirectory.Path() / "NextLight.esl", std::ios::binary);
         ASSERT_TRUE(file.good());
@@ -690,6 +691,10 @@ TEST(ESLoader, ResolvesReferencesToLightMasters)
     EXPECT_EQ(pNextLightActorReference->m_baseObject.m_baseId, 0u);
     ActorPopulationPolicy policy(records.get());
     EXPECT_EQ(policy.ClassifyNpcBase(pNextLightActorReference->m_baseObject.m_baseId).Class, ActorPopulationClass::kUnknown);
+
+    const auto* const pMaxLightLocalActorReference = records->FindActorReferenceById(0xFE002032);
+    ASSERT_NE(pMaxLightLocalActorReference, nullptr);
+    EXPECT_EQ(pMaxLightLocalActorReference->m_baseObject.m_baseId, 0xFE001FFF);
     EXPECT_TRUE(records->HasAnyRecords());
 }
 
