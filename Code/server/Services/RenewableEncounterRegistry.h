@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -221,18 +222,25 @@ public:
 
     /**
      * Applies a snapshot to a registry freshly loaded from server
-     * configuration. Nothing is applied unless every encounter in the
-     * snapshot exists and the registry has no bound incarnation or claim.
+     * configuration. Nothing is applied unless the registry has no bound
+     * incarnation or claim and every entry is well formed: a known encounter,
+     * named once, with an epoch that can advance and no cooldown unless
+     * cleared (roadmap W09). Encounters the snapshot omits start fresh.
      */
     [[nodiscard]] bool Restore(const std::vector<EncounterSnapshot>& acSnapshot, const std::uint64_t aNowTick)
     {
         if (!m_encounterByIncarnation.empty() || !m_claims.empty())
             return false;
 
+        // Validate everything first so a malformed snapshot is never half applied.
+        std::set<RenewableEncounterId> seen;
         for (const auto& entry : acSnapshot)
         {
             const auto* pEncounter = Find(entry.Id);
-            if (!pEncounter || pEncounter->GetEpoch() != 0 || pEncounter->IsCleared())
+            if (!pEncounter || pEncounter->GetEpoch() != 0 || pEncounter->IsCleared() || !seen.insert(entry.Id).second)
+                return false;
+
+            if (entry.Epoch == std::numeric_limits<std::uint64_t>::max() || (!entry.Cleared && entry.CooldownRemainingTicks != 0))
                 return false;
         }
 
