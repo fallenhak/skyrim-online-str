@@ -18,7 +18,7 @@ call and what the server must log so the run can be judged from evidence, not me
 | `RemovePlayer(player)` + `ReleasePlayerClaims(player)` | session teardown | disconnect |
 | `GetSpawnRequests(id)` → `ClaimSpawn(...)` → `CompleteSpawn(ticket, incarnation)` | spawner | cell load by the owning player |
 | `ExpireSpawnClaims(nowTick, ttl)` | server tick | periodically |
-| `RecordVerifiedDeath(incarnation, tick)` | Combat C11 verified death | never from a raw client packet |
+| `RecordCanonicalCreatureDeath(registry, event, tick)` (`Services/RenewableEncounterDeathPort.h`) | dispatcher sink for Combat C11 `AcceptedCanonicalCreatureDeathEvent` | never from a raw client packet |
 | `ReleaseIncarnation(incarnation)` | despawn / unload / ownership lost | actor leaves without dying |
 | `GetIncarnationStatus(incarnation)` | every actor packet handler | drop the packet unless `Current` |
 | `TryReset(id, nowTick)` / `GetResetBlocker` | server tick | periodically |
@@ -106,8 +106,8 @@ scenario passes only if every expected log line appears and no forbidden one doe
 ## 4. Pass criteria
 
 M01-WORLD is runtime-complete when S1–S6 pass on the playable build, S7's raw death probe
-is rejected, and the server log for the run is attached to the PR. W03 must be complete
-(C11 wired) before S1 and S4 are meaningful.
+is rejected, and the server log for the run is attached to the PR. The W03 port exists; S1 and S4 need
+it subscribed to the dispatcher on the integration branch.
 
 ## 5. Out of scope
 
