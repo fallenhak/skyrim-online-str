@@ -243,12 +243,6 @@ bool ESLoader::LoadLoadOrder()
 
             plugin.m_standardId = static_cast<uint8_t>(standardId++);
             plugin.m_isLite = false;
-            if (pluginType == PluginType::kMaster)
-            {
-                // Only standard master prefixes are mapped here. Light-master
-                // prefix resolution is unsupported, so dependent records fail closed.
-                m_masterFiles.emplace(plugin.m_filename, plugin.m_standardId);
-            }
             break;
         case PluginType::kLite:
             if (liteId > kMaxLitePluginId)
@@ -267,6 +261,14 @@ bool ESLoader::LoadLoadOrder()
             break;
         case PluginType::kInvalid: break;
         }
+
+        // MAST lists may name any preceding plugin, including .esp masters and
+        // light plugins. Store the complete server prefix so each parent slot
+        // resolves to the target plugin's load-order namespace.
+        const uint32_t formIdPrefix = plugin.IsLite()
+                                          ? 0xFE000000u | (static_cast<uint32_t>(plugin.m_liteId) << 12)
+                                          : static_cast<uint32_t>(plugin.m_standardId) << 24;
+        m_masterFiles.emplace(plugin.m_filename, formIdPrefix);
 
         m_loadOrder.push_back(plugin);
     }

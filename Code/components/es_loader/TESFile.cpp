@@ -8,7 +8,7 @@
 
 namespace ESLoader
 {
-TESFile::TESFile(Map<String, uint8_t>& aMasterFiles)
+TESFile::TESFile(Map<String, uint32_t>& aMasterFiles)
     : m_masterFiles(aMasterFiles)
 {
 }
@@ -156,8 +156,8 @@ bool TESFile::InitializeFormIdPrefixes() noexcept
     uint8_t parentId = 0;
     for (const Chunks::MAST& master : fileHeader.m_masterFiles)
     {
-        // A missing light-master mapping must fail closed; operator[] would
-        // silently turn it into standard prefix zero.
+        // An unresolved master must fail closed; operator[] would silently
+        // turn it into standard prefix zero.
         const auto masterId = m_masterFiles.find(master.m_masterName);
         if (masterId == std::end(m_masterFiles))
         {
@@ -166,7 +166,7 @@ bool TESFile::InitializeFormIdPrefixes() noexcept
             return false;
         }
 
-        m_parentToFormIdPrefix[parentId++] = static_cast<uint32_t>(masterId->second) << 24;
+        m_parentToFormIdPrefix[parentId++] = masterId->second;
     }
 
     m_parentToFormIdPrefix[parentId] = m_formIdPrefix;

@@ -44,6 +44,7 @@ private:
 
     fs::path m_directory = "";
     Vector<PluginData> m_loadOrder{};
-    TiltedPhoques::Map<String, uint8_t> m_masterFiles{};
+    // Server form prefixes keyed by the filenames records use in MAST.
+    TiltedPhoques::Map<String, uint32_t> m_masterFiles{};
 };
 } // namespace ESLoader
