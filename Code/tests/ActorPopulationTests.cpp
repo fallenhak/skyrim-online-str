@@ -19,10 +19,14 @@
 #include <fstream>
 #include <initializer_list>
 #include <limits>
+#include <memory>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#include <spdlog/sinks/ostream_sink.h>
 
 namespace
 {
@@ -56,6 +60,38 @@ public:
 private:
     std::filesystem::path m_path;
     std::error_code m_error;
+};
+
+class ScopedDefaultLoggerCapture
+{
+public:
+    ScopedDefaultLoggerCapture()
+        : m_previousLogger(spdlog::default_logger())
+        , m_sink(std::make_shared<spdlog::sinks::ostream_sink_mt>(m_output))
+        , m_logger(std::make_shared<spdlog::logger>("actor-population-test-capture", m_sink))
+    {
+        m_logger->set_level(spdlog::level::trace);
+        spdlog::set_default_logger(m_logger);
+    }
+
+    ~ScopedDefaultLoggerCapture()
+    {
+        const std::string loggerName = m_logger->name();
+        spdlog::set_default_logger(std::move(m_previousLogger));
+        spdlog::drop(loggerName);
+    }
+
+    [[nodiscard]] std::string Text()
+    {
+        m_logger->flush();
+        return m_output.str();
+    }
+
+private:
+    std::shared_ptr<spdlog::logger> m_previousLogger;
+    std::ostringstream m_output;
+    std::shared_ptr<spdlog::sinks::ostream_sink_mt> m_sink;
+    std::shared_ptr<spdlog::logger> m_logger;
 };
 
 constexpr uint32_t kMasterPrefix = 0x02000000;
@@ -375,6 +411,7 @@ TEST(ESLoader, ParsesLoadOrderMetadataSafelyWithoutPluginFiles)
                   << "Not a plugin.txt\r\n";
     }
 
+    ScopedDefaultLoggerCapture capturedLogs;
     ESLoader::ESLoader loader(dataDirectory.Path());
     const auto metadataOnly = loader.BuildRecordCollection();
     ASSERT_NE(metadataOnly, nullptr);
@@ -390,12 +427,28 @@ TEST(ESLoader, ParsesLoadOrderMetadataSafelyWithoutPluginFiles)
     EXPECT_EQ(plugins[2].m_filename, "Light.ESL");
     EXPECT_TRUE(plugins[2].IsLite());
     EXPECT_EQ(plugins[2].m_liteId, 0U);
+    EXPECT_NE(capturedLogs.Text().find("could not resolve 3 plugin file(s)"), std::string::npos);
+    EXPECT_NE(capturedLogs.Text().find("TES4 flags and records are unavailable"), std::string::npos);
 
     // Metadata remains available even when record loading is explicitly enabled
     // and every listed plugin file is absent.
     const auto records = loader.BuildRecordCollection(true);
     ASSERT_NE(records, nullptr);
     EXPECT_FALSE(records->HasAnyRecords());
+}
+
+TEST(ESLoader, MissingDataDirectoryReportsUnavailableLoadOrderMetadata)
+{
+    TemporaryDirectory temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.IsCreated()) << temporaryDirectory.Error().message();
+
+    ScopedDefaultLoggerCapture capturedLogs;
+    ESLoader::ESLoader loader(temporaryDirectory.Path() / "Data");
+
+    EXPECT_EQ(loader.BuildRecordCollection(), nullptr);
+    EXPECT_TRUE(loader.GetLoadOrder().empty());
+    EXPECT_NE(capturedLogs.Text().find("load-order metadata unavailable"), std::string::npos);
+    EXPECT_NE(capturedLogs.Text().find("Data directory"), std::string::npos);
 }
 
 TEST(ESLoader, ResolvesPluginAndMasterNamesAcrossCaseAndLineEndingDifferences)
@@ -1213,8 +1266,10 @@ TEST(ESLoader, MissingLoadOrderClearsPreviouslyLoadedMetadata)
     std::error_code error;
     ASSERT_TRUE(std::filesystem::remove(dataDirectory.Path() / "loadorder.txt", error));
     ASSERT_FALSE(error);
+    ScopedDefaultLoggerCapture capturedLogs;
     EXPECT_EQ(loader.BuildRecordCollection(false), nullptr);
     EXPECT_TRUE(loader.GetLoadOrder().empty());
+    EXPECT_NE(capturedLogs.Text().find("loadorder.txt is missing"), std::string::npos);
 }
 
 void AddServerPlugin(ModsComponent& aMods, const char* apFilename, const uint16_t aLoadOrderId, const bool aIsLite)

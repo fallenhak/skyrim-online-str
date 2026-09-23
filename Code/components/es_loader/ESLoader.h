@@ -39,7 +39,7 @@ public:
     const PluginCollection& GetLoadOrder() const noexcept { return m_loadOrder; }
 
 private:
-    bool LoadLoadOrder();
+    bool LoadLoadOrder(bool aReportUnresolvedPluginFiles);
     UniquePtr<RecordCollection> LoadFiles();
 
     fs::path GetPath(const String& acFilename) const;

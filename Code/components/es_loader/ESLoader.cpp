@@ -146,12 +146,21 @@ UniquePtr<RecordCollection> ESLoader::BuildRecordCollection(bool aLoadRecords) n
     {
         m_loadOrder.clear();
         m_masterFiles.clear();
+        if (directoryError)
+        {
+            spdlog::warn("ESLoader load-order metadata unavailable: Data directory '{}' is inaccessible: {}", m_directory.string(), directoryError.message());
+        }
+        else
+        {
+            spdlog::warn(
+                "ESLoader load-order metadata unavailable: Data directory '{}' does not exist or is not a directory", m_directory.string());
+        }
         if (aLoadRecords)
-            spdlog::warn("Actor population record loading unavailable: ESLoader Data directory not found at '{}'", m_directory.string());
+            spdlog::warn("Actor population record loading unavailable because ESLoader cannot read Data directory '{}'", m_directory.string());
         return nullptr;
     }
 
-    if (!LoadLoadOrder())
+    if (!LoadLoadOrder(!aLoadRecords))
     {
         if (aLoadRecords)
             spdlog::warn("Actor population record loading unavailable: ESLoader could not establish valid load-order metadata from '{}'", m_directory.string());
@@ -173,7 +182,7 @@ UniquePtr<RecordCollection> ESLoader::BuildRecordCollection(bool aLoadRecords) n
     return recordCollection;
 }
 
-bool ESLoader::LoadLoadOrder()
+bool ESLoader::LoadLoadOrder(const bool aReportUnresolvedPluginFiles)
 {
     m_loadOrder.clear();
     m_masterFiles.clear();
@@ -182,12 +191,20 @@ bool ESLoader::LoadLoadOrder()
     std::ifstream loadOrderFile(loadOrderPath);
     if (!loadOrderFile)
     {
-        spdlog::warn("Failed to open loadorder.txt at '{}'", loadOrderPath.string());
+        std::error_code existsError;
+        const bool loadOrderExists = fs::exists(loadOrderPath, existsError);
+        if (!existsError && !loadOrderExists)
+            spdlog::warn("ESLoader load-order metadata unavailable: loadorder.txt is missing at '{}'", loadOrderPath.string());
+        else
+            spdlog::warn("ESLoader could not open loadorder.txt at '{}'", loadOrderPath.string());
         return false;
     }
 
     uint32_t standardId = 0;
     uint32_t liteId = 0;
+    size_t unresolvedPluginFileCount = 0;
+    String unresolvedPluginFileExamples;
+    constexpr size_t kMaximumUnresolvedPluginExamples = 5;
     std::set<String> seenFilenames;
     bool firstLine = true;
     String line;
@@ -228,6 +245,17 @@ bool ESLoader::LoadLoadOrder()
         {
             spdlog::warn("Ignoring duplicate plugin entry in loadorder.txt: {}", line);
             continue;
+        }
+
+        if (pluginPath.empty())
+        {
+            ++unresolvedPluginFileCount;
+            if (unresolvedPluginFileCount <= kMaximumUnresolvedPluginExamples)
+            {
+                if (!unresolvedPluginFileExamples.empty())
+                    unresolvedPluginFileExamples += ", ";
+                unresolvedPluginFileExamples += line;
+            }
         }
 
         PluginData plugin{};
@@ -278,6 +306,18 @@ bool ESLoader::LoadLoadOrder()
         m_loadOrder.clear();
         m_masterFiles.clear();
         return false;
+    }
+
+    if (m_loadOrder.empty())
+        spdlog::warn("ESLoader loadorder.txt at '{}' contains no usable plugin entries; load-order metadata is empty", loadOrderPath.string());
+
+    if (aReportUnresolvedPluginFiles && unresolvedPluginFileCount != 0)
+    {
+        spdlog::warn(
+            "ESLoader could not resolve {} plugin file(s) listed in loadorder.txt under Data directory '{}'; filename-based namespace metadata is retained, but TES4 flags and records are unavailable (examples: {})",
+            unresolvedPluginFileCount,
+            m_directory.string(),
+            unresolvedPluginFileExamples);
     }
 
     return true;
