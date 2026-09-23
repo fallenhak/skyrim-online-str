@@ -22,12 +22,27 @@ TEST_CASE("Inventory interaction permits only in-range non-persistent NPC except
 
 TEST_CASE("Inventory interaction does not treat arbitrary ownerless entities as objects", "[actor_authority]")
 {
-    REQUIRE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, false, false, false, false));
+    REQUIRE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, false, false, false, true));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, false, false, false, false));
     REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, false, true, true, false, false, false, false));
     REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, false, false, false, false, false, false));
     REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, true, false, false, false));
     REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, false, true, false, false));
     REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, false, false, true, false));
+}
+
+TEST_CASE("Equipment changes require a sender-owned character at its current epoch", "[actor_authority]")
+{
+    REQUIRE(InventoryInteractionPolicy::CanChangeEquipment(true, true, true, 7, 7));
+    REQUIRE_FALSE(InventoryInteractionPolicy::CanChangeEquipment(true, true, true, 0, 7));
+    REQUIRE_FALSE(InventoryInteractionPolicy::CanChangeEquipment(true, true, true, 6, 7));
+    REQUIRE_FALSE(InventoryInteractionPolicy::CanChangeEquipment(true, true, false, 7, 7));
+
+    // AssignObjects creates ownerless, non-character inventories. An epoch-zero
+    // equipment request for one must be rejected before mutation or relay.
+    REQUIRE_FALSE(InventoryInteractionPolicy::CanChangeEquipment(false, false, false, 0, 0));
+    REQUIRE_FALSE(InventoryInteractionPolicy::CanChangeEquipment(false, true, true, 7, 7));
+    REQUIRE_FALSE(InventoryInteractionPolicy::CanChangeEquipment(true, false, false, 0, 0));
 }
 
 TEST_CASE("A client-discovered provisional object rejects its later inventory delta", "[actor_authority]")
@@ -45,10 +60,35 @@ TEST_CASE("A client-discovered provisional object rejects its later inventory de
     REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(
         false, false, true, true, objectHasTrustedState, false, false, false, false));
 
-    // The gate leaves any future server-baselined object eligible for the
-    // existing shared-object path.
+    // A future server-baselined object remains eligible only in the sender's
+    // stored location range.
     REQUIRE(InventoryInteractionPolicy::IsAuthorized(
+        false, false, true, true, true, false, false, false, true));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(
         false, false, true, true, true, false, false, false, false));
+}
+
+TEST_CASE("Trusted ownerless object inventory requests require stored-location proximity", "[actor_authority]")
+{
+    const GameId senderCell{0, 1};
+    const GameId objectCell{0, 2};
+    const GameId worldSpace{0, 0x3C};
+    const GridCellCoords senderCoords{10, -10};
+    const GridCellCoords nearbyObjectCoords{12, -8};
+    const GridCellCoords remoteObjectCoords{13, -10};
+
+    const bool nearby = ObjectInteractionPolicy::CanInteract(
+        objectCell, senderCell, worldSpace, senderCoords,
+        objectCell, worldSpace, nearbyObjectCoords);
+    const bool remote = ObjectInteractionPolicy::CanInteract(
+        objectCell, senderCell, worldSpace, senderCoords,
+        objectCell, worldSpace, remoteObjectCoords);
+
+    REQUIRE(nearby);
+    REQUIRE_FALSE(remote);
+    REQUIRE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, false, false, false, nearby));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, false, false, false, remote));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, false, false, false, false, nearby));
 }
 
 TEST_CASE("Inventory interaction rejects malformed item payloads", "[actor_authority]")

@@ -53,10 +53,10 @@ boundary. A client-side send restriction is not treated as authority.
 | `InterruptCastRequest` / `MagicService` | Remote cast interruption | caster ID | current caster owner | caster epoch required | generated InWorld gate; casting source is bounded | A/D | Bind to caster authority/incarnation | A08 |
 | `AddTargetRequest` / `MagicService` | Applies remote magic effect presentation | target + optional caster IDs | target owner or explicit caster owner | current target epoch and optional caster epoch | generated InWorld gate; target/caster must resolve to owned character entities; finite magnitude; fan-out around target but no sender/spell range check | C/E | Preserve target-owner incoming/environmental reports and caster-owner reports; validate both endpoint incarnations | A07/A08 |
 | `RemoveSpellRequest` / `MagicService` | Removes spell on remote actor | target ID | current target owner | target epoch required | generated InWorld gate; notification carries epoch and receivers require matching remote incarnation | A/D | Bind removal to the actor's current owner/incarnation | A08 |
-| `RequestInventoryChanges` / `InventoryService` | Actor/object inventory contents | server entity ID | owner for actor; non-owner NPC interaction allowed | epoch checked | non-owner NPC requires in-range, non-player, non-persistent character; malformed item payloads are rejected; ownerless path requires an object entity with trusted state | A/C/E | Preserve loot/pickpocket semantics; establish a server-authoritative object baseline before enabling object deltas | A02/A03/A09 |
-| `RequestEquipmentChanges` / `InventoryService` | Actor equipment | server entity ID | owner for owned entity; object/no-owner edge exists | epoch checked when owner exists | generated InWorld gate; no range | A/E | Ensure non-character inventory entities cannot enter equipment path | No |
-| `ActivateRequest` / `ObjectService` | Activation relay | object ID, cell, activator ID | activator must be sender-owned; shared object use remains allowed | request has no epoch | object must be known; supplied cell must match stored cell; sender and activator must be in stored range; open state is bounded | C/D | Keep shared object semantics; add an epoch only with a protocol change | A09 |
-| `LockChangeRequest` / `ObjectService` | Lock state and peer relay for trusted references | object form ID + cell | no object owner check; shared lock use remains allowed | none | object must be known; supplied cell must match stored cell; sender must be in stored range; provisional references are rejected before mutation or relay | C/D | Establish a reviewed lock-outcome authority before applying client-reported results | A09 (provisional results are rejected) |
+| `RequestInventoryChanges` / `InventoryService` | Actor/object inventory contents | server entity ID | owner for actor; non-owner NPC interaction allowed | epoch checked | non-owner NPC requires in-range, non-player, non-persistent character; malformed item payloads are rejected; ownerless path requires a trusted object and sender proximity to its stored location | A/C/E | Preserve loot/pickpocket semantics; establish a server-authoritative object baseline before enabling object deltas | A02/A03/A09 |
+| `RequestEquipmentChanges` / `InventoryService` | Actor equipment | server entity ID | sender must own a character | current nonzero epoch required | generated InWorld gate; target must have CharacterComponent and OwnerComponent; no range | A | Preserve owner-driven character equipment; reject object and other non-character inventories | A09 |
+| `ActivateRequest` / `ObjectService` | Activation relay | object ID, cell, activator ID | activator must be sender-owned; shared object use is gated by object trust | request has no epoch | object must be known and trusted; supplied cell must match stored cell; sender and activator must be in stored range; open state is bounded | C/D | Keep provisional references closed until an authoritative static-reference source is reviewed; add an epoch only with a protocol change | A09 |
+| `LockChangeRequest` / `ObjectService` | Lock state and peer relay for trusted references | object form ID + cell | no object owner check; shared use needs an authoritative outcome | none | object must be known; supplied cell must match stored cell; sender must be in stored range; provisional references and unvalidated client outcomes are rejected before mutation or relay | C/D | Establish a reviewed lock-outcome authority before applying client-reported results | A09 (all current client reports are rejected) |
 | `ScriptAnimationRequest` / `ObjectService` | Animation presentation | raw form ID | no check | none | broadcasts to all clients | D/E | Restrict to validated local actor/object source | No |
 | `DialogueRequest` / `CharacterService` | Voice presentation | server actor ID | no; non-owner interaction can be legitimate | none | origin must exist for range fan-out, sender range not checked | C/D | Treat as interaction/presentation, add range/target validation later | No |
 | `SubtitleRequest` / `CharacterService` | Subtitle presentation | server actor ID | no; non-owner interaction can be legitimate | none | origin must exist for range fan-out | C/D | Same as dialogue; not canonical actor mutation | No |
@@ -75,9 +75,9 @@ server ignores client-supplied server IDs and does not seed canonical inventory
 or lock state from the request. Responses mark that state untrusted, and clients
 keep their own local container state instead of applying the unverified server
 snapshot. Inventory deltas for provisional ownerless objects are rejected;
-the existing shared-object path is available only when a trusted baseline
-exists. No current lane source establishes that baseline, so discovered object
-inventory is not synchronized as server state.
+the shared-object path requires both a trusted baseline and sender proximity to
+the object's stored location. No current lane source establishes that
+baseline, so discovered object inventory is not synchronized as server state.
 
 There is no usable authoritative reference-location source in this lane. The
 server `World` loads full plugin records only behind the disabled-by-default
@@ -98,16 +98,21 @@ nearby non-owner report is not a legitimate new interaction. The server now
 requires a live sender-owned character entity and checks that both the sender
 and activator are in the object's tracked grid range. The request has no
 ownership epoch, so it cannot distinguish a delayed packet from the same
-sender after an ownership release and reacquisition. Ordinary nearby shared
-object use remains allowed.
+sender after an ownership release and reacquisition. `AssignObjects` creates
+discovered references as provisional, and no current source establishes trusted
+object state. As a result, activation relay for client-discovered objects is
+currently suppressed, including ordinary nearby shared use. Keep this path
+closed until the static-reference authority source receives separate review.
 
 Lock changes remain client-observed: the producer reports the result after the
 game's lock-change hook, but the server has no lock-picking simulation to prove
 that result. The server validates object existence, stored cell, and sender
 range, then rejects provisional object results before changing stored lock data
-or notifying peers. There is no current source that marks discovered objects as
-trusted, so their lock results cannot unlock observers' doors. A reviewed
-lock-outcome authority remains unresolved even if a trusted baseline is added.
+or notifying peers. The handler also rejects every report without an
+independently validated outcome, even if a trusted baseline were added. There
+is no current source that marks discovered objects as trusted, so lock relay
+for client-discovered objects is currently suppressed. Keep this path closed
+until both object-state and lock-outcome sources receive separate review.
 
 ## AddTarget semantics and authorization
 
@@ -173,8 +178,9 @@ build when using these messages.
 5. Inventory intentionally allows in-range non-owner NPC interaction. This is
    not equivalent to authority over a persistent player actor. `InventoryService`
    now uses a separate policy that rejects persistent players from the NPC
-   exception and rejects ownerless non-object entities; object interaction
-   range/proof remains a separate follow-up. Empty/zero-count, minimum signed
+   exception, rejects ownerless non-object entities, and requires range for
+   trusted ownerless objects. No current source establishes a trusted object
+   baseline. Empty/zero-count, minimum signed
    count, non-finite item payloads, missing-item removals, over-removals, and
    stack-overflowing counts are rejected before mutation, while `Drop` and
    `UpdateClients` remain post-authorization notification controls. A blanket

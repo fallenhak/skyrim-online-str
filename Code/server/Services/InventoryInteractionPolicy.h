@@ -62,12 +62,11 @@ struct InventoryInteractionPolicy final
         if (!aOwnershipEpochMatches)
             return false;
 
-        // Object inventories are deliberately ownerless, but only entities
-        // created through ObjectService with a trusted server baseline may use
-        // this branch. A provisional discovered reference is not an inventory
-        // mutation target, and an arbitrary InventoryComponent is not either.
+        // Object inventories are deliberately ownerless, but this branch needs
+        // a trusted server baseline and sender proximity to the stored location.
+        // Provisional references and arbitrary InventoryComponents are rejected.
         if (!aHasOwner)
-            return aIsObject && aHasTrustedObjectState && !aIsCharacter && !aIsPlayer && !aHasPersistentCharacter;
+            return aIsObject && aHasTrustedObjectState && !aIsCharacter && !aIsPlayer && !aHasPersistentCharacter && aIsInRange;
 
         if (aIsCurrentOwner)
             return true;
@@ -76,6 +75,16 @@ struct InventoryInteractionPolicy final
         // players are never eligible for this NPC interaction exception, even
         // if a malformed component set reports IsPlayer() as false.
         return aIsCharacter && !aIsPlayer && !aHasPersistentCharacter && aIsInRange;
+    }
+
+    [[nodiscard]] static constexpr bool CanChangeEquipment(
+        const bool aIsCharacter,
+        const bool aHasOwner,
+        const bool aIsOwnedBySender,
+        const uint32_t aRequestedEpoch,
+        const uint32_t aCurrentEpoch) noexcept
+    {
+        return aIsCharacter && aHasOwner && aIsOwnedBySender && aRequestedEpoch != 0 && aRequestedEpoch == aCurrentEpoch;
     }
 
     [[nodiscard]] static constexpr bool ShouldNotifyClients(const bool aUpdateClients, const bool aIsRemoteNpcInteraction) noexcept

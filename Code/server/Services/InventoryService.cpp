@@ -4,6 +4,7 @@
 #include <World.h>
 #include <GameServer.h>
 #include <Services/InventoryInteractionPolicy.h>
+#include <Services/ObjectInteractionPolicy.h>
 
 #include <Messages/NotifyObjectInventoryChanges.h>
 #include <Messages/RequestInventoryChanges.h>
@@ -55,7 +56,12 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     const bool ownershipEpochMatches = pOwnerComponent
         ? message.OwnershipEpoch != 0 && pOwnerComponent->OwnershipEpoch == message.OwnershipEpoch
         : message.OwnershipEpoch == 0;
-    const bool isInRange = hasOwner && pCharacterComponent && pCellComponent && acMessage.pPlayer->GetCellComponent().IsInRange(*pCellComponent, pCharacterComponent->IsDragon());
+    const auto& senderCell = acMessage.pPlayer->GetCellComponent();
+    const bool isInRange = hasOwner && pCharacterComponent && pCellComponent && senderCell.IsInRange(*pCellComponent, pCharacterComponent->IsDragon());
+    const bool isObjectInRange = isObject && pCellComponent && ObjectInteractionPolicy::CanInteract(
+        pCellComponent->Cell, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+        pCellComponent->Cell, pCellComponent->WorldSpaceId, pCellComponent->CenterCoords);
+    const bool isInAuthorizedRange = isInRange || isObjectInRange;
 
     if (!InventoryInteractionPolicy::IsAuthorized(
             hasOwner,
@@ -66,13 +72,13 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
             pCharacterComponent != nullptr,
             pCharacterComponent && pCharacterComponent->IsPlayer(),
             pPersistentCharacterComponent != nullptr,
-            isInRange))
+            isInAuthorizedRange))
     {
         const uint32_t ownerId = pOwnerComponent && pOwnerComponent->GetOwner() ? pOwnerComponent->GetOwner()->GetId() : 0;
         spdlog::debug(
             "Rejected inventory change from player {:X} for entity {:X}; owner {:X}, epoch {} (current {}), object {} (trusted {}), character {}, persistent {}, in range {}",
             acMessage.pPlayer->GetId(), message.ServerId, ownerId, message.OwnershipEpoch, pOwnerComponent ? pOwnerComponent->OwnershipEpoch : 0,
-            isObject, hasTrustedObjectState, pCharacterComponent != nullptr, pPersistentCharacterComponent != nullptr, isInRange);
+            isObject, hasTrustedObjectState, pCharacterComponent != nullptr, pPersistentCharacterComponent != nullptr, isInAuthorizedRange);
         return;
     }
 
@@ -114,22 +120,19 @@ void InventoryService::OnEquipmentChanges(const PacketEvent<RequestEquipmentChan
         return;
 
     const auto* pOwnerComponent = m_world.try_get<OwnerComponent>(*it);
-    if (pOwnerComponent)
+    const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(*it);
+    const bool hasOwner = pOwnerComponent && pOwnerComponent->GetOwner();
+    const bool isOwnedBySender = hasOwner && pOwnerComponent->GetOwner() == acMessage.pPlayer;
+    const uint32_t currentEpoch = pOwnerComponent ? pOwnerComponent->OwnershipEpoch : 0;
+    if (!InventoryInteractionPolicy::CanChangeEquipment(
+            pCharacterComponent != nullptr, hasOwner, isOwnedBySender,
+            message.OwnershipEpoch, currentEpoch))
     {
-        if (pOwnerComponent->GetOwner() != acMessage.pPlayer || pOwnerComponent->OwnershipEpoch != message.OwnershipEpoch)
-        {
-            const uint32_t ownerId = pOwnerComponent->GetOwner() ? pOwnerComponent->GetOwner()->GetId() : 0;
-            spdlog::debug(
-                "Rejected equipment change from player {:X} for actor {:X}; current owner is {:X} and requested epoch {} does not match {}",
-                acMessage.pPlayer->GetId(), message.ServerId, ownerId, message.OwnershipEpoch, pOwnerComponent->OwnershipEpoch);
-            return;
-        }
-    }
-    else if (message.OwnershipEpoch != 0)
-    {
-        spdlog::warn(
-            "Rejected equipment change from player {:X} because object {:X} unexpectedly carried ownership epoch {}",
-            acMessage.pPlayer->GetId(), message.ServerId, message.OwnershipEpoch);
+        const uint32_t ownerId = hasOwner ? pOwnerComponent->GetOwner()->GetId() : 0;
+        spdlog::debug(
+            "Rejected equipment change from player {:X} for entity {:X}; character {}, owner {:X}, requested epoch {} (current {})",
+            acMessage.pPlayer->GetId(), message.ServerId, pCharacterComponent != nullptr,
+            ownerId, message.OwnershipEpoch, currentEpoch);
         return;
     }
 
