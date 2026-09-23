@@ -23,6 +23,7 @@ struct PluginData
 using PluginCollection = Vector<PluginData>;
 
 String ReadZString(Buffer::Reader& aReader) noexcept;
+bool ReadZString(Buffer::Reader& aReader, size_t aChunkSize, String& aOutput);
 String ReadWString(Buffer::Reader& aReader) noexcept;
 
 class ESLoader

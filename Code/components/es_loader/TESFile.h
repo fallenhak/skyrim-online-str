@@ -39,7 +39,7 @@ public:
 
 private:
     bool InitializeFormIdPrefixes() noexcept;
-    bool ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aRecordCollection) noexcept;
+    bool ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aRecordCollection, size_t aParentEnd, size_t aGroupDepth) noexcept;
 
     template <class T> T CopyAndParseRecord(Record* pRecordHeader, uint32_t aResolvedFormIdPrefix);
 

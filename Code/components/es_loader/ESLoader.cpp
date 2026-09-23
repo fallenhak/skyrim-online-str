@@ -3,6 +3,7 @@
 #include "ESLoader.h"
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -109,9 +110,31 @@ PluginType GetAuthoritativePluginType(const String& acFilename, const fs::path& 
 
 String ReadZString(Buffer::Reader& aReader) noexcept
 {
-    String zstring = String(reinterpret_cast<const char*>(aReader.GetDataAtPosition()));
-    aReader.Advance(zstring.size() + 1);
+    String zstring;
+    while (!aReader.Eof())
+    {
+        const char character = *reinterpret_cast<const char*>(aReader.GetDataAtPosition());
+        aReader.Advance(1);
+        if (character == '\0')
+            break;
+        zstring.push_back(character);
+    }
     return zstring;
+}
+
+bool ReadZString(Buffer::Reader& aReader, const size_t aChunkSize, String& aOutput)
+{
+    constexpr size_t kMaximumPluginStringSize = 4096;
+    if (aChunkSize == 0 || aChunkSize > kMaximumPluginStringSize)
+        return false;
+
+    const auto* const pString = reinterpret_cast<const char*>(aReader.GetDataAtPosition());
+    const auto* const pTerminator = static_cast<const char*>(std::memchr(pString, '\0', aChunkSize));
+    if (pTerminator == nullptr)
+        return false;
+
+    aOutput.assign(pString, static_cast<size_t>(pTerminator - pString));
+    return true;
 }
 
 String ReadWString(Buffer::Reader& aReader) noexcept

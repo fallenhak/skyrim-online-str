@@ -539,6 +539,130 @@ TEST(ESLoader, TESFileSetupRejectsOutOfRangeFormIdPrefixes)
     EXPECT_TRUE(liteFile.IndexRecords(records));
 }
 
+TEST(ESLoader, SkipsMalformedNpcRaceAndActorReferenceChunks)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    Bytes pluginData = MakePluginHeader(0);
+
+    Bytes shortRaceId;
+    AppendValue(shortRaceId, uint16_t{0x1000});
+    Bytes malformedNpc;
+    AppendChunk(malformedNpc, ChunkId::RNAM_ID, shortRaceId);
+    AppendRecord(pluginData, FormEnum::NPC_, 0x00000100, malformedNpc);
+
+    Bytes unterminatedEditorId{'B', 'a', 'd'};
+    Bytes malformedRace;
+    AppendChunk(malformedRace, ChunkId::EDID_ID, unterminatedEditorId);
+    AppendRecord(pluginData, FormEnum::RACE, 0x00000200, malformedRace);
+
+    Bytes shortBaseId;
+    AppendValue(shortBaseId, uint16_t{0x0300});
+    Bytes malformedActorReference;
+    AppendChunk(malformedActorReference, ChunkId::NAME_ID, shortBaseId);
+    AppendRecord(pluginData, FormEnum::ACHR, 0x00000300, malformedActorReference);
+
+    Bytes truncatedChunkPayload;
+    AppendValue(truncatedChunkPayload, static_cast<uint32_t>(ChunkId::RNAM_ID));
+    AppendValue(truncatedChunkPayload, uint16_t{4});
+    truncatedChunkPayload.push_back(0x01);
+    AppendRecord(pluginData, FormEnum::NPC_, 0x00000101, truncatedChunkPayload);
+
+    Bytes partialChunkHeader;
+    AppendValue(partialChunkHeader, static_cast<uint32_t>(ChunkId::RNAM_ID));
+    AppendRecord(pluginData, FormEnum::NPC_, 0x00000104, partialChunkHeader);
+
+    // A compressed record must not allocate based on a hostile uncompressed-size prefix.
+    Bytes oversizedCompressedRecord;
+    AppendValue(oversizedCompressedRecord, std::numeric_limits<uint32_t>::max());
+    oversizedCompressedRecord.push_back(0x78);
+    AppendRecord(pluginData, FormEnum::NPC_, 0x00000102, oversizedCompressedRecord, Record::FLAGS::kCompressed);
+
+    AppendRecord(pluginData, FormEnum::NPC_, 0x00000103, MakeNpcData("SafeNpc", nullptr));
+    AppendRecord(pluginData, FormEnum::RACE, 0x00000203, MakeRaceData("SafeRace"));
+    AppendRecord(pluginData, FormEnum::ACHR, 0x00000303, MakeActorReferenceData(0x00000103));
+
+    const auto pluginPath = dataDirectory.Path() / "Malformed.esp";
+    {
+        std::ofstream plugin(pluginPath, std::ios::binary);
+        ASSERT_TRUE(plugin.good());
+        plugin.write(reinterpret_cast<const char*>(pluginData.data()), static_cast<std::streamsize>(pluginData.size()));
+        ASSERT_TRUE(plugin.good());
+    }
+
+    TiltedPhoques::Map<TiltedPhoques::String, uint32_t> masterFiles;
+    ESLoader::TESFile tesFile(masterFiles);
+    ASSERT_TRUE(tesFile.Setup(uint8_t{0}));
+    ASSERT_TRUE(tesFile.LoadFile(pluginPath));
+
+    ESLoader::RecordCollection records;
+    EXPECT_TRUE(tesFile.IndexRecords(records));
+    EXPECT_EQ(records.FindNpcById(0x00000100), nullptr);
+    EXPECT_EQ(records.FindNpcById(0x00000101), nullptr);
+    EXPECT_EQ(records.FindNpcById(0x00000102), nullptr);
+    EXPECT_EQ(records.FindNpcById(0x00000104), nullptr);
+    EXPECT_EQ(records.FindRaceById(0x00000200), nullptr);
+    EXPECT_EQ(records.FindActorReferenceById(0x00000300), nullptr);
+    ASSERT_NE(records.FindNpcById(0x00000103), nullptr);
+    ASSERT_NE(records.FindRaceById(0x00000203), nullptr);
+    ASSERT_NE(records.FindActorReferenceById(0x00000303), nullptr);
+
+    ActorPopulationPolicy policy(&records);
+    EXPECT_EQ(policy.ClassifyNpcBase(0x00000100).Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(policy.ClassifyNpcBase(0x00000103).Class, ActorPopulationClass::kUnknown);
+}
+
+TEST(ESLoader, RejectsRecordHeadersAndPayloadsThatEscapePluginBounds)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    Bytes oversizedRecord = MakePluginHeader(0);
+    AppendRecord(oversizedRecord, FormEnum::NPC_, 0x00000100, MakeNpcData("TruncatedNpc", nullptr));
+    const uint32_t impossibleDataSize = 0x1000;
+    std::memcpy(oversizedRecord.data() + sizeof(Record) + sizeof(uint32_t), &impossibleDataSize, sizeof(impossibleDataSize));
+
+    Bytes truncatedRecordHeader = MakePluginHeader(0);
+    truncatedRecordHeader.insert(truncatedRecordHeader.end(), {0x4E, 0x50, 0x43});
+
+    Bytes deeplyNestedGroups;
+    for (size_t depth = 0; depth < 70; ++depth)
+    {
+        Bytes outerGroup;
+        AppendValue(outerGroup, static_cast<uint32_t>(FormEnum::GRUP));
+        AppendValue(outerGroup, static_cast<uint32_t>(deeplyNestedGroups.size() + sizeof(Group)));
+        for (size_t field = 0; field < 4; ++field)
+            AppendValue(outerGroup, uint32_t{});
+        outerGroup.insert(outerGroup.end(), deeplyNestedGroups.begin(), deeplyNestedGroups.end());
+        deeplyNestedGroups = std::move(outerGroup);
+    }
+    Bytes excessiveGroupDepth = MakePluginHeader(0);
+    excessiveGroupDepth.insert(excessiveGroupDepth.end(), deeplyNestedGroups.begin(), deeplyNestedGroups.end());
+
+    const auto assertRejected = [&](const char* apFilename, const Bytes& aData) {
+        const auto pluginPath = dataDirectory.Path() / apFilename;
+        {
+            std::ofstream plugin(pluginPath, std::ios::binary);
+            ASSERT_TRUE(plugin.good());
+            plugin.write(reinterpret_cast<const char*>(aData.data()), static_cast<std::streamsize>(aData.size()));
+            ASSERT_TRUE(plugin.good());
+        }
+
+        TiltedPhoques::Map<TiltedPhoques::String, uint32_t> masterFiles;
+        ESLoader::TESFile tesFile(masterFiles);
+        ASSERT_TRUE(tesFile.Setup(uint8_t{0}));
+        ASSERT_TRUE(tesFile.LoadFile(pluginPath));
+        ESLoader::RecordCollection records;
+        EXPECT_FALSE(tesFile.IndexRecords(records));
+        EXPECT_FALSE(records.HasAnyRecords());
+    };
+
+    assertRejected("OversizedRecord.esp", oversizedRecord);
+    assertRejected("TruncatedRecordHeader.esp", truncatedRecordHeader);
+    assertRejected("ExcessiveGroupDepth.esp", excessiveGroupDepth);
+}
+
 TEST(ESLoader, SkipsPluginsWithMalformedTES4Headers)
 {
     TemporaryDirectory dataDirectory;

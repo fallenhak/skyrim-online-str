@@ -9,6 +9,11 @@
 
 namespace ESLoader
 {
+namespace
+{
+constexpr size_t kMaximumGroupDepth = 64;
+}
+
 TESFile::TESFile(Map<String, uint32_t>& aMasterFiles)
     : m_masterFiles(aMasterFiles)
 {
@@ -119,11 +124,13 @@ bool TESFile::IndexRecords(RecordCollection& aRecordCollection) noexcept
         return false;
 
     Buffer::Reader reader(&m_buffer);
-
-    while (true)
+    while (reader.GetBytePosition() < m_buffer.GetSize())
     {
-        if (!ReadGroupOrRecord(reader, aRecordCollection))
-            break;
+        if (!ReadGroupOrRecord(reader, aRecordCollection, m_buffer.GetSize(), 0))
+        {
+            spdlog::warn("Plugin {} contains a truncated or malformed record/group; stopping record indexing", m_filename);
+            return false;
+        }
     }
 
     return true;
@@ -145,16 +152,24 @@ bool TESFile::InitializeFormIdPrefixes() noexcept
         return false;
     }
 
-    auto* pFileHeader = reinterpret_cast<TES4*>(m_buffer.GetWriteData());
-    if (pFileHeader->GetType() != FormEnum::TES4 || pFileHeader->GetDataSize() > m_buffer.GetSize() - sizeof(Record))
+    const auto* const pFileHeader = m_buffer.GetWriteData();
+    uint32_t formType = 0;
+    uint32_t dataSize = 0;
+    std::memcpy(&formType, pFileHeader, sizeof(formType));
+    std::memcpy(&dataSize, pFileHeader + sizeof(formType), sizeof(dataSize));
+    if (formType != static_cast<uint32_t>(FormEnum::TES4) || dataSize > m_buffer.GetSize() - sizeof(Record))
     {
         spdlog::warn("Plugin {} has an invalid TES4 header", m_filename);
         return false;
     }
 
     TES4 fileHeader;
-    fileHeader.CopyRecordData(*pFileHeader);
-    fileHeader.ParseChunks(*pFileHeader, m_parentToFormIdPrefix);
+    fileHeader.CopyRecordData(pFileHeader);
+    if (!fileHeader.ParseChunks(pFileHeader, m_parentToFormIdPrefix))
+    {
+        spdlog::warn("Plugin {} has malformed TES4 chunks", m_filename);
+        return false;
+    }
 
     // Each MAST entry needs one parent slot and the plugin itself needs the
     // next slot. Parent indices are one byte, so 255 masters is the maximum
@@ -185,57 +200,78 @@ bool TESFile::InitializeFormIdPrefixes() noexcept
     return true;
 }
 
-bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aRecordCollection) noexcept
+bool TESFile::ReadGroupOrRecord(
+    Buffer::Reader& aReader, RecordCollection& aRecordCollection, const size_t aParentEnd, const size_t aGroupDepth) noexcept
 {
-    if (aReader.Eof())
+    const size_t recordPosition = aReader.GetBytePosition();
+    if (recordPosition > aParentEnd || aParentEnd - recordPosition < sizeof(uint32_t) * 2)
         return false;
 
     uint32_t type = 0;
-    aReader.ReadBytes(reinterpret_cast<uint8_t*>(&type), 4);
     uint32_t size = 0;
-    aReader.ReadBytes(reinterpret_cast<uint8_t*>(&size), 4);
-    aReader.Reverse(8);
+    const auto* const pRecordBytes = m_buffer.GetWriteData() + recordPosition;
+    std::memcpy(&type, pRecordBytes, sizeof(type));
+    std::memcpy(&size, pRecordBytes + sizeof(type), sizeof(size));
 
     if (type == static_cast<uint32_t>(FormEnum::GRUP))
     {
-        const size_t endOfGroup = aReader.GetBytePosition() + size;
+        if (aGroupDepth >= kMaximumGroupDepth || size < sizeof(Group) || size > aParentEnd - recordPosition)
+            return false;
+
+        const size_t endOfGroup = recordPosition + size;
         aReader.Advance(sizeof(Group));
 
         while (aReader.GetBytePosition() < endOfGroup)
         {
-            ReadGroupOrRecord(aReader, aRecordCollection);
+            if (!ReadGroupOrRecord(aReader, aRecordCollection, endOfGroup, aGroupDepth + 1))
+                return false;
         }
+
+        return aReader.GetBytePosition() == endOfGroup;
     }
-    else // Records
+
+    if (aParentEnd - recordPosition < sizeof(Record) || size > aParentEnd - recordPosition - sizeof(Record))
+        return false;
+
+    uint32_t formId = 0;
+    std::memcpy(&formId, pRecordBytes + 12, sizeof(formId));
+
+    // The complete header and declared payload are inside the current group/file
+    // before any typed record view or chunk reader is formed.
+    Record* pRecord = reinterpret_cast<Record*>(m_buffer.GetWriteData() + recordPosition);
+    const FormEnum formType = static_cast<FormEnum>(type);
+    const auto formIdPrefix = GetFormIdPrefix(formId, m_parentToFormIdPrefix);
+    const auto parentFormIdPrefix = m_parentToFormIdPrefix.find(static_cast<uint8_t>(formId >> 24));
+    const bool hasOutOfRangeLightLocalId =
+        parentFormIdPrefix != std::end(m_parentToFormIdPrefix) &&
+        (parentFormIdPrefix->second & 0xFF000000u) == 0xFE000000u && (formId & 0x00FFFFFFu) > 0x00000FFFu;
+    const bool isActorPopulationRecord = formType == FormEnum::ACHR || formType == FormEnum::NPC_ || formType == FormEnum::RACE;
+
+    if (hasOutOfRangeLightLocalId || (isActorPopulationRecord && !formIdPrefix))
     {
-        Record* pRecord = reinterpret_cast<Record*>(m_buffer.GetWriteData() + aReader.GetBytePosition());
-        const auto formIdPrefix = GetFormIdPrefix(pRecord->GetFormId(), m_parentToFormIdPrefix);
-        const auto parentFormIdPrefix = m_parentToFormIdPrefix.find(static_cast<uint8_t>(pRecord->GetFormId() >> 24));
-        const bool hasOutOfRangeLightLocalId =
-            parentFormIdPrefix != std::end(m_parentToFormIdPrefix) &&
-            (parentFormIdPrefix->second & 0xFF000000u) == 0xFE000000u &&
-            (pRecord->GetFormId() & 0x00FFFFFFu) > 0x00000FFFu;
-        const bool isActorPopulationRecord =
-            pRecord->GetType() == FormEnum::ACHR || pRecord->GetType() == FormEnum::NPC_ || pRecord->GetType() == FormEnum::RACE;
+        spdlog::warn("Plugin {} has an invalid or unresolved form ID {:X}; skipping record", m_filename, formId);
+        aReader.Advance(sizeof(Record) + size);
+        return true;
+    }
+    const uint32_t resolvedFormIdPrefix = formIdPrefix.value_or(0);
+    bool actorRecordValid = true;
 
-        if (hasOutOfRangeLightLocalId || (isActorPopulationRecord && !formIdPrefix))
-        {
-            spdlog::warn("Plugin {} has an invalid or unresolved form ID {:X}; skipping record", m_filename, pRecord->GetFormId());
-            aReader.Advance(sizeof(Record) + size);
-            return true;
-        }
-        const uint32_t resolvedFormIdPrefix = formIdPrefix.value_or(0);
-
-        switch (pRecord->GetType())
-        {
+    switch (formType)
+    {
         case FormEnum::TES4:
         {
             break;
         }
         case FormEnum::ACHR:
         {
-            ACHR parsedRecord = CopyAndParseRecord<ACHR>(pRecord, resolvedFormIdPrefix);
-            aRecordCollection.m_actorReferences[parsedRecord.GetFormId()] = parsedRecord;
+            ACHR parsedRecord;
+            parsedRecord.CopyRecordData(pRecord);
+            parsedRecord.SetBaseId(resolvedFormIdPrefix);
+            actorRecordValid = parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix);
+            if (actorRecordValid)
+                aRecordCollection.m_actorReferences[parsedRecord.GetFormId()] = parsedRecord;
+            else
+                aRecordCollection.m_actorReferences.erase(resolvedFormIdPrefix + (formId & 0x00FFFFFFu));
             break;
         }
         case FormEnum::REFR:
@@ -253,14 +289,26 @@ bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aReco
         }
         case FormEnum::NPC_:
         {
-            NPC parsedRecord = CopyAndParseRecord<NPC>(pRecord, resolvedFormIdPrefix);
-            aRecordCollection.m_npcs[parsedRecord.GetFormId()] = parsedRecord;
+            NPC parsedRecord;
+            parsedRecord.CopyRecordData(pRecord);
+            parsedRecord.SetBaseId(resolvedFormIdPrefix);
+            actorRecordValid = parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix);
+            if (actorRecordValid)
+                aRecordCollection.m_npcs[parsedRecord.GetFormId()] = parsedRecord;
+            else
+                aRecordCollection.m_npcs.erase(resolvedFormIdPrefix + (formId & 0x00FFFFFFu));
             break;
         }
         case FormEnum::RACE:
         {
-            RACE parsedRecord = CopyAndParseRecord<RACE>(pRecord, resolvedFormIdPrefix);
-            aRecordCollection.m_races[parsedRecord.GetFormId()] = parsedRecord;
+            RACE parsedRecord;
+            parsedRecord.CopyRecordData(pRecord);
+            parsedRecord.SetBaseId(resolvedFormIdPrefix);
+            actorRecordValid = parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix);
+            if (actorRecordValid)
+                aRecordCollection.m_races[parsedRecord.GetFormId()] = parsedRecord;
+            else
+                aRecordCollection.m_races.erase(resolvedFormIdPrefix + (formId & 0x00FFFFFFu));
             break;
         }
         case FormEnum::CONT:
@@ -287,18 +335,16 @@ bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aReco
         }
         }
 
-        // pRecord->DiscoverChunks();
-
-        if (pRecord->GetType() != FormEnum::TES4)
-        {
-            Record record;
-            record.CopyRecordData(*pRecord);
-            record.SetBaseId(resolvedFormIdPrefix);
-            aRecordCollection.m_allRecords[pRecord->GetFormId()] = *pRecord;
-        }
-
-        aReader.Advance(sizeof(Record) + size);
+    if (!actorRecordValid)
+        spdlog::warn("Plugin {} has malformed actor population record {:X}; skipping record", m_filename, formId);
+    else if (formType != FormEnum::TES4)
+    {
+        Record record;
+        record.CopyRecordData(pRecord);
+        aRecordCollection.m_allRecords[formId] = record;
     }
+
+    aReader.Advance(sizeof(Record) + size);
 
     return true;
 }
@@ -311,7 +357,7 @@ template <class T> T TESFile::CopyAndParseRecord(Record* pRecordHeader, const ui
     T* pRecord = reinterpret_cast<T*>(pRecordHeader);
 
     T parsedRecord;
-    parsedRecord.CopyRecordData(*pRecord);
+    parsedRecord.CopyRecordData(pRecord);
     parsedRecord.SetBaseId(aResolvedFormIdPrefix);
     parsedRecord.ParseChunks(*pRecord, m_parentToFormIdPrefix);
 
