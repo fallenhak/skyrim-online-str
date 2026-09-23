@@ -55,6 +55,12 @@ export class ClientService implements OnDestroy {
   public characterSelectionResultChange =
     new Subject<SkyrimTogetherTypes.CharacterSelectionStatus>();
 
+  /** Current client phase in the server-owned character session flow. */
+  public characterSessionStateChange =
+    new BehaviorSubject<SkyrimTogetherTypes.CharacterSessionState>(
+      'disconnected',
+    );
+
   /** Character ID for the outstanding selection request, if any. */
   public characterSelectionPendingIdChange =
     new BehaviorSubject<SkyrimTogetherTypes.CharacterId | null>(null);
@@ -141,6 +147,10 @@ export class ClientService implements OnDestroy {
       'characterSelectionResult',
       this.onCharacterSelectionResult.bind(this),
     );
+    skyrimtogether.on(
+      'characterSessionState',
+      this.onCharacterSessionState.bind(this),
+    );
     skyrimtogether.on('setName', this.onSetName.bind(this)); //not wanted, we dont sync name changes
     skyrimtogether.on('setVersion', this.onSetVersion.bind(this));
     skyrimtogether.on('debug', this.onDebug.bind(this)); //not needed anymore
@@ -185,6 +195,7 @@ export class ClientService implements OnDestroy {
     skyrimtogether.off('disconnect');
     skyrimtogether.off('characterList');
     skyrimtogether.off('characterSelectionResult');
+    skyrimtogether.off('characterSessionState');
     skyrimtogether.off('setName');
     skyrimtogether.off('setVersion');
     skyrimtogether.off('debug');
@@ -391,6 +402,7 @@ export class ClientService implements OnDestroy {
     void this.zone.run(async () => {
       this.localPlayerId = undefined;
       this.characterSelectionPendingIdChange.next(null);
+      this.characterSessionStateChange.next('disconnected');
       this.connectionStateChange.next(false);
       this.isConnectionInProgressChange.next(false);
 
@@ -428,6 +440,14 @@ export class ClientService implements OnDestroy {
     this.zone.run(() => {
       this.characterSelectionPendingIdChange.next(null);
       this.characterSelectionResultChange.next(status);
+    });
+  }
+
+  private onCharacterSessionState(
+    state: SkyrimTogetherTypes.CharacterSessionState,
+  ): void {
+    this.zone.run(() => {
+      this.characterSessionStateChange.next(state);
     });
   }
 

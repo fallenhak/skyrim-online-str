@@ -126,11 +126,23 @@ declare namespace SkyrimTogetherTypes {
   /** Numeric CharacterSelectionStatus values from the existing protocol. */
   type CharacterSelectionStatus = 0 | 1 | 2 | 3;
 
+  /** Local protocol phase, advanced only by existing server/session events. */
+  type CharacterSessionState =
+    | 'disconnected'
+    | 'awaitingCharacterSelection'
+    | 'characterSelected'
+    | 'applyingCharacter'
+    | 'awaitingClientReady'
+    | 'awaitingPlayerAssignment'
+    | 'inWorld';
+
   type CharacterListCallback = (rows: CharacterSummaryWireRow[]) => void;
 
   type CharacterSelectionResultCallback = (
     status: CharacterSelectionStatus,
   ) => void;
+
+  type CharacterSessionStateCallback = (state: CharacterSessionState) => void;
 }
 
 /** Global Skyrim: Together object. */
@@ -178,6 +190,12 @@ interface SkyrimTogether {
   on(
     event: 'characterSelectionResult',
     callback: SkyrimTogetherTypes.CharacterSelectionResultCallback,
+  ): void;
+
+  /** Receive transitions from the existing character load/session flow. */
+  on(
+    event: 'characterSessionState',
+    callback: SkyrimTogetherTypes.CharacterSessionStateCallback,
   ): void;
 
   /** Add listener to when the player disconnects from a server. */
@@ -309,6 +327,11 @@ interface SkyrimTogether {
   off(
     event: 'characterSelectionResult',
     callback?: SkyrimTogetherTypes.CharacterSelectionResultCallback,
+  ): void;
+
+  off(
+    event: 'characterSessionState',
+    callback?: SkyrimTogetherTypes.CharacterSessionStateCallback,
   ): void;
 
   /** Remove listener from when the player disconnects from a server. */

@@ -35,6 +35,7 @@
 #include <Events/PartyLeftEvent.h>
 #include <Events/CharacterListReceivedEvent.h>
 #include <Events/CharacterSelectionResultEvent.h>
+#include <Events/CharacterSessionStateChangedEvent.h>
 
 #include <PlayerCharacter.h>
 #include <Forms/TESWorldSpace.h>
@@ -129,6 +130,7 @@ OverlayService::OverlayService(World& aWorld, TransportService& transport, entt:
     m_playerHealthConnection = aDispatcher.sink<NotifyPlayerHealthUpdate>().connect<&OverlayService::OnNotifyPlayerHealthUpdate>(this);
     m_characterListConnection = aDispatcher.sink<CharacterListReceivedEvent>().connect<&OverlayService::OnCharacterListReceived>(this);
     m_characterSelectionResultConnection = aDispatcher.sink<CharacterSelectionResultEvent>().connect<&OverlayService::OnCharacterSelectionResult>(this);
+    m_characterSessionStateConnection = aDispatcher.sink<CharacterSessionStateChangedEvent>().connect<&OverlayService::OnCharacterSessionStateChanged>(this);
     m_partyJoinedConnection = aDispatcher.sink<PartyJoinedEvent>().connect<&OverlayService::OnPartyJoinedEvent>(this);
     m_partyLeftConnection = aDispatcher.sink<PartyLeftEvent>().connect<&OverlayService::OnPartyLeftEvent>(this);
 }
@@ -474,6 +476,42 @@ void OverlayService::OnCharacterSelectionResult(const CharacterSelectionResultEv
     auto pArguments = CefListValue::Create();
     pArguments->SetInt(0, static_cast<int>(acEvent.Status));
     m_pOverlay->ExecuteAsync("characterSelectionResult", pArguments);
+}
+
+void OverlayService::OnCharacterSessionStateChanged(const CharacterSessionStateChangedEvent& acEvent) noexcept
+{
+    if (!m_pOverlay)
+        return;
+
+    const char* state = "unknown";
+    switch (acEvent.State)
+    {
+    case ClientCharacterSessionState::kDisconnected:
+        state = "disconnected";
+        break;
+    case ClientCharacterSessionState::kAwaitingCharacterSelection:
+        state = "awaitingCharacterSelection";
+        break;
+    case ClientCharacterSessionState::kCharacterSelected:
+        state = "characterSelected";
+        break;
+    case ClientCharacterSessionState::kApplyingCharacter:
+        state = "applyingCharacter";
+        break;
+    case ClientCharacterSessionState::kAwaitingClientReady:
+        state = "awaitingClientReady";
+        break;
+    case ClientCharacterSessionState::kAwaitingPlayerAssignment:
+        state = "awaitingPlayerAssignment";
+        break;
+    case ClientCharacterSessionState::kInWorld:
+        state = "inWorld";
+        break;
+    }
+
+    auto pArguments = CefListValue::Create();
+    pArguments->SetString(0, state);
+    m_pOverlay->ExecuteAsync("characterSessionState", pArguments);
 }
 
 void OverlayService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept

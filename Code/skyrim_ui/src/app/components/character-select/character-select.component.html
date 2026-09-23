@@ -70,7 +70,11 @@
   <hr />
 
   <app-action-buttons>
-    <button data-style-ornament="simple" (click)="close()">
+    <button
+      *ngIf="!selectionFlowActive && pendingCharacterId === null"
+      data-style-ornament="simple"
+      (click)="close()"
+    >
       {{ 'COMPONENT.CHARACTER_SELECT.BACK' | transloco }}
     </button>
   </app-action-buttons>

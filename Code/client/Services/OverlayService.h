@@ -28,6 +28,7 @@ struct NotifyTeleport;
 struct NotifyPlayerHealthUpdate;
 struct CharacterListReceivedEvent;
 struct CharacterSelectionResultEvent;
+struct CharacterSessionStateChangedEvent;
 enum ChatMessageTypes;
 struct PartyJoinedEvent;
 struct PartyLeftEvent;
@@ -83,6 +84,7 @@ protected:
     void OnNotifyPlayerHealthUpdate(const NotifyPlayerHealthUpdate& acMessage) noexcept;
     void OnCharacterListReceived(const CharacterListReceivedEvent& acEvent) noexcept;
     void OnCharacterSelectionResult(const CharacterSelectionResultEvent& acEvent) noexcept;
+    void OnCharacterSessionStateChanged(const CharacterSessionStateChangedEvent& acEvent) noexcept;
     void OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept;
     void OnPartyLeftEvent(const PartyLeftEvent& acEvent) noexcept;
 
@@ -116,6 +118,7 @@ private:
     entt::scoped_connection m_playerHealthConnection;
     entt::scoped_connection m_characterListConnection;
     entt::scoped_connection m_characterSelectionResultConnection;
+    entt::scoped_connection m_characterSessionStateConnection;
     entt::scoped_connection m_partyJoinedConnection;
     entt::scoped_connection m_partyLeftConnection;
 };

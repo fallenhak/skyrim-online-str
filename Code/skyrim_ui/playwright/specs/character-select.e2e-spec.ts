@@ -56,4 +56,84 @@ test.describe('Character Select', () => {
     await expect(page.locator('[data-character-select-state="error"]'))
       .toContainText('This character is unavailable for this account');
   });
+
+  test(
+    'keeps selection open until the server confirms the character is in world',
+    async ({ page }) => {
+      await page.locator('app-connect input').nth(0).fill('character-server');
+      await page.locator('app-connect app-action-buttons button').nth(0).click();
+
+      await page.evaluate(() => {
+        (window as any).skyrimtogether.selectCharacter = () => {};
+      });
+
+      const characterSelect = page.locator('app-character-select');
+      await expect(
+        characterSelect.locator('[data-character-select-state="list"]'),
+      ).toBeVisible();
+      await characterSelect.locator('.character-select-action').click();
+      await expect(
+        characterSelect.getByRole('button', { name: /selecting/i }),
+      ).toBeVisible();
+      await expect(
+        characterSelect.getByRole('button', { name: /back/i }),
+      ).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await expect(characterSelect).toBeVisible();
+
+      await page.evaluate(() => {
+        (window as any).skyrimtogether.emit('characterSelectionResult', 0);
+      });
+      await expect(
+        characterSelect.locator('[data-character-select-state="loading"]'),
+      ).toContainText('The server accepted the selection');
+      await expect(
+        characterSelect.getByRole('button', { name: /back/i }),
+      ).toHaveCount(0);
+
+      for (const state of [
+        'characterSelected',
+        'applyingCharacter',
+        'awaitingClientReady',
+        'awaitingPlayerAssignment',
+      ]) {
+        await page.evaluate(sessionState => {
+          (window as any).skyrimtogether.emit(
+            'characterSessionState',
+            sessionState,
+          );
+        }, state);
+        await expect(characterSelect).toBeVisible();
+      }
+
+      await page.evaluate(() => {
+        (window as any).skyrimtogether.emit(
+          'characterSessionState',
+          'awaitingCharacterSelection',
+        );
+      });
+      await expect(
+        characterSelect.locator('[data-character-select-state="list"]'),
+      ).toBeVisible();
+      await expect(
+        characterSelect.getByRole('button', { name: /back/i }),
+      ).toBeVisible();
+
+      await characterSelect.locator('.character-select-action').click();
+      await expect(
+        characterSelect.getByRole('button', { name: /selecting/i }),
+      ).toBeVisible();
+      await page.evaluate(() => {
+        (window as any).skyrimtogether.emit('characterSelectionResult', 0);
+      });
+
+      await page.evaluate(() => {
+        (window as any).skyrimtogether.emit(
+          'characterSessionState',
+          'inWorld',
+        );
+      });
+      await expect(characterSelect).toHaveCount(0);
+    },
+  );
 });

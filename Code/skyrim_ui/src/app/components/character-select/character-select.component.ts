@@ -22,6 +22,7 @@ export class CharacterSelectComponent implements OnInit, OnDestroy {
   public characters: SkyrimTogetherTypes.CharacterSummaryBridge[] = [];
   public messageKey = 'COMPONENT.CHARACTER_SELECT.LOADING';
   public pendingCharacterId: SkyrimTogetherTypes.CharacterId | null = null;
+  public selectionFlowActive = false;
 
   @Output() public done = new EventEmitter<void>();
 
@@ -41,14 +42,45 @@ export class CharacterSelectComponent implements OnInit, OnDestroy {
       }),
       this.client.characterSelectionResultChange.subscribe(status => {
         if (status === 0) {
+          this.selectionFlowActive = true;
           this.characters = [];
           this.messageKey = 'COMPONENT.CHARACTER_SELECT.LOADING_CHARACTER';
           this.state = 'loading';
           return;
         }
 
+        this.selectionFlowActive = false;
         this.messageKey = this.selectionErrorKey(status);
         this.state = 'error';
+      }),
+      this.client.characterSessionStateChange.subscribe(sessionState => {
+        switch (sessionState) {
+          case 'characterSelected':
+          case 'applyingCharacter':
+          case 'awaitingClientReady':
+          case 'awaitingPlayerAssignment':
+            this.selectionFlowActive = true;
+            this.characters = [];
+            this.messageKey = 'COMPONENT.CHARACTER_SELECT.LOADING_CHARACTER';
+            this.state = 'loading';
+            break;
+          case 'inWorld':
+            this.selectionFlowActive = false;
+            this.done.emit();
+            break;
+          case 'awaitingCharacterSelection':
+            if (this.selectionFlowActive) {
+              this.selectionFlowActive = false;
+              this.characters = [];
+              this.messageKey = 'COMPONENT.CHARACTER_SELECT.LOADING';
+              this.state = 'loading';
+              this.client.requestCharacterList();
+            }
+            break;
+          case 'disconnected':
+            this.selectionFlowActive = false;
+            break;
+        }
       }),
       this.client.characterSelectionPendingIdChange.subscribe(characterId => {
         this.pendingCharacterId = characterId;
@@ -72,6 +104,10 @@ export class CharacterSelectComponent implements OnInit, OnDestroy {
   }
 
   public close(): void {
+    if (this.selectionFlowActive || this.pendingCharacterId !== null) {
+      return;
+    }
+
     this.sound.play(Sound.Cancel);
     this.done.next();
   }
