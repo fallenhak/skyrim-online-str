@@ -3,6 +3,11 @@
 #include <TiltedCore/Buffer.hpp>
 #include <TiltedCore/Serialization.hpp>
 
+#include <glm/vec2.hpp>
+
+#include <optional>
+#include <functional>
+
 #include <Messages/ClientMessageFactory.h>
 #include <Services/PendingCombatObservationStore.h>
 
