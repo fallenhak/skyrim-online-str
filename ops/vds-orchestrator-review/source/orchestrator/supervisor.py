@@ -1123,6 +1123,7 @@ class Supervisor(ArchitectReviewMixin):
         self._load_active_roadmap()
         if self.runtime_owner:
             self.reconcile_invalid_empty_current_phase_reviews()
+            self.reconcile_oversized_blocked_current_phase_reviews()
         self._recompute_scheduler()
         self.save_state()
 
@@ -3366,6 +3367,32 @@ class Supervisor(ArchitectReviewMixin):
             changed += 1
         if changed and "scheduler" in self.state and getattr(self, "roadmap_snapshot", None) is not None:
             self._recompute_scheduler()
+        return changed
+
+    def reconcile_oversized_blocked_current_phase_reviews(self) -> int:
+        """Re-route lanes that failed closed only because a finished diff exceeded size bounds."""
+        if not self.runtime_owner:
+            return 0
+        changed = 0
+        failures = self.state.get("architect_review", {}).get("reconciliation_errors", {})
+        for lane_name, lane in self.state.get("lanes", {}).items():
+            if (
+                not isinstance(lane, dict) or lane.get("state") != "BLOCKED" or lane.get("worker_pid")
+                or lane.get("last_error") != "current-phase review evidence is ambiguous; state preserved"
+            ):
+                continue
+            phase_id = str(lane.get("phase_id") or "")
+            failure = failures.get(f"{lane_name}:{phase_id}:RECOVERY_DIFF_UNSAFE")
+            if not isinstance(failure, dict) or failure.get("status") != "REQUIRES_INFRA_REVIEW":
+                continue
+            evidence = self._current_phase_review_evidence(lane_name)
+            if evidence.get("reason_code") != "CURRENT_PHASE_OVERSIZED_DIFF":
+                continue
+            failure["status"] = "RESOLVED_OVERSIZED_REVIEWABLE"
+            failure["resolved_at"] = utc_now()
+            self.review(lane_name, list(failure.get("reasons") or []))
+            self.event("oversized current-phase work re-routed to review", lane_name)
+            changed += 1
         return changed
 
     def _suppress_unreviewable_current_phase_request(

@@ -2022,6 +2022,47 @@ class V35EmptyCurrentPhaseReviewTests(unittest.TestCase):
         self.assertEqual(evidence["kind"], "unknown")
         self.assertEqual(evidence["reason_code"], "RECOVERY_DIFF_UNSAFE")
 
+    def _oversized_blocked_lane(self, root: Path, interrupted: bool) -> tuple[Harness, dict]:
+        harness, lane, head = self._current_lane(root, "BLOCKED")
+        (root / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        harness.config["max_changed_files"] = 0
+        harness.runtime_owner = True
+        lane.update({
+            "worker_phase_id": "C08", "worker_start_head": head,
+            "worker_exit_code": -15 if interrupted else 0, "worker_interrupted": interrupted,
+            "worker_pid": None,
+            "last_error": "current-phase review evidence is ambiguous; state preserved",
+        })
+        harness.state["architect_review"]["reconciliation_errors"] = {
+            "combat:C08:RECOVERY_DIFF_UNSAFE": {
+                "lane": "combat", "phase": "C08", "status": "REQUIRES_INFRA_REVIEW",
+                "reason_code": "RECOVERY_DIFF_UNSAFE",
+                "reasons": ["changed file count 1 exceeds configured limit 0"],
+            },
+        }
+        return harness, lane
+
+    def test_oversized_blocked_lane_is_rerouted_to_review(self) -> None:
+        root = make_git_repo()
+        harness, lane = self._oversized_blocked_lane(root, interrupted=False)
+
+        self.assertEqual(harness.reconcile_oversized_blocked_current_phase_reviews(), 1)
+
+        self.assertEqual(lane["state"], "NEEDS_SOL_REVIEW")
+        self.assertEqual(harness.review_calls[-1][1], ["changed file count 1 exceeds configured limit 0"])
+        failure = harness.state["architect_review"]["reconciliation_errors"]["combat:C08:RECOVERY_DIFF_UNSAFE"]
+        self.assertEqual(failure["status"], "RESOLVED_OVERSIZED_REVIEWABLE")
+        self.assertTrue((root / "tracked.txt").read_text(encoding="utf-8") == "changed\n")
+
+    def test_oversized_blocked_interrupted_lane_stays_blocked(self) -> None:
+        root = make_git_repo()
+        harness, lane = self._oversized_blocked_lane(root, interrupted=True)
+
+        self.assertEqual(harness.reconcile_oversized_blocked_current_phase_reviews(), 0)
+
+        self.assertEqual(lane["state"], "BLOCKED")
+        self.assertEqual(harness.review_calls, [])
+
 
 class V34ReviewerRoutingTests(unittest.TestCase):
     def test_ordinary_review_routes_to_luna_max(self) -> None:
