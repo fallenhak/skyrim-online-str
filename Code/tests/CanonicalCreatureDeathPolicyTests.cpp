@@ -1,4 +1,4 @@
-#include <Components.h>
+#include <server/Components.h>
 #include <Services/CanonicalCreatureDeathPolicy.h>
 
 #include <catch2/catch.hpp>

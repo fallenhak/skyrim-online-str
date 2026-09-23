@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Components.h>
+#include <server/Components.h>
 
 /**
  * @brief Selects accepted canonical transitions that represent a trusted
