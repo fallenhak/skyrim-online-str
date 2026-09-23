@@ -42,7 +42,19 @@ struct ActorLifecycleComponent final
         return LifecycleGeneration;
     }
 
+    [[nodiscard]] bool TryMarkCanonicalCreatureDeathAccepted() noexcept
+    {
+        if (!IsValid() || AcceptedCanonicalCreatureDeathGeneration == LifecycleGeneration)
+            return false;
+
+        AcceptedCanonicalCreatureDeathGeneration = LifecycleGeneration;
+        return true;
+    }
+
     Generation LifecycleGeneration{};
+    // Zero means no canonical Creature death event has been accepted for
+    // this incarnation. Lifecycle generations are never zero or reused.
+    Generation AcceptedCanonicalCreatureDeathGeneration{};
 
 private:
     [[nodiscard]] static Generation AllocateGeneration() noexcept

@@ -19,4 +19,14 @@ struct CanonicalCreatureDeathPolicy final
                apPopulationIdentity->Source != ActorPopulationIdentitySource::kPlayer && apPopulationIdentity->IsTrustedCreature() &&
                apLifecycle != nullptr && apLifecycle->IsValid();
     }
+
+    [[nodiscard]] static bool TryAcceptTransition(
+        const bool aWasDead,
+        const CharacterComponent* apCharacter,
+        const ActorPopulationIdentityComponent* apPopulationIdentity,
+        ActorLifecycleComponent* apLifecycle) noexcept
+    {
+        return IsEligibleTransition(aWasDead, apCharacter, apPopulationIdentity, apLifecycle) &&
+               apLifecycle->TryMarkCanonicalCreatureDeathAccepted();
+    }
 };

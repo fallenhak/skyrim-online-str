@@ -14,18 +14,45 @@ ActorPopulationIdentityComponent MakeTrustedCreature()
 }
 }
 
-TEST_CASE("canonical Creature death requires a new alive-to-dead transition and current lifecycle", "[combat_authority]")
+TEST_CASE("canonical Creature death is accepted once for a lifecycle", "[combat_authority]")
 {
     const auto identity = MakeTrustedCreature();
-    const ActorLifecycleComponent lifecycle{17};
+    ActorLifecycleComponent lifecycle{17};
     CharacterComponent character;
     character.SetDead(true);
 
-    REQUIRE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, &identity, &lifecycle));
-    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(true, &character, &identity, &lifecycle));
+    REQUIRE(CanonicalCreatureDeathPolicy::TryAcceptTransition(false, &character, &identity, &lifecycle));
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::TryAcceptTransition(true, &character, &identity, &lifecycle));
+}
+
+TEST_CASE("canonical Creature death cannot be accepted again after revival in the same lifecycle", "[combat_authority]")
+{
+    const auto identity = MakeTrustedCreature();
+    ActorLifecycleComponent lifecycle{18};
+    CharacterComponent character;
+    character.SetDead(true);
+
+    REQUIRE(CanonicalCreatureDeathPolicy::TryAcceptTransition(false, &character, &identity, &lifecycle));
 
     character.SetDead(false);
-    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::IsEligibleTransition(false, &character, &identity, &lifecycle));
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::TryAcceptTransition(true, &character, &identity, &lifecycle));
+
+    character.SetDead(true);
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::TryAcceptTransition(false, &character, &identity, &lifecycle));
+}
+
+TEST_CASE("canonical Creature death can be accepted for a fresh lifecycle", "[combat_authority]")
+{
+    const auto identity = MakeTrustedCreature();
+    ActorLifecycleComponent firstLifecycle{19};
+    ActorLifecycleComponent freshLifecycle{20};
+    CharacterComponent character;
+    character.SetDead(true);
+
+    REQUIRE(firstLifecycle.GetGeneration() != freshLifecycle.GetGeneration());
+    REQUIRE(CanonicalCreatureDeathPolicy::TryAcceptTransition(false, &character, &identity, &firstLifecycle));
+    REQUIRE_FALSE(CanonicalCreatureDeathPolicy::TryAcceptTransition(false, &character, &identity, &firstLifecycle));
+    REQUIRE(CanonicalCreatureDeathPolicy::TryAcceptTransition(false, &character, &identity, &freshLifecycle));
 }
 
 TEST_CASE("canonical Creature death rejects missing or untrusted target identity", "[combat_authority]")
