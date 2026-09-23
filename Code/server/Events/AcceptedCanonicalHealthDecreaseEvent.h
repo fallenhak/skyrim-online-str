@@ -20,6 +20,8 @@ struct AcceptedCanonicalHealthDecreaseEvent final
     {
     }
 
-    const ServerId TargetServerId;
-    const LifecycleGeneration TargetLifecycleGeneration;
+    // EnTT's dispatcher stores and assigns triggered event values, so the
+    // payload members must remain assignable.
+    ServerId TargetServerId;
+    LifecycleGeneration TargetLifecycleGeneration;
 };
