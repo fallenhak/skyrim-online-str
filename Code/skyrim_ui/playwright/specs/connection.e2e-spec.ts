@@ -99,6 +99,9 @@ test.describe('Connection', () => {
       await expect(page.locator(`//app-window${ createClassXPathSelector('app-root-menu') }/button[1]`)).toHaveText(/Disconnect/);
     });
 
+    await page.locator('app-character-select app-action-buttons button').click();
+    await expect(page.locator('app-character-select')).toHaveCount(0);
+
     await expect(page.evaluate('skyrimtogether.connected')).resolves.toBeTruthy();
 
     await test.step('disconnect', async () => {

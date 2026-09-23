@@ -65,8 +65,19 @@ export class RootComponent implements OnInit {
 
   public ngOnInit(): void {
     this.onInGameStateSubscription();
+    this.onConnectionStateSubscription();
     this.onActivationStateSubscription();
     this.onFontSizeSubscription();
+  }
+
+  public onConnectionStateSubscription(): void {
+    this.client.connectionStateChange
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(connected => {
+        if (connected) {
+          this.openCharacterSelect();
+        }
+      });
   }
 
   public onInGameStateSubscription() {
@@ -119,6 +130,20 @@ export class RootComponent implements OnInit {
 
   public closeView() {
     this.uiRepository.openView(null);
+  }
+
+  public finishConnectionView(): void {
+    if (this.client.connectionStateChange.getValue()) {
+      this.openCharacterSelect();
+    } else {
+      this.closeView();
+    }
+  }
+
+  public openCharacterSelect(): void {
+    if (this.uiRepository.getView() !== View.CHARACTER_SELECT) {
+      this.setView(View.CHARACTER_SELECT);
+    }
   }
 
   public reconnect(): void {

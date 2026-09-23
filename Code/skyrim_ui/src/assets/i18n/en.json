@@ -25,6 +25,21 @@
         "INVALID_ADDRESS": "The address is of invalid format."
       }
     },
+    "CHARACTER_SELECT": {
+      "TITLE": "Character Select",
+      "LOADING": "Loading characters from the server...",
+      "LOADING_CHARACTER": "The server accepted the selection. Waiting for character loading to complete...",
+      "EMPTY": "No characters are available on this server. Character creation is not available from this screen.",
+      "DISCONNECTED": "The connection to the server was lost. Connect again to load its characters.",
+      "LEVEL": "Level {{level}}",
+      "BACK": "Back",
+      "ERROR": {
+        "IDENTITY_NOT_READY": "The server identity is not ready. Try again after reconnecting.",
+        "UNAVAILABLE": "This character is unavailable for this account.",
+        "INVALID_STATE": "The server could not accept this selection request.",
+        "GENERIC": "The server could not select this character."
+      }
+    },
     "DISCONNECT": {
       "PROMPT": "Are you sure you want to disconnect?",
       "PROCEED": "Proceed",
@@ -80,6 +95,7 @@
     },
     "ROOT": {
       "CONNECT": "Connect",
+      "CHARACTER_SELECT": "Character Select",
       "DISCONNECT": "Disconnect",
       "REVEAL_PLAYERS": "Reveal Players",
       "RECONNECT": "Reconnect",

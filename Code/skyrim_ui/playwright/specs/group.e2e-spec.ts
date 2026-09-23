@@ -21,6 +21,7 @@ test.describe('Group', () => {
     await page.locator('//app-connect/div[1]/input[2]').fill('test');
     await page.click('//app-connect/div[1]/app-action-buttons[1]/button[1]');
     await expect(page.locator(`//app-window${ createClassXPathSelector('app-root-menu') }/button[1]`)).toHaveText(/Disconnect/);
+    await page.locator('app-character-select app-action-buttons button').click();
   });
 
   test('Invite & Kick', async ({ page }) => {

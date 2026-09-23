@@ -1,0 +1,45 @@
+<section
+  class="character-select"
+  [attr.data-character-select-state]="state"
+  aria-live="polite"
+>
+  <h2>{{ 'COMPONENT.CHARACTER_SELECT.TITLE' | transloco }}</h2>
+
+  <ng-container [ngSwitch]="state">
+    <p *ngSwitchCase="'loading'" class="state-message" role="status">
+      {{ messageKey | transloco }}
+    </p>
+
+    <p *ngSwitchCase="'empty'" class="state-message" role="status">
+      {{ 'COMPONENT.CHARACTER_SELECT.EMPTY' | transloco }}
+    </p>
+
+    <div *ngSwitchCase="'error'" class="state-message" role="alert">
+      {{ messageKey | transloco }}
+    </div>
+
+    <ul
+      *ngSwitchCase="'list'"
+      class="character-list"
+      [attr.aria-label]="'COMPONENT.CHARACTER_SELECT.TITLE' | transloco"
+    >
+      <li *ngFor="let character of characters; trackBy: trackByCharacterId">
+        <span class="character-name">{{ character.name }}</span>
+        <span class="character-level">
+          {{
+            'COMPONENT.CHARACTER_SELECT.LEVEL'
+              | transloco: { level: character.level }
+          }}
+        </span>
+      </li>
+    </ul>
+  </ng-container>
+
+  <hr />
+
+  <app-action-buttons>
+    <button data-style-ornament="simple" (click)="close()">
+      {{ 'COMPONENT.CHARACTER_SELECT.BACK' | transloco }}
+    </button>
+  </app-action-buttons>
+</section>
