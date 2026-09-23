@@ -84,6 +84,11 @@ boundary. A client-side send restriction is not treated as authority.
    ownership epoch by itself. Movement and faction updates now check the current
    epoch per actor. Draw-weapon state still has a stale-incarnation risk until
    its separate follow-up adds an epoch.
+   Faction authority and malformed-payload assertions are in the `TPTests`
+   target. This worker could not run them because `xmake` is unavailable, and
+   the local tree contains no CI configuration or run output establishing
+   whether the exact-SHA CI executed `TPTests`; focused faction test execution
+   therefore remains unverified.
 5. Inventory intentionally allows in-range non-owner NPC interaction. This is
    not equivalent to authority over a persistent player actor. `InventoryService`
    now uses a separate policy that rejects persistent players from the NPC

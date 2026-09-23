@@ -105,4 +105,13 @@ TEST_CASE("Faction update encoding carries the epoch and rejects oversized lists
 
     TiltedPhoques::Buffer::Reader malformedIdReader(&malformedIdBuffer);
     REQUIRE_FALSE(malformed.Deserialize(malformedIdReader));
+
+    TiltedPhoques::Buffer oversizedEpochBuffer(32);
+    {
+        TiltedPhoques::Buffer::Writer writer(&oversizedEpochBuffer);
+        TiltedPhoques::Serialization::WriteVarInt(writer, static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1);
+    }
+
+    TiltedPhoques::Buffer::Reader oversizedEpochReader(&oversizedEpochBuffer);
+    REQUIRE_FALSE(malformed.Deserialize(oversizedEpochReader));
 }
