@@ -669,7 +669,8 @@ TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
     {
         std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
         ASSERT_TRUE(loadOrder.good());
-        loadOrder << "MasterA.esm\n"
+        loadOrder << "PriorPlugin.esm\n"
+                  << "MasterA.esm\n"
                   << "MasterB.esp\n"
                   << "Dependent.esp\n"
                   << "Override.esp\n";
@@ -686,6 +687,7 @@ TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
     constexpr uint32_t masterARaceId = 0x00001000;
     constexpr uint32_t masterARawNpcRaceId = 0x00001000;
     constexpr uint32_t masterBRawRaceId = 0x00001000;
+    const Bytes priorPlugin = MakePluginHeaderWithMasters({});
     Bytes masterA = MakePluginHeaderWithMasters({});
     AppendRecord(masterA, FormEnum::RACE, masterARaceId, MakeRaceData("MasterARace"));
     AppendRecord(masterA, FormEnum::NPC_, 0x00002000, MakeNpcData("MasterANpc", &masterARawNpcRaceId));
@@ -699,13 +701,17 @@ TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
     Bytes dependent = MakePluginHeaderWithMasters({"MasterA.esm", "MasterB.esp"});
     constexpr uint32_t dependentRaceRawId = 0x01001000;
     AppendRecord(dependent, FormEnum::NPC_, 0x02008000, MakeNpcData("DependentNpc", &dependentRaceRawId));
+    constexpr uint32_t dependentMasterARaceRawId = 0x00001000;
+    AppendRecord(dependent, FormEnum::NPC_, 0x02008001, MakeNpcData("DependentMasterANpc", &dependentMasterARaceRawId));
     AppendRecord(dependent, FormEnum::ACHR, 0x02009000, MakeActorReferenceData(0x01002000));
+    AppendRecord(dependent, FormEnum::ACHR, 0x02009001, MakeActorReferenceData(0x00002000));
 
     Bytes overridePlugin = MakePluginHeaderWithMasters({"MasterA.esm", "MasterB.esp", "Dependent.esp"});
     AppendRecord(overridePlugin, FormEnum::NPC_, 0x00002000, MakeNpcData("OverriddenMasterANpc", &dependentRaceRawId));
     AppendRecord(overridePlugin, FormEnum::RACE, 0x01001000, MakeRaceData("OverriddenMasterBRace"));
     AppendRecord(overridePlugin, FormEnum::ACHR, 0x00003000, MakeActorReferenceData(0x01002000));
 
+    ASSERT_TRUE(writePlugin("PriorPlugin.esm", priorPlugin));
     ASSERT_TRUE(writePlugin("MasterA.esm", masterA));
     ASSERT_TRUE(writePlugin("MasterB.esp", masterB));
     ASSERT_TRUE(writePlugin("Dependent.esp", dependent));
@@ -715,34 +721,46 @@ TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
     const auto records = loader.BuildRecordCollection(true);
     ASSERT_NE(records, nullptr);
 
-    const auto* const pMasterBRace = records->FindRaceById(0x01001000);
+    const auto* const pMasterARace = records->FindRaceById(0x01001000);
+    ASSERT_NE(pMasterARace, nullptr);
+    EXPECT_EQ(pMasterARace->m_editorId, "MasterARace");
+
+    const auto* const pMasterBRace = records->FindRaceById(0x02001000);
     ASSERT_NE(pMasterBRace, nullptr);
     EXPECT_EQ(pMasterBRace->m_editorId, "OverriddenMasterBRace");
 
-    const auto* const pOverriddenNpc = records->FindNpcById(0x00002000);
+    const auto* const pOverriddenNpc = records->FindNpcById(0x01002000);
     ASSERT_NE(pOverriddenNpc, nullptr);
     EXPECT_EQ(pOverriddenNpc->m_editorId, "OverriddenMasterANpc");
-    EXPECT_EQ(pOverriddenNpc->m_raceId, 0x01001000);
+    EXPECT_EQ(pOverriddenNpc->m_raceId, 0x02001000);
 
-    const auto* const pMasterBNpc = records->FindNpcById(0x01002000);
+    const auto* const pMasterBNpc = records->FindNpcById(0x02002000);
     ASSERT_NE(pMasterBNpc, nullptr);
-    EXPECT_EQ(pMasterBNpc->m_raceId, 0x01001000);
+    EXPECT_EQ(pMasterBNpc->m_raceId, 0x02001000);
 
-    const auto* const pDependentNpc = records->FindNpcById(0x02008000);
+    const auto* const pDependentNpc = records->FindNpcById(0x03008000);
     ASSERT_NE(pDependentNpc, nullptr);
-    EXPECT_EQ(pDependentNpc->m_raceId, 0x01001000);
+    EXPECT_EQ(pDependentNpc->m_raceId, 0x02001000);
 
-    const auto* const pOverriddenActorReference = records->FindActorReferenceById(0x00003000);
+    const auto* const pDependentMasterANpc = records->FindNpcById(0x03008001);
+    ASSERT_NE(pDependentMasterANpc, nullptr);
+    EXPECT_EQ(pDependentMasterANpc->m_raceId, 0x01001000);
+
+    const auto* const pOverriddenActorReference = records->FindActorReferenceById(0x01003000);
     ASSERT_NE(pOverriddenActorReference, nullptr);
-    EXPECT_EQ(pOverriddenActorReference->m_baseObject.m_baseId, 0x01002000);
+    EXPECT_EQ(pOverriddenActorReference->m_baseObject.m_baseId, 0x02002000);
 
-    const auto* const pMasterBActorReference = records->FindActorReferenceById(0x01003000);
+    const auto* const pMasterBActorReference = records->FindActorReferenceById(0x02003000);
     ASSERT_NE(pMasterBActorReference, nullptr);
-    EXPECT_EQ(pMasterBActorReference->m_baseObject.m_baseId, 0x01002000);
+    EXPECT_EQ(pMasterBActorReference->m_baseObject.m_baseId, 0x02002000);
 
-    const auto* const pDependentActorReference = records->FindActorReferenceById(0x02009000);
+    const auto* const pDependentActorReference = records->FindActorReferenceById(0x03009000);
     ASSERT_NE(pDependentActorReference, nullptr);
-    EXPECT_EQ(pDependentActorReference->m_baseObject.m_baseId, 0x01002000);
+    EXPECT_EQ(pDependentActorReference->m_baseObject.m_baseId, 0x02002000);
+
+    const auto* const pDependentMasterAActorReference = records->FindActorReferenceById(0x03009001);
+    ASSERT_NE(pDependentMasterAActorReference, nullptr);
+    EXPECT_EQ(pDependentMasterAActorReference->m_baseObject.m_baseId, 0x01002000);
 }
 
 TEST(ESLoader, MissingLoadOrderClearsPreviouslyLoadedMetadata)
