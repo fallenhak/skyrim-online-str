@@ -1,4 +1,5 @@
 #include <Services/InventoryInteractionPolicy.h>
+#include <Services/ObjectInteractionPolicy.h>
 
 #include <catch2/catch.hpp>
 
@@ -29,13 +30,20 @@ TEST_CASE("Inventory interaction does not treat arbitrary ownerless entities as 
     REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, false, false, true, false));
 }
 
-TEST_CASE("A discovered provisional object rejects later inventory deltas", "[actor_authority]")
+TEST_CASE("A client-discovered provisional object rejects its later inventory delta", "[actor_authority]")
 {
-    // AssignObjects creates this object with HasTrustedState false. Its later
-    // ownerless inventory request must not turn that forged discovery into
-    // shared server inventory state.
+    // A client can propose a syntactically valid, nearby reference, but
+    // AssignObjects creates it with HasTrustedState false. Its next ownerless
+    // inventory request must not turn that discovery into shared server state.
+    const GameId senderCell{0, 0x100};
+    const GameId proposedObjectId{1, 0x200};
+    const GridCellCoords interiorCoords{};
+    REQUIRE(ObjectInteractionPolicy::CanDiscover(
+        proposedObjectId, senderCell, {}, interiorCoords, senderCell, {}, interiorCoords));
+
+    const bool objectHasTrustedState = false;
     REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(
-        false, false, true, true, false, false, false, false, false));
+        false, false, true, true, objectHasTrustedState, false, false, false, false));
 
     // The gate leaves any future server-baselined object eligible for the
     // existing shared-object path.

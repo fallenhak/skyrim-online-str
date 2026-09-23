@@ -2,6 +2,7 @@
 
 #include <catch2/catch.hpp>
 
+#include <cstddef>
 #include <limits>
 
 TEST_CASE("Object discovery requires a valid form and sender cell range", "[object_authority]")
@@ -75,40 +76,69 @@ TEST_CASE("Activation requires a nearby sender-owned actor", "[object_authority]
     const GridCellCoords objectCoords{12, -8};
 
     REQUIRE(ObjectInteractionPolicy::CanActivate(
-        true, true, objectCell, senderCell, worldSpace, nearCoords,
+        true, true, true, objectCell, senderCell, worldSpace, nearCoords,
         objectCell, worldSpace, objectCoords, objectCell, worldSpace, objectCoords));
 
     REQUIRE_FALSE(ObjectInteractionPolicy::CanActivate(
-        true, true, objectCell, senderCell, worldSpace, nearCoords,
+        true, true, true, objectCell, senderCell, worldSpace, nearCoords,
         remoteActorCell, worldSpace, GridCellCoords{20, -8}, objectCell, worldSpace, objectCoords));
 
     // Client activation notifications are replayed through the same game hook on
     // observers. A nearby non-owner replay must not become a new server action.
     REQUIRE_FALSE(ObjectInteractionPolicy::CanActivate(
-        true, false, objectCell, senderCell, worldSpace, nearCoords,
+        true, true, false, objectCell, senderCell, worldSpace, nearCoords,
         objectCell, worldSpace, objectCoords, objectCell, worldSpace, objectCoords));
 }
 
-TEST_CASE("A provisional object's forged lock report is not applied or relayed", "[object_authority]")
+TEST_CASE("A client-discovered provisional object cannot relay a forged activation", "[object_authority]")
 {
-    // OnLockChange applies this policy before it constructs NotifyLockChange
-    // or sends to peers. A forged unlock on a provisional reference leaves the
-    // canonical lock and observers' door state locked.
-    LockData canonicalState{};
-    canonicalState.IsLocked = true;
-    canonicalState.LockLevel = 50;
-    bool observerStateIsLocked = true;
+    const GameId senderCell{0, 1};
+    const GameId objectCell{0, 2};
+    const GameId worldSpace{0, 0x3C};
+    const GridCellCoords coords{10, -10};
+    const GameId objectId{1, 0x200};
 
-    const bool shouldRelay = ObjectInteractionPolicy::TryApplyLockChange(false, canonicalState, false, 0);
+    REQUIRE(ObjectInteractionPolicy::CanDiscover(
+        objectId, senderCell, worldSpace, coords, objectCell, worldSpace, coords));
+
+    const bool objectHasTrustedState = false; // AssignObjects creates discovered references provisionally.
+    std::size_t peerNotificationCount = 0;
+    const bool shouldRelay = ObjectInteractionPolicy::CanActivate(
+        objectHasTrustedState, true, true, objectCell, senderCell, worldSpace, coords,
+        objectCell, worldSpace, coords, objectCell, worldSpace, coords);
     if (shouldRelay)
-        observerStateIsLocked = false;
+        ++peerNotificationCount;
 
     REQUIRE_FALSE(shouldRelay);
-    REQUIRE(canonicalState.IsLocked);
-    REQUIRE(canonicalState.LockLevel == 50);
-    REQUIRE(observerStateIsLocked);
+    REQUIRE(peerNotificationCount == 0);
+}
 
-    REQUIRE(ObjectInteractionPolicy::TryApplyLockChange(true, canonicalState, false, 0));
-    REQUIRE_FALSE(canonicalState.IsLocked);
-    REQUIRE(canonicalState.LockLevel == 0);
+TEST_CASE("A client-reported lock result needs more than a trusted baseline", "[object_authority]")
+{
+    // OnLockChange has no server-side lock outcome resolver, so its client
+    // report cannot mutate canonical state or reach observers even if a
+    // trusted baseline is added later.
+    const auto assertRejectedWithoutValidatedOutcome = [](const bool hasTrustedState)
+    {
+        LockData canonicalState{};
+        canonicalState.IsLocked = true;
+        canonicalState.LockLevel = 50;
+        bool observerStateIsLocked = true;
+        std::size_t relayCount = 0;
+
+        REQUIRE_FALSE(ObjectInteractionPolicy::TryHandleLockChange(
+            hasTrustedState, false, canonicalState, false, 0,
+            [&]
+            {
+                ++relayCount;
+                observerStateIsLocked = false;
+            }));
+        REQUIRE(canonicalState.IsLocked);
+        REQUIRE(canonicalState.LockLevel == 50);
+        REQUIRE(observerStateIsLocked);
+        REQUIRE(relayCount == 0);
+    };
+
+    assertRejectedWithoutValidatedOutcome(false); // Provisional object remains rejected.
+    assertRejectedWithoutValidatedOutcome(true);  // A baseline alone cannot validate a client result.
 }

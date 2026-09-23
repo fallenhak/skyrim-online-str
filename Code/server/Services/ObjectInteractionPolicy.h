@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <utility>
 
 struct ObjectInteractionPolicy final
 {
@@ -62,6 +63,7 @@ struct ObjectInteractionPolicy final
     }
 
     [[nodiscard]] static bool CanActivate(
+        const bool aObjectHasTrustedState,
         const bool aActorExists,
         const bool aOwnedBySender,
         const GameId& aRequestedCell,
@@ -75,7 +77,7 @@ struct ObjectInteractionPolicy final
         const GameId& aObjectWorldSpace,
         const GridCellCoords& aObjectCoords) noexcept
     {
-        return IsAuthorizedActivator(aActorExists, aOwnedBySender) &&
+        return aObjectHasTrustedState && IsAuthorizedActivator(aActorExists, aOwnedBySender) &&
             CanInteract(
                 aRequestedCell, aSenderCell, aSenderWorldSpace, aSenderCoords,
                 aObjectCell, aObjectWorldSpace, aObjectCoords) &&
@@ -90,17 +92,23 @@ struct ObjectInteractionPolicy final
         return aOpenState <= 2;
     }
 
-    [[nodiscard]] static bool TryApplyLockChange(
+    template <typename TOnRelay>
+    [[nodiscard]] static bool TryHandleLockChange(
         const bool aHasTrustedState,
+        const bool aHasIndependentlyValidatedOutcome,
         LockData& aCurrentState,
         const bool aIsLocked,
-        const uint8_t aLockLevel) noexcept
+        const uint8_t aLockLevel,
+        TOnRelay&& aOnRelay)
     {
-        if (!aHasTrustedState)
+        // A stored baseline describes prior state; it does not validate a
+        // result reported by a client (for example, a successful lockpick).
+        if (!aHasTrustedState || !aHasIndependentlyValidatedOutcome)
             return false;
 
         aCurrentState.IsLocked = aIsLocked;
         aCurrentState.LockLevel = aLockLevel;
+        std::forward<TOnRelay>(aOnRelay)();
         return true;
     }
 

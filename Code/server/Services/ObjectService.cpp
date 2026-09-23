@@ -149,6 +149,7 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
 
     const auto& senderCell = acMessage.pPlayer->GetCellComponent();
     const auto& objectCell = objectView.get<CellIdComponent>(*objectIt);
+    const auto& objectComponent = objectView.get<ObjectComponent>(*objectIt);
 
     const auto activatorEntity = static_cast<entt::entity>(packet.ActivatorId);
     const auto activatorView = m_world.view<CharacterComponent, OwnerComponent, CellIdComponent>();
@@ -160,7 +161,7 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
 
     const auto& activatorCell = activatorView.get<CellIdComponent>(*activatorIt);
     if (!ObjectInteractionPolicy::CanActivate(
-            activatorExists, ownedBySender,
+            objectComponent.HasTrustedState, activatorExists, ownedBySender,
             packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
             activatorCell.Cell, activatorCell.WorldSpaceId, activatorCell.CenterCoords,
             objectCell.Cell, objectCell.WorldSpaceId, objectCell.CenterCoords))
@@ -203,23 +204,27 @@ void ObjectService::OnLockChange(const PacketEvent<LockChangeRequest>& acMessage
         return;
 
     auto& objectComponent = objectView.get<ObjectComponent>(*iter);
-    if (!ObjectInteractionPolicy::TryApplyLockChange(
-            objectComponent.HasTrustedState, objectComponent.CurrentLockData, packet.IsLocked, packet.LockLevel))
+    if (!ObjectInteractionPolicy::TryHandleLockChange(
+        objectComponent.HasTrustedState,
+        false, // LockChangeRequest contains only the client's reported outcome; no server-side resolver validates it.
+        objectComponent.CurrentLockData, packet.IsLocked, packet.LockLevel,
+        [&]
+        {
+            NotifyLockChange notifyLockChange;
+            notifyLockChange.Id = packet.Id;
+            notifyLockChange.IsLocked = packet.IsLocked;
+            notifyLockChange.LockLevel = packet.LockLevel;
+
+            for (Player* pPlayer : m_world.GetPlayerManager())
+            {
+                if (pPlayer == acMessage.pPlayer)
+                    continue;
+
+                if (pPlayer->GetCellComponent().Cell == packet.CellId)
+                    pPlayer->Send(notifyLockChange);
+            }
+        }))
         return;
-
-    NotifyLockChange notifyLockChange;
-    notifyLockChange.Id = packet.Id;
-    notifyLockChange.IsLocked = packet.IsLocked;
-    notifyLockChange.LockLevel = packet.LockLevel;
-
-    for (Player* pPlayer : m_world.GetPlayerManager())
-    {
-        if (pPlayer == acMessage.pPlayer)
-            continue;
-
-        if (pPlayer->GetCellComponent().Cell == packet.CellId)
-            pPlayer->Send(notifyLockChange);
-    }
 }
 
 void ObjectService::OnScriptAnimationRequest(const PacketEvent<ScriptAnimationRequest>& acMessage) noexcept
