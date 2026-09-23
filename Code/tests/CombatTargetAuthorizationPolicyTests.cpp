@@ -1,5 +1,8 @@
 #include <catch2/catch.hpp>
 
+#include <TiltedCore/Buffer.hpp>
+#include <TiltedCore/Stl.hpp>
+
 #include <Components.h>
 #include <Services/CombatTargetAuthorizationPolicy.h>
 
