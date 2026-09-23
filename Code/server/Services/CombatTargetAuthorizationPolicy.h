@@ -42,7 +42,9 @@ struct CombatTargetAuthorizationPolicy final
         if (acInput.TargetServerId == 0 || !acInput.TargetEntityExists || acInput.ObservedTargetLifecycleGeneration == 0 ||
             acInput.pCurrentTargetLifecycle == nullptr || !acInput.pCurrentTargetLifecycle->IsValid() ||
             acInput.pCurrentTargetLifecycle->GetGeneration() != acInput.ObservedTargetLifecycleGeneration ||
-            acInput.pTargetPopulationIdentity == nullptr || !acInput.pTargetPopulationIdentity->IsTrustedCreature())
+            acInput.pTargetPopulationIdentity == nullptr ||
+            acInput.pTargetPopulationIdentity->Source == ActorPopulationIdentitySource::kPlayer ||
+            !acInput.pTargetPopulationIdentity->IsTrustedCreature())
             return false;
 
         return acInput.pAttackerCell != nullptr && acInput.pTargetCell != nullptr &&

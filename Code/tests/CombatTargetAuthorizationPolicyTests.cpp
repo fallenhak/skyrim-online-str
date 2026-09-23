@@ -101,6 +101,11 @@ TEST(CombatTargetAuthorizationPolicy, RejectsPlayerHumanoidAndUnknownPopulationC
     input.pTargetPopulationIdentity = &player;
     EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
+    auto playerMisclassifiedAsCreature = MakeIdentity(ActorPopulationIdentitySource::kPlayer, ActorPopulationClass::kCreature);
+    input = fixture.MakeInput();
+    input.pTargetPopulationIdentity = &playerMisclassifiedAsCreature;
+    EXPECT_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+
     auto humanoid = MakeIdentity(ActorPopulationIdentitySource::kServerNpcBase, ActorPopulationClass::kHumanoidNpc);
     input = fixture.MakeInput();
     input.pTargetPopulationIdentity = &humanoid;
