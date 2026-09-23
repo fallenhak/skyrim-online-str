@@ -118,7 +118,13 @@ test.describe('Character Select', () => {
       // A duplicate DOM activation while the request is pending must not submit
       // the same server-owned character ID a second time.
       await characterButtons.nth(0).evaluate((button: HTMLButtonElement) => {
-        button.click();
+        button.dispatchEvent(
+          new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+          }),
+        );
       });
       await expect
         .poll(() => page.evaluate(() => (window as any).selectedCharacterIds))
