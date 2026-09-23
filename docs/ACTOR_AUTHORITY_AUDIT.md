@@ -88,7 +88,33 @@ alone would not validate the submitted location. This leaves provisional
 reference identity and placement, and all discovered object state, unresolved
 for a follow-up authority design. Range still relies on player cell/movement
 reports and does not prove how the sender reached that location; see the
-separate cell/teleport work.
+Cell and teleport review (A11) below.
+
+## Cell and teleport review (A11)
+
+Grid-range comparisons now use widened differences, so extreme client-supplied
+coordinates cannot overflow into a false nearby result. Non-finite and
+unrepresentable positions map to the unset grid sentinel and fail reported-
+position validation. Cell-entry and grid-shift handlers reject missing
+cell/worldspace identities and unset grid coordinates before updating the
+sender's tracked location. Reference movement rejects updates with neither a
+cell nor worldspace identity, while retaining support for temporary exterior
+cells with only a mapped worldspace.
+Ownership release validates any reported location before applying or relaying
+it.
+Both teleport request paths now require the requester and target to be current
+members of the same server party, and only return a target location when the
+target has a live character, movement state, usable cell or worldspace context,
+and finite, representable coordinates.
+
+The server still cannot prove that a client's reported cell or owner-simulated
+reference position matches Skyrim's actual world location. Doors, fast travel,
+scripts, and other legitimate transitions are client-observed, and the current
+server has no authoritative static-reference/world-location source. This leaves
+range-based interaction vulnerable to a client that intentionally reports a
+different valid location. This is the remaining location trust boundary;
+arbitrary movement-distance limits would reject legitimate transitions
+without proving location.
 
 The client producer is `TESObjectREFR::HookActivate`, which emits an
 `ActivateEvent`; `ObjectService::OnActivate` maps its activator to a server

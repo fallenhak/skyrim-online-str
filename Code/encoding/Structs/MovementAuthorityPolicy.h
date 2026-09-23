@@ -8,6 +8,7 @@
 
 #include <Structs/MovementPayloadLimits.h>
 #include <Structs/ReferenceUpdate.h>
+#include <Structs/CellMovementAuthorityPolicy.h>
 
 #include <cmath>
 #include <cstdint>
@@ -29,7 +30,8 @@ struct MovementAuthorityPolicy final
             return false;
 
         const auto& movement = acUpdate.UpdatedMovement;
-        if (!std::isfinite(movement.Position.x) || !std::isfinite(movement.Position.y) || !std::isfinite(movement.Position.z) ||
+        if (!CellMovementAuthorityPolicy::HasValidReferenceLocation(movement.WorldSpaceId, movement.CellId) ||
+            !CellMovementAuthorityPolicy::HasValidPosition(movement.Position.x, movement.Position.y, movement.Position.z) ||
             !std::isfinite(movement.Rotation.x) || !std::isfinite(movement.Rotation.y) || !std::isfinite(movement.Direction) ||
             !movement.Variables.HasFiniteValues())
             return false;

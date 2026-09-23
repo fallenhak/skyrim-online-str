@@ -39,6 +39,7 @@
 #include <Messages/NotifySubtitle.h>
 #include <Messages/NotifyActorTeleport.h>
 #include <Structs/FactionAuthorityPolicy.h>
+#include <Structs/CellMovementAuthorityPolicy.h>
 #include <Structs/MovementAuthorityPolicy.h>
 #include <Services/ObjectInteractionPolicy.h>
 #include <Services/PresentationAuthorityPolicy.h>
@@ -358,6 +359,14 @@ void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwner
     if (message.Reason != OwnershipReleaseReason::Relinquish && message.Reason != OwnershipReleaseReason::DeclineGrant)
     {
         spdlog::warn("Ignored ownership release with invalid reason from player {:X} for actor {:X}", acMessage.pPlayer->GetId(), message.ServerId);
+        return;
+    }
+
+    if (message.Reason == OwnershipReleaseReason::Relinquish && (message.WorldSpaceId || message.CellId) &&
+        !CellMovementAuthorityPolicy::HasValidReportedLocation(message.WorldSpaceId, message.CellId, message.Position))
+    {
+        spdlog::warn(
+            "Ignored ownership release with malformed location from player {:X} for actor {:X}", acMessage.pPlayer->GetId(), message.ServerId);
         return;
     }
 
@@ -1185,6 +1194,8 @@ void CharacterService::ProcessMovementChanges() const noexcept
 
             update.OwnershipEpoch = ownerComponent.OwnershipEpoch;
 
+            movement.CellId = cellIdComponent.Cell;
+            movement.WorldSpaceId = cellIdComponent.WorldSpaceId;
             movement.Position = movementComponent.Position;
 
             movement.Rotation.x = movementComponent.Rotation.x;

@@ -13,13 +13,17 @@ TEST_CASE("Movement updates require the current non-zero ownership epoch", "[act
     REQUIRE_FALSE(MovementAuthorityPolicy::IsAuthorized(true, true, true, 0));
 }
 
-TEST_CASE("Movement payload rejects non-finite values and oversized collections", "[actor_authority]")
+TEST_CASE("Movement payload rejects invalid locations and oversized collections", "[actor_authority]")
 {
     ReferenceUpdate update;
     update.OwnershipEpoch = 4;
+    update.UpdatedMovement.CellId = GameId{0, 0x1234};
     REQUIRE(MovementAuthorityPolicy::HasValidPayload(update));
 
     update.UpdatedMovement.Position.x = std::numeric_limits<float>::quiet_NaN();
+    REQUIRE_FALSE(MovementAuthorityPolicy::HasValidPayload(update));
+
+    update.UpdatedMovement.Position.x = std::numeric_limits<float>::max();
     REQUIRE_FALSE(MovementAuthorityPolicy::HasValidPayload(update));
 
     update.UpdatedMovement.Position.x = 0.f;

@@ -1,7 +1,41 @@
 #include <Structs/GridCellCoords.h>
 #include <TiltedCore/Serialization.hpp>
 
+#include <cmath>
+#include <cstdint>
+#include <limits>
+
 using TiltedPhoques::Serialization;
+
+namespace
+{
+bool IsUnset(const GridCellCoords& acCoords) noexcept
+{
+    // INT32_MAX is the unset sentinel; reject a partial sentinel as well.
+    return acCoords.X == std::numeric_limits<int32_t>::max() || acCoords.Y == std::numeric_limits<int32_t>::max();
+}
+
+bool IsWithinDistance(const int32_t aLeft, const int32_t aRight, const int32_t aDistance) noexcept
+{
+    const int64_t difference = static_cast<int64_t>(aLeft) - static_cast<int64_t>(aRight);
+    return difference >= -static_cast<int64_t>(aDistance) && difference <= static_cast<int64_t>(aDistance);
+}
+
+bool TryToGridCoordinate(const float aCoordinate, int32_t& aGridCoordinate) noexcept
+{
+    if (!std::isfinite(aCoordinate))
+        return false;
+
+    const double grid = std::floor(static_cast<double>(aCoordinate) / 4096.0);
+    // Avoid overflowing the conversion or turning an out-of-range position into a plausible edge cell.
+    if (grid < static_cast<double>(std::numeric_limits<int32_t>::min()) ||
+        grid >= static_cast<double>(std::numeric_limits<int32_t>::max()))
+        return false;
+
+    aGridCoordinate = static_cast<int32_t>(grid);
+    return true;
+}
+} // namespace
 
 GridCellCoords::GridCellCoords()
 {
@@ -43,23 +77,26 @@ GridCellCoords GridCellCoords::CalculateGridCellCoords(const Vector3_NetQuantize
 
 GridCellCoords GridCellCoords::CalculateGridCellCoords(const float aX, const float aY) noexcept
 {
-    auto x = static_cast<int32_t>(floor(aX / 4096.f));
-    auto y = static_cast<int32_t>(floor(aY / 4096.f));
-    return GridCellCoords(x, y);
+    int32_t gridX{};
+    int32_t gridY{};
+    if (!TryToGridCoordinate(aX, gridX) || !TryToGridCoordinate(aY, gridY))
+        return {};
+
+    return GridCellCoords(gridX, gridY);
 }
 
 bool GridCellCoords::AreGridCellsOverlapping(const GridCellCoords& aCoords1, const GridCellCoords& aCoords2) noexcept
 {
-    if ((abs(aCoords1.X - aCoords2.X) < m_gridsToLoad) && (abs(aCoords1.Y - aCoords2.Y) < m_gridsToLoad))
-        return true;
-    return false;
+    return !IsUnset(aCoords1) && !IsUnset(aCoords2) && IsWithinDistance(aCoords1.X, aCoords2.X, m_gridsToLoad - 1) &&
+           IsWithinDistance(aCoords1.Y, aCoords2.Y, m_gridsToLoad - 1);
 }
 
 bool GridCellCoords::IsCellInGridCell(const GridCellCoords& aCell, const GridCellCoords& aGridCell, bool aIsDragon) noexcept
 {
+    if (IsUnset(aCell) || IsUnset(aGridCell))
+        return false;
+
     int32_t gridsToLoad = aIsDragon ? m_gridsToLoadIfDragon : m_gridsToLoad;
     int32_t distanceToBorder = gridsToLoad / 2;
-    if ((abs(aCell.X - aGridCell.X) <= distanceToBorder) && (abs(aCell.Y - aGridCell.Y) <= distanceToBorder))
-        return true;
-    return false;
+    return IsWithinDistance(aCell.X, aGridCell.X, distanceToBorder) && IsWithinDistance(aCell.Y, aGridCell.Y, distanceToBorder);
 }
