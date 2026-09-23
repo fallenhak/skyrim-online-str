@@ -56,6 +56,7 @@ enum ClientOpcode : unsigned char
     kRequestCharacterList,
     kSelectCharacterRequest,
     kCharacterReadyRequest,
+    kCombatHitObservationRequest,
     kClientOpcodeMax
 };
 

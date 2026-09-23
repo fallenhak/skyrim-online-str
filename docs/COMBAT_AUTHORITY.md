@@ -1,16 +1,17 @@
 # Combat Authority Readiness
 
 This document defines the current combat boundary and the smallest safe future
-attribution model. It does not add a hit protocol, XP, loot, or combat reward
-behavior.
+attribution model. The server accepts bounded hit observations, but does not
+apply hit damage, award XP, grant loot, or establish kill attribution.
 
 ## Current signal flow
 
 - `Actor::HookDamageActor` can observe a local Skyrim hit as `HitterId` and
   `HitteeId`, and local health changes are emitted as signed deltas.
 - `CombatService::OnHitEvent` and its target-update path are currently disabled
-  (`#if 0`); there is no active client hit producer or server hit-claim
-  handler.
+  (`#if 0`); there is no active client hit producer. The server accepts a
+  separate observation request only after owner, target lifecycle, trusted
+  population, cell, and replay validation.
 - Projectile launches are currently visual/relay messages. They now require
   the local shooter ownership epoch, server current-owner validation, finite
   numeric input, and a matching remote incarnation before launch.
@@ -41,10 +42,11 @@ The server cannot currently establish from a client hit claim alone:
 - an attribution through a projectile/effect chain after ownership changes;
 - an XP/reward contribution or a valid PvP exclusion solely from a form ID.
 
-Therefore the current safe rule is to accept only owner/epoch-bound state
-observations and to avoid deriving XP, loot, or rewards from them.
+Therefore the current safe rule is to keep accepted hit reports as pending
+observations and avoid treating them as proof of damage, kills, XP, loot, or
+rewards.
 
-## Phase I — Proposed validated hit-observation protocol
+## Phase I — Validated hit-observation protocol
 
 ### Client producer review (C08)
 
@@ -64,24 +66,31 @@ future producer needs a server-verifiable way to bind the target to its current
 lifecycle before it can submit an observation; current owner epochs alone do
 not provide that binding.
 
-No production packet is enabled by this phase. The pure
-`CombatAttackerAuthorizationPolicy` checks that a sender's session is in-world,
-the resolved attacker entity is a player character owned by that sender at the
-requested nonzero ownership epoch, and the attacker's server-resolved
-persistent `CharacterId` matches the character selected in that session. The
-policy takes server-resolved identity facts; it does not receive a
-client-selected `CharacterId`. It does not enable hit handling or establish
-target eligibility.
+The server-side `CombatHitObservationRequest` contains attacker and target
+server entity IDs, the attacker ownership epoch, the target lifecycle
+generation, and a replayable observation ID. It contains no persistent
+`CharacterId`, damage, classification, or kill claim. The handler resolves the
+attacker from canonical components and checks that the sender is in-world, is
+the current owner at the requested nonzero epoch, and has the same
+server-resolved persistent identity as the character selected in that session.
+It then resolves the target and checks its current lifecycle, trusted Creature
+identity, and canonical cell range before consulting the replay cache.
 
-If combat attribution is added later, a request such as
-`CombatHitObservationRequest` should identify an event
-with bounded, replayable identity rather than trusting a client-provided
-persistent character ID:
+An accepted request is appended to a fixed 1024-entry pending FIFO. A full FIFO
+rejects new requests and retains existing entries. The server assigns the
+observation tick. The handler does not apply damage, mutate health/death,
+record contribution, award XP, or grant loot. Client `HitEvent` production
+remains disabled: the target lifecycle generation is server-only and is not yet
+sent in spawn or ownership messages, so ordinary clients currently have no
+producer that can populate that field correctly.
+
+Later correlation work must use the accepted request's bounded, replayable
+identity rather than trusting a client-provided persistent character ID:
 
 - attacker server entity ID and attacker ownership epoch;
 - target server entity ID and target lifecycle generation/epoch;
-- a strictly bounded per-attacker observation/event ID;
-- a client tick or bounded observation timestamp for ordering diagnostics;
+- a bounded observation/event ID;
+- a server-assigned observation tick for ordering diagnostics;
 - optional weapon/projectile/effect identity only after server-side form and
   classification checks.
 
@@ -96,13 +105,13 @@ observation must be correlated with canonical health/death changes before any
 future contribution is recorded. No client-provided XP amount or reward amount
 should be authoritative.
 
-`CombatObservationReplayCache` provides the bounded replay window for this
-future handler. It keys an observation ID by attacker server entity ID and
-ownership epoch, plus target server entity ID and lifecycle generation. It
-retains a fixed FIFO window (1024 entries by default); a key can be considered
-new again after eviction. The handler must validate the current attacker and
-target first, then consult the cache immediately before accepting the
-observation. The client tick is not part of replay identity.
+`CombatObservationReplayCache` provides a bounded replay window. It keys an
+observation ID by attacker server entity ID and ownership epoch, plus target
+server entity ID and lifecycle generation. It retains a fixed FIFO window
+(1024 entries by default); a key can be considered new again after eviction.
+The handler validates the current attacker and target first, then consults the
+cache immediately before accepting the observation. Replay identity excludes
+the server-assigned observation tick.
 
 ## Contribution and transfer implications
 
@@ -119,8 +128,8 @@ this milestone.
 
 ## Deliberate non-changes
 
-- No network hit producer was enabled.
-- No client hit claim is trusted by the server.
+- No client hit producer was enabled.
+- No client hit claim is treated as proof of damage or a kill.
 - No damage attribution, XP, inventory, party, session, or reward system was
   added.
 - No PartyService or party-leader state is used as combat authority.
