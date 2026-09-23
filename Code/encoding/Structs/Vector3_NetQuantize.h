@@ -1,5 +1,7 @@
 #pragma once
 
+#include <glm/vec3.hpp>
+
 using TiltedPhoques::Buffer;
 
 //! Network optimized 3d vector

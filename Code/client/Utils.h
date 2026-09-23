@@ -35,6 +35,7 @@ static void Assert(const char* apExpression, const char* apMessage)
 
 std::optional<uint32_t> GetServerId(entt::entity aEntity) noexcept;
 std::optional<entt::entity> FindEntityByServerId(uint32_t aServerId) noexcept;
+std::optional<ActorOwnershipToken> GetOwnershipToken(entt::entity aEntity) noexcept;
 std::optional<ActorOwnershipToken> GetLocalOwnershipToken(uint32_t aFormId) noexcept;
 std::optional<ActorOwnershipToken> GetRemoteOwnershipToken(uint32_t aFormId) noexcept;
 

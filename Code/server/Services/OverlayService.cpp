@@ -1,4 +1,6 @@
 #include <GameServer.h>
+#include <World.h>
+#include <Services/TeleportAuthorityPolicy.h>
 
 #include <Services/OverlayService.h>
 
@@ -85,20 +87,32 @@ void OverlayService::OnTeleport(const PacketEvent<TeleportRequest>& acMessage) c
     if (!pTargetPlayer)
         return;
 
+    const auto& requesterParty = acMessage.pPlayer->GetParty();
+    const auto& targetParty = pTargetPlayer->GetParty();
+    const auto* pRequesterParty = requesterParty.JoinedPartyId ? m_world.GetPartyService().GetById(*requesterParty.JoinedPartyId) : nullptr;
+    const auto* pTargetParty = targetParty.JoinedPartyId ? m_world.GetPartyService().GetById(*targetParty.JoinedPartyId) : nullptr;
+    if (!TeleportAuthorityPolicy::CanRequestPartyTeleport(
+            pRequesterParty != nullptr, requesterParty.JoinedPartyId.value_or(0), pTargetParty != nullptr, targetParty.JoinedPartyId.value_or(0)))
+        return;
+
     NotifyTeleport response{};
 
     auto character = pTargetPlayer->GetCharacter();
-    if (character)
-    {
-        const auto* pMovementComponent = m_world.try_get<MovementComponent>(*character);
-        if (pMovementComponent)
-        {
-            const auto& cellComponent = pTargetPlayer->GetCellComponent();
-            response.CellId = cellComponent.Cell;
-            response.Position = pMovementComponent->Position;
-            response.WorldSpaceId = cellComponent.WorldSpaceId;
-        }
-    }
+    if (!character || !m_world.valid(*character))
+        return;
+
+    const auto* pMovementComponent = m_world.try_get<MovementComponent>(*character);
+    if (!pMovementComponent)
+        return;
+
+    const auto& cellComponent = pTargetPlayer->GetCellComponent();
+    if (!TeleportAuthorityPolicy::HasValidDestination(
+            true, true, cellComponent.WorldSpaceId, cellComponent.Cell, pMovementComponent->Position))
+        return;
+
+    response.CellId = cellComponent.Cell;
+    response.Position = pMovementComponent->Position;
+    response.WorldSpaceId = cellComponent.WorldSpaceId;
 
     acMessage.pPlayer->Send(response);
 }

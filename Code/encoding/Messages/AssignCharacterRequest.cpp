@@ -25,6 +25,7 @@ void AssignCharacterRequest::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter
 void AssignCharacterRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept
 {
     ClientMessage::DeserializeRaw(aReader);
+    IsValid = true;
 
     Cookie = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
     ReferenceId.Deserialize(aReader);
@@ -41,7 +42,11 @@ void AssignCharacterRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aRead
     AppearanceBuffer = Serialization::ReadString(aReader);
 
     FactionsContent = {};
-    FactionsContent.Deserialize(aReader);
+    if (!FactionsContent.Deserialize(aReader))
+    {
+        IsValid = false;
+        return;
+    }
 
     LatestAction = ActionEvent{};
     LatestAction.ApplyDifferential(aReader);

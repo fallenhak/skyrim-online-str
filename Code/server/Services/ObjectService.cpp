@@ -3,6 +3,8 @@
 #include <GameServer.h>
 #include <World.h>
 #include <Components.h>
+#include <Services/ObjectInteractionPolicy.h>
+#include <Services/PresentationAuthorityPolicy.h>
 
 #include <Events/PlayerLeaveCellEvent.h>
 
@@ -59,12 +61,16 @@ void ObjectService::OnPlayerLeaveCellEvent(const PlayerLeaveCellEvent& acEvent) 
 // This is fine for containers and doors, but if this system is expanded, think of temporaries.
 void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsRequest>& acMessage) noexcept
 {
-    auto view = m_world.view<FormIdComponent, ObjectComponent, InventoryComponent>();
+    auto view = m_world.view<FormIdComponent, ObjectComponent, CellIdComponent, InventoryComponent>();
+    const auto& senderCell = acMessage.pPlayer->GetCellComponent();
 
     AssignObjectsResponse response;
 
     for (const ObjectData& object : acMessage.Packet.Objects)
     {
+        if (!object.Id)
+            continue;
+
         const auto iter = std::find_if(
             std::begin(view), std::end(view),
             [view, id = object.Id](auto entity)
@@ -75,6 +81,12 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
 
         if (iter != std::end(view))
         {
+            const auto& objectCell = view.get<CellIdComponent>(*iter);
+            if (!ObjectInteractionPolicy::CanInteract(
+                    object.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+                    objectCell.Cell, objectCell.WorldSpaceId, objectCell.CenterCoords))
+                continue;
+
             ObjectData objectData;
             objectData.ServerId = World::ToInteger(*iter);
 
@@ -82,32 +94,35 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.Id = formIdComponent.Id;
 
             auto& objectComponent = view.get<ObjectComponent>(*iter);
-            objectData.CurrentLockData = objectComponent.CurrentLockData;
-
-            auto& inventoryComponent = view.get<InventoryComponent>(*iter);
-            objectData.CurrentInventory = inventoryComponent.Content;
-
-            objectData.IsSenderFirst = false;
+            objectData.IsStateUntrusted = !objectComponent.HasTrustedState;
+            if (objectComponent.HasTrustedState)
+            {
+                objectData.CurrentLockData = objectComponent.CurrentLockData;
+                objectData.CurrentInventory = view.get<InventoryComponent>(*iter).Content;
+            }
 
             response.Objects.push_back(objectData);
         }
         else
         {
+            if (!ObjectInteractionPolicy::CanDiscover(
+                    object.Id, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+                    object.CellId, object.WorldSpaceId, object.CurrentCoords))
+                continue;
+
             const auto cEntity = m_world.create();
 
             m_world.emplace<FormIdComponent>(cEntity, object.Id);
 
-            auto& objectComponent = m_world.emplace<ObjectComponent>(cEntity, acMessage.pPlayer);
-            objectComponent.CurrentLockData = object.CurrentLockData;
+            m_world.emplace<ObjectComponent>(cEntity, acMessage.pPlayer);
 
             m_world.emplace<CellIdComponent>(cEntity, object.CellId, object.WorldSpaceId, object.CurrentCoords);
-            auto& inventoryComp = m_world.emplace<InventoryComponent>(cEntity);
-            inventoryComp.Content = object.CurrentInventory;
+            m_world.emplace<InventoryComponent>(cEntity);
 
             ObjectData objectData;
             objectData.Id = object.Id;
             objectData.ServerId = World::ToInteger(cEntity);
-            objectData.IsSenderFirst = true;
+            objectData.IsStateUntrusted = true;
 
             response.Objects.push_back(objectData);
         }
@@ -119,14 +134,48 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
 
 void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) const noexcept
 {
+    const auto& packet = acMessage.Packet;
+    if (!ObjectInteractionPolicy::IsValidOpenState(packet.PreActivationOpenState))
+        return;
+
+    const auto objectView = m_world.view<FormIdComponent, ObjectComponent, CellIdComponent>();
+    const auto objectIt = std::find_if(
+        objectView.begin(), objectView.end(),
+        [objectView, id = packet.Id](const auto entity)
+        {
+            return objectView.get<FormIdComponent>(entity).Id == id;
+        });
+    if (objectIt == objectView.end())
+        return;
+
+    const auto& senderCell = acMessage.pPlayer->GetCellComponent();
+    const auto& objectCell = objectView.get<CellIdComponent>(*objectIt);
+    const auto& objectComponent = objectView.get<ObjectComponent>(*objectIt);
+
+    const auto activatorEntity = static_cast<entt::entity>(packet.ActivatorId);
+    const auto activatorView = m_world.view<CharacterComponent, OwnerComponent, CellIdComponent>();
+    const auto activatorIt = activatorView.find(activatorEntity);
+    const bool activatorExists = activatorIt != activatorView.end();
+    const bool ownedBySender = activatorExists && activatorView.get<OwnerComponent>(*activatorIt).GetOwner() == acMessage.pPlayer;
+    if (!activatorExists)
+        return;
+
+    const auto& activatorCell = activatorView.get<CellIdComponent>(*activatorIt);
+    if (!ObjectInteractionPolicy::CanActivate(
+            objectComponent.HasTrustedState, activatorExists, ownedBySender,
+            packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+            activatorCell.Cell, activatorCell.WorldSpaceId, activatorCell.CenterCoords,
+            objectCell.Cell, objectCell.WorldSpaceId, objectCell.CenterCoords))
+        return;
+
     NotifyActivate notifyActivate;
-    notifyActivate.Id = acMessage.Packet.Id;
-    notifyActivate.ActivatorId = acMessage.Packet.ActivatorId;
-    notifyActivate.PreActivationOpenState = acMessage.Packet.PreActivationOpenState;
+    notifyActivate.Id = packet.Id;
+    notifyActivate.ActivatorId = packet.ActivatorId;
+    notifyActivate.PreActivationOpenState = packet.PreActivationOpenState;
 
     for (auto pPlayer : m_world.GetPlayerManager())
     {
-        if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == acMessage.Packet.CellId)
+        if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == packet.CellId)
         {
             pPlayer->Send(notifyActivate);
         }
@@ -135,49 +184,77 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
 
 void ObjectService::OnLockChange(const PacketEvent<LockChangeRequest>& acMessage) const noexcept
 {
-    NotifyLockChange notifyLockChange;
-    notifyLockChange.Id = acMessage.Packet.Id;
-    notifyLockChange.IsLocked = acMessage.Packet.IsLocked;
-    notifyLockChange.LockLevel = acMessage.Packet.LockLevel;
-
-    auto objectView = m_world.view<FormIdComponent, ObjectComponent>();
+    const auto& packet = acMessage.Packet;
+    auto objectView = m_world.view<FormIdComponent, ObjectComponent, CellIdComponent>();
 
     const auto iter = std::find_if(
         std::begin(objectView), std::end(objectView),
-        [objectView, id = acMessage.Packet.Id](auto entity)
+        [objectView, id = packet.Id](auto entity)
         {
             const auto& formIdComponent = objectView.get<FormIdComponent>(entity);
             return formIdComponent.Id == id;
         });
+    if (iter == std::end(objectView))
+        return;
 
-    if (iter != std::end(objectView))
-    {
-        auto& objectComponent = objectView.get<ObjectComponent>(*iter);
-        objectComponent.CurrentLockData.IsLocked = acMessage.Packet.IsLocked;
-        objectComponent.CurrentLockData.LockLevel = acMessage.Packet.LockLevel;
-    }
+    const auto& senderCell = acMessage.pPlayer->GetCellComponent();
+    const auto& objectCell = objectView.get<CellIdComponent>(*iter);
+    if (!ObjectInteractionPolicy::CanInteract(
+            packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+            objectCell.Cell, objectCell.WorldSpaceId, objectCell.CenterCoords))
+        return;
 
-    for (Player* pPlayer : m_world.GetPlayerManager())
-    {
-        if (pPlayer == acMessage.pPlayer)
-            continue;
+    auto& objectComponent = objectView.get<ObjectComponent>(*iter);
+    if (!ObjectInteractionPolicy::TryHandleLockChange(
+        objectComponent.HasTrustedState,
+        false, // LockChangeRequest contains only the client's reported outcome; no server-side resolver validates it.
+        objectComponent.CurrentLockData, packet.IsLocked, packet.LockLevel,
+        [&]
+        {
+            NotifyLockChange notifyLockChange;
+            notifyLockChange.Id = packet.Id;
+            notifyLockChange.IsLocked = packet.IsLocked;
+            notifyLockChange.LockLevel = packet.LockLevel;
 
-        if (pPlayer->GetCellComponent().Cell == acMessage.Packet.CellId)
-            pPlayer->Send(notifyLockChange);
-    }
+            for (Player* pPlayer : m_world.GetPlayerManager())
+            {
+                if (pPlayer == acMessage.pPlayer)
+                    continue;
+
+                if (pPlayer->GetCellComponent().Cell == packet.CellId)
+                    pPlayer->Send(notifyLockChange);
+            }
+        }))
+        return;
 }
 
 void ObjectService::OnScriptAnimationRequest(const PacketEvent<ScriptAnimationRequest>& acMessage) noexcept
 {
-    auto& packet = acMessage.Packet;
+    const auto& packet = acMessage.Packet;
+    const auto source = static_cast<entt::entity>(packet.ServerId);
+    if (!m_world.valid(source))
+        return;
+
+    const auto* pFormIdComponent = m_world.try_get<FormIdComponent>(source);
+    const auto* pCellComponent = m_world.try_get<CellIdComponent>(source);
+    const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(source);
+    const bool isNpcCharacter = pCharacterComponent && !pCharacterComponent->IsPlayer();
+    const auto& senderCell = acMessage.pPlayer->GetCellComponent();
+    const bool hasCell = pCellComponent && static_cast<bool>(*pCellComponent) && static_cast<bool>(senderCell);
+    const bool isInRange = hasCell && ObjectInteractionPolicy::IsInSenderRange(
+        senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+        pCellComponent->Cell, pCellComponent->WorldSpaceId, pCellComponent->CenterCoords,
+        pCharacterComponent && pCharacterComponent->IsDragon());
+    if (!PresentationAuthorityPolicy::CanRelayScriptAnimation(
+            true, pFormIdComponent && pFormIdComponent->Id.BaseId != 0,
+            hasCell, isNpcCharacter, isInRange))
+        return;
 
     NotifyScriptAnimation message{};
-    message.FormID = packet.FormID;
+    message.FormID = pFormIdComponent->Id;
     message.Animation = packet.Animation;
     message.EventName = packet.EventName;
 
-    for (Player* pPlayer : m_world.GetPlayerManager())
-    {
-        pPlayer->Send(message);
-    }
+    if (!GameServer::Get()->SendToPlayersInRange(message, source, acMessage.GetSender()))
+        spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }

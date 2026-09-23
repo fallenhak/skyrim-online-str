@@ -3,6 +3,7 @@
 void DrawWeaponRequest::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
 {
     Serialization::WriteVarInt(aWriter, Id);
+    Serialization::WriteVarInt(aWriter, OwnershipEpoch);
     Serialization::WriteBool(aWriter, IsWeaponDrawn);
 }
 
@@ -11,5 +12,6 @@ void DrawWeaponRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) n
     ClientMessage::DeserializeRaw(aReader);
 
     Id = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
+    OwnershipEpoch = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
     IsWeaponDrawn = Serialization::ReadBool(aReader);
 }

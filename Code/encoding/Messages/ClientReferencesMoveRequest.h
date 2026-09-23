@@ -2,12 +2,14 @@
 
 #include "Message.h"
 #include <Structs/ReferenceUpdate.h>
+#include <Structs/MovementPayloadLimits.h>
 
 using TiltedPhoques::String;
 
 struct ClientReferencesMoveRequest final : ClientMessage
 {
     static constexpr ClientOpcode Opcode = kClientReferencesMoveRequest;
+    static constexpr std::size_t kMaxUpdates = MovementPayloadLimits::kMaxUpdates;
 
     ClientReferencesMoveRequest()
         : ClientMessage(Opcode)

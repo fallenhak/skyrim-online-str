@@ -107,9 +107,10 @@ void ActionEvent::GenerateDifferential(const ActionEvent& aPrevious, TiltedPhoqu
     }
 }
 
-void ActionEvent::ApplyDifferential(TiltedPhoques::Buffer::Reader& aReader) noexcept
+bool ActionEvent::ApplyDifferential(TiltedPhoques::Buffer::Reader& aReader) noexcept
 {
     uint64_t flags = 0;
+    bool valid = true;
 
     aReader.ReadBits(flags, 8);
 
@@ -159,6 +160,8 @@ void ActionEvent::ApplyDifferential(TiltedPhoques::Buffer::Reader& aReader) noex
 
     if (flags & kVariables)
     {
-        Variables.ApplyDiff(aReader);
+        valid = Variables.ApplyDiff(aReader);
     }
+
+    return valid;
 }

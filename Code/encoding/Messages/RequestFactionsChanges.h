@@ -19,5 +19,5 @@ struct RequestFactionsChanges final : ClientMessage
 
     bool operator==(const RequestFactionsChanges& acRhs) const noexcept { return Changes == acRhs.Changes && GetOpcode() == acRhs.GetOpcode(); }
 
-    TiltedPhoques::Map<uint32_t, Factions> Changes;
+    TiltedPhoques::Map<uint32_t, FactionUpdate> Changes;
 };

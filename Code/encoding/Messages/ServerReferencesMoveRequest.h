@@ -2,12 +2,14 @@
 
 #include "Message.h"
 #include <Structs/ReferenceUpdate.h>
+#include <Structs/MovementPayloadLimits.h>
 
 using TiltedPhoques::String;
 
 struct ServerReferencesMoveRequest final : ServerMessage
 {
     static constexpr ServerOpcode Opcode = kServerReferencesMoveRequest;
+    static constexpr std::size_t kMaxUpdates = MovementPayloadLimits::kMaxUpdates;
 
     ServerReferencesMoveRequest()
         : ServerMessage(Opcode)

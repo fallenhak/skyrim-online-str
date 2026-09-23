@@ -65,6 +65,31 @@ TEST_CASE("Encoding factory", "[encoding.factory]")
     }
 }
 
+TEST_CASE("AssignObjectsResponse preserves provisional object state", "[encoding.object_authority]")
+{
+    AssignObjectsResponse sent;
+    ObjectData object{};
+    object.ServerId = 42;
+    object.Id = GameId{1, 0x200};
+    object.IsStateUntrusted = true;
+    sent.Objects.push_back(object);
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto message = factory.Extract(reader);
+
+    REQUIRE(message);
+    auto received = CastUnique<AssignObjectsResponse>(std::move(message));
+    REQUIRE(received);
+    REQUIRE(received->Objects.size() == 1);
+    REQUIRE(received->Objects.front().IsStateUntrusted);
+    REQUIRE(received->Objects.front() == object);
+}
+
 TEST_CASE("Static structures", "[encoding.static]")
 {
     GIVEN("GameId")
@@ -431,6 +456,7 @@ TEST_CASE("Packets", "[encoding.packets]")
     {
         ClientReferencesMoveRequest sendMessage, recvMessage;
         auto& update = sendMessage.Updates[1];
+        update.OwnershipEpoch = 17;
         auto& move = update.UpdatedMovement;
 
         AnimationVariables vars;
@@ -465,6 +491,7 @@ TEST_CASE("Packets", "[encoding.packets]")
 
         recvMessage.DeserializeRaw(reader);
 
+        REQUIRE(recvMessage.Updates[1].OwnershipEpoch == sendMessage.Updates[1].OwnershipEpoch);
         REQUIRE(recvMessage.Updates[1].UpdatedMovement == sendMessage.Updates[1].UpdatedMovement);
     }
 }

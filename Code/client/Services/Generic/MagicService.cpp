@@ -156,6 +156,11 @@ void MagicService::OnNotifySpellCast(const NotifySpellCast& acMessage) const noe
     auto formIdComponent = remoteView.get<FormIdComponent>(*remoteIt);
     TESForm* pForm = TESForm::GetById(formIdComponent.Id);
     Actor* pActor = Cast<Actor>(pForm);
+    if (!pActor)
+    {
+        spdlog::warn("{}: caster form {:X} is not a loaded actor", __FUNCTION__, formIdComponent.Id);
+        return;
+    }
 
     pActor->GenerateMagicCasters();
 
@@ -298,6 +303,11 @@ void MagicService::OnNotifyInterruptCast(const NotifyInterruptCast& acMessage) c
 
     const TESForm* pForm = TESForm::GetById(formIdComponent.Id);
     Actor* pActor = Cast<Actor>(pForm);
+    if (!pActor)
+    {
+        spdlog::warn("{}: caster form {:X} is not a loaded actor", __FUNCTION__, formIdComponent.Id);
+        return;
+    }
 
     pActor->GenerateMagicCasters();
 
@@ -355,15 +365,16 @@ void MagicService::OnAddTargetEvent(const AddTargetEvent& acEvent) noexcept
         return;
     }
 
-    std::optional<uint32_t> serverIdRes = Utils::GetServerId(*it);
-    if (!serverIdRes.has_value())
+    const auto targetOwnershipToken = Utils::GetOwnershipToken(*it);
+    if (!targetOwnershipToken)
     {
-        MagicQueue::Spdlog("{}: server ID for target formID not found, formID: {:X}, queueing", __FUNCTION__, acEvent.TargetID);
+        MagicQueue::Spdlog("{}: current ownership for target formID not found, formID: {:X}, queueing", __FUNCTION__, acEvent.TargetID);
         m_queuedEffects.push(MagicAddTargetEventQueue(acEvent));
         return;
     }
 
-    request.TargetId = serverIdRes.value();
+    request.TargetId = targetOwnershipToken->ServerId;
+    request.TargetOwnershipEpoch = targetOwnershipToken->OwnershipEpoch;
 
     if (acEvent.CasterID)
     {
@@ -376,15 +387,16 @@ void MagicService::OnAddTargetEvent(const AddTargetEvent& acEvent) noexcept
             return;
         }
 
-        serverIdRes = Utils::GetServerId(*casterIt);
-        if (!serverIdRes.has_value())
+        const auto casterOwnershipToken = Utils::GetOwnershipToken(*casterIt);
+        if (!casterOwnershipToken)
         {
-            MagicQueue::Spdlog("{}: server ID for caster formID not found, formID: {:X}, queueing", __FUNCTION__, acEvent.CasterID);
+            MagicQueue::Spdlog("{}: current ownership for caster formID not found, formID: {:X}, queueing", __FUNCTION__, acEvent.CasterID);
             m_queuedEffects.push(MagicAddTargetEventQueue(acEvent));
             return;
         }
 
-        request.CasterId = serverIdRes.value();
+        request.CasterId = casterOwnershipToken->ServerId;
+        request.CasterOwnershipEpoch = casterOwnershipToken->OwnershipEpoch;
     }
 
     request.IsDualCasting = acEvent.IsDualCasting;
@@ -429,6 +441,21 @@ void MagicService::OnNotifyAddTarget(const NotifyAddTarget& acMessage) noexcept
         return;
     }
 
+    const auto targetEntity = Utils::FindEntityByServerId(acMessage.TargetId);
+    if (!targetEntity)
+    {
+        MagicQueue::Spdlog("{}: could not find targeted actor entity for serverID {:X}, queueing", __FUNCTION__, acMessage.TargetId);
+        m_queuedRemoteEffects.push(acMessage);
+        return;
+    }
+
+    const auto targetOwnershipToken = Utils::GetOwnershipToken(*targetEntity);
+    if (!targetOwnershipToken || targetOwnershipToken->OwnershipEpoch != acMessage.TargetOwnershipEpoch)
+    {
+        spdlog::debug("{}: dropping stale AddTarget notification for target {:X}, epoch {}", __FUNCTION__, acMessage.TargetId, acMessage.TargetOwnershipEpoch);
+        return;
+    }
+
     Actor* pActor = Utils::GetByServerId<Actor>(acMessage.TargetId);
     if (!pActor)
     {
@@ -438,12 +465,30 @@ void MagicService::OnNotifyAddTarget(const NotifyAddTarget& acMessage) noexcept
     }
 
     Actor* pCaster{};
-    acMessage.CasterId && (pCaster = Utils::GetByServerId<Actor>(acMessage.CasterId));
-    if (acMessage.CasterId && !pCaster)
+    if (acMessage.CasterId)
     {
-        MagicQueue::Spdlog("{}: could not find caster Actor for serverID {:X}, queueing", __FUNCTION__, acMessage.CasterId);
-        m_queuedRemoteEffects.push(acMessage);
-        return;
+        const auto casterEntity = Utils::FindEntityByServerId(acMessage.CasterId);
+        if (!casterEntity)
+        {
+            MagicQueue::Spdlog("{}: could not find caster entity for serverID {:X}, queueing", __FUNCTION__, acMessage.CasterId);
+            m_queuedRemoteEffects.push(acMessage);
+            return;
+        }
+
+        const auto casterOwnershipToken = Utils::GetOwnershipToken(*casterEntity);
+        if (!casterOwnershipToken || casterOwnershipToken->OwnershipEpoch != acMessage.CasterOwnershipEpoch)
+        {
+            spdlog::debug("{}: dropping stale AddTarget notification for caster {:X}, epoch {}", __FUNCTION__, acMessage.CasterId, acMessage.CasterOwnershipEpoch);
+            return;
+        }
+
+        pCaster = Utils::GetByServerId<Actor>(acMessage.CasterId);
+        if (!pCaster)
+        {
+            MagicQueue::Spdlog("{}: could not find caster Actor for serverID {:X}, queueing", __FUNCTION__, acMessage.CasterId);
+            m_queuedRemoteEffects.push(acMessage);
+            return;
+        }
     }
 
     MagicTarget::AddTargetData data{};
@@ -482,25 +527,17 @@ void MagicService::OnRemoveSpellEvent(const RemoveSpellEvent& acEvent) noexcept
         return;
     }
 
-    auto view = m_world.view<FormIdComponent>();
-    const auto it = std::find_if(std::begin(view), std::end(view), [id = acEvent.TargetId, view](auto entity) {
-        return view.get<FormIdComponent>(entity).Id == id;
-    });
-
-    if (it == std::end(view))
+    // RemoveSpellEvent is raised for the local player actor only. Keep this
+    // request on that owner route instead of accepting a remote actor token.
+    const auto ownershipToken = Utils::GetLocalOwnershipToken(acEvent.TargetId);
+    if (!ownershipToken)
     {
-        spdlog::warn("Form id not found for magic remove target, form id: {:X}", acEvent.TargetId);
+        spdlog::warn("Current ownership not found for magic remove target, form id: {:X}", acEvent.TargetId);
         return;
     }
 
-    std::optional<uint32_t> serverIdRes = Utils::GetServerId(*it);
-    if (!serverIdRes.has_value())
-    {
-        spdlog::warn("Server id not found for magic remove target, form id: {:X}", acEvent.TargetId);
-        return;
-    }
-
-    request.TargetId = serverIdRes.value();
+    request.TargetId = ownershipToken->ServerId;
+    request.OwnershipEpoch = ownershipToken->OwnershipEpoch;
 
     //spdlog::info(__FUNCTION__ ": requesting remove spell with base id {:X} from actor with server id {:X}", request.SpellId.BaseId, request.TargetId);
 
@@ -509,7 +546,19 @@ void MagicService::OnRemoveSpellEvent(const RemoveSpellEvent& acEvent) noexcept
 
 void MagicService::OnNotifyRemoveSpell(const NotifyRemoveSpell& acMessage) noexcept
 {
-    uint32_t targetFormId = acMessage.TargetId;
+    const auto targetEntity = Utils::FindEntityByServerId(acMessage.TargetId);
+    if (!targetEntity)
+    {
+        spdlog::warn(__FUNCTION__ ": could not find actor entity for server id {:X}", acMessage.TargetId);
+        return;
+    }
+
+    const auto* pRemoteComponent = World::Get().try_get<RemoteComponent>(*targetEntity);
+    if (!pRemoteComponent || pRemoteComponent->OwnershipEpoch != acMessage.OwnershipEpoch)
+    {
+        spdlog::debug("{}: dropping stale RemoveSpell notification for target {:X}, epoch {}", __FUNCTION__, acMessage.TargetId, acMessage.OwnershipEpoch);
+        return;
+    }
 
     Actor* pActor = Utils::GetByServerId<Actor>(acMessage.TargetId);
     if (!pActor)
@@ -533,8 +582,7 @@ void MagicService::OnNotifyRemoveSpell(const NotifyRemoveSpell& acMessage) noexc
         return;
     }
 
-    // Remove the spell from the actor
-    //spdlog::info(__FUNCTION__ ": removing spell with form id {:X} from actor with form id {:X}", cSpellId, targetFormId);
+    // Remove the spell from the matching remote incarnation.
     pActor->RemoveSpell(pSpell);
 }
 

@@ -18,6 +18,7 @@
 #include <Messages/PlayerLevelRequest.h>
 #include <Messages/NotifyPlayerLevel.h>
 #include <Messages/NotifyPlayerCellChanged.h>
+#include <Structs/CellMovementAuthorityPolicy.h>
 
 #include <Structs/ProgressionAwardPolicy.h>
 
@@ -54,6 +55,12 @@ void PlayerService::HandleGridCellShift(const PacketEvent<ShiftGridCellRequest>&
     auto* pPlayer = acMessage.pPlayer;
 
     auto& message = acMessage.Packet;
+
+    if (!CellMovementAuthorityPolicy::HasValidExteriorCell(message.WorldSpaceId, message.PlayerCell, message.CenterCoords))
+    {
+        spdlog::debug("Rejected malformed grid-cell shift from player {:X}", pPlayer->GetId());
+        return;
+    }
 
     const GameId oldCell = pPlayer->GetCellComponent().Cell;
 
@@ -93,6 +100,12 @@ void PlayerService::HandleExteriorCellEnter(const PacketEvent<EnterExteriorCellR
     auto& message = acMessage.Packet;
     auto* pPlayer = acMessage.pPlayer;
 
+    if (!CellMovementAuthorityPolicy::HasValidExteriorCell(message.WorldSpaceId, message.CellId, message.CurrentCoords))
+    {
+        spdlog::debug("Rejected malformed exterior cell transition from player {:X}", pPlayer->GetId());
+        return;
+    }
+
     if (pPlayer->GetCharacter())
     {
         auto entity = *pPlayer->GetCharacter();
@@ -115,6 +128,12 @@ void PlayerService::HandleInteriorCellEnter(const PacketEvent<EnterInteriorCellR
     auto* pPlayer = acMessage.pPlayer;
 
     auto& message = acMessage.Packet;
+
+    if (!CellMovementAuthorityPolicy::HasValidInteriorCell(message.CellId))
+    {
+        spdlog::debug("Rejected malformed interior cell transition from player {:X}", pPlayer->GetId());
+        return;
+    }
 
     const auto oldCell = pPlayer->GetCellComponent().Cell;
 

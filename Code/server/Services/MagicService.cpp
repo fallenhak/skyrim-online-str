@@ -2,6 +2,7 @@
 
 #include <Components.h>
 #include <GameServer.h>
+#include <Services/AddTargetAuthorityPolicy.h>
 #include <World.h>
 
 #include <Messages/SpellCastRequest.h>
@@ -34,6 +35,14 @@ void MagicService::OnSpellCastRequest(const PacketEvent<SpellCastRequest>& acMes
     const auto it = characterView.find(static_cast<entt::entity>(message.CasterId));
     if (it == characterView.end() || !characterView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
         return;
+
+    if (message.DesiredTarget != 0)
+    {
+        const auto targetEntity = static_cast<entt::entity>(message.DesiredTarget);
+        if (!m_world.valid(targetEntity) ||
+            (!m_world.all_of<CharacterComponent>(targetEntity) && !m_world.all_of<ObjectComponent>(targetEntity)))
+            return;
+    }
 
     NotifySpellCast notify;
     notify.CasterId = message.CasterId;
@@ -71,8 +80,35 @@ void MagicService::OnInterruptCastRequest(const PacketEvent<InterruptCastRequest
 
 void MagicService::OnAddTargetRequest(const PacketEvent<AddTargetRequest>& acMessage) const noexcept
 {
-    auto& message = acMessage.Packet;
+    const auto& message = acMessage.Packet;
     if (!std::isfinite(message.Magnitude))
+        return;
+
+    const auto targetEntity = static_cast<entt::entity>(message.TargetId);
+    const bool targetExists = m_world.valid(targetEntity) && m_world.all_of<CharacterComponent>(targetEntity);
+    const auto* targetOwner = targetExists ? m_world.try_get<OwnerComponent>(targetEntity) : nullptr;
+    const bool targetHasOwner = targetOwner && targetOwner->GetOwner();
+    const bool senderOwnsTarget = targetHasOwner && targetOwner->GetOwner() == acMessage.pPlayer;
+    const uint32_t currentTargetOwnershipEpoch = targetOwner ? targetOwner->OwnershipEpoch : 0;
+
+    const bool casterIdProvided = message.CasterId != 0;
+    bool casterExists = false;
+    bool casterHasOwner = false;
+    bool senderOwnsCaster = false;
+    uint32_t currentCasterOwnershipEpoch = 0;
+    if (casterIdProvided)
+    {
+        const auto casterEntity = static_cast<entt::entity>(message.CasterId);
+        casterExists = m_world.valid(casterEntity) && m_world.all_of<CharacterComponent>(casterEntity);
+        const auto* casterOwner = casterExists ? m_world.try_get<OwnerComponent>(casterEntity) : nullptr;
+        casterHasOwner = casterOwner && casterOwner->GetOwner();
+        senderOwnsCaster = casterHasOwner && casterOwner->GetOwner() == acMessage.pPlayer;
+        currentCasterOwnershipEpoch = casterOwner ? casterOwner->OwnershipEpoch : 0;
+    }
+
+    if (!AddTargetAuthorityPolicy::IsAuthorized(
+            targetExists, targetHasOwner, senderOwnsTarget, message.TargetOwnershipEpoch, currentTargetOwnershipEpoch,
+            casterIdProvided, casterExists, casterHasOwner, senderOwnsCaster, message.CasterOwnershipEpoch, currentCasterOwnershipEpoch))
         return;
 
     NotifyAddTarget notify;
@@ -84,19 +120,27 @@ void MagicService::OnAddTargetRequest(const PacketEvent<AddTargetRequest>& acMes
     notify.IsDualCasting = message.IsDualCasting;
     notify.ApplyHealPerkBonus = message.ApplyHealPerkBonus;
     notify.ApplyStaminaPerkBonus = message.ApplyStaminaPerkBonus;
+    notify.TargetOwnershipEpoch = message.TargetOwnershipEpoch;
+    notify.CasterOwnershipEpoch = message.CasterOwnershipEpoch;
 
-    const auto entity = static_cast<entt::entity>(message.TargetId);
-    if (!GameServer::Get()->SendToPlayersInRange(notify, entity, acMessage.GetSender()))
+    if (!GameServer::Get()->SendToPlayersInRange(notify, targetEntity, acMessage.GetSender()))
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }
 
 void MagicService::OnRemoveSpellRequest(const PacketEvent<RemoveSpellRequest>& acMessage) const noexcept
 {
     const auto& message = acMessage.Packet;
-    
+
+    const auto characterView = m_world.view<CharacterComponent, OwnerComponent>();
+    const auto it = characterView.find(static_cast<entt::entity>(message.TargetId));
+    if (it == characterView.end() ||
+        !characterView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.GetSender(), message.OwnershipEpoch))
+        return;
+
     NotifyRemoveSpell notify;
     notify.TargetId = message.TargetId;
     notify.SpellId = message.SpellId;
+    notify.OwnershipEpoch = message.OwnershipEpoch;
 
     //spdlog::info(__FUNCTION__ ": TargetId: {}, Spell baseId: {}", notify.TargetId, notify.SpellId.BaseId);
 

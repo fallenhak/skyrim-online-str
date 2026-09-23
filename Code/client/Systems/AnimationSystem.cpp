@@ -12,6 +12,7 @@
 #include <Misc/MiddleProcess.h>
 
 #include <Messages/ClientReferencesMoveRequest.h>
+#include <Structs/MovementAuthorityPolicy.h>
 
 #include <Components.h>
 #include <World.h>
@@ -113,6 +114,7 @@ void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMov
         return;
 
     auto& update = aMovementSnapshot.Updates[localComponent.Id];
+    update.OwnershipEpoch = localComponent.OwnershipEpoch;
     auto& movement = update.UpdatedMovement;
 
     if (const auto pCell = pActor->parentCell)
@@ -144,6 +146,9 @@ void AnimationSystem::Serialize(World& aWorld, ClientReferencesMoveRequest& aMov
         localComponent.CurrentAction = latestAction.MoveResult();
 
     animationComponent.Actions.clear();
+
+    if (!MovementAuthorityPolicy::HasValidPayload(update))
+        aMovementSnapshot.Updates.erase(localComponent.Id);
 }
 
 bool AnimationSystem::Serialize(World& aWorld, const ActionEvent& aActionEvent, const ActionEvent& aLastProcessedAction, std::string* apData)

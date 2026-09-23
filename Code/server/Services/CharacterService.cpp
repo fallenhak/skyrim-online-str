@@ -38,12 +38,39 @@
 #include <Messages/SubtitleRequest.h>
 #include <Messages/NotifySubtitle.h>
 #include <Messages/NotifyActorTeleport.h>
+#include <Structs/FactionAuthorityPolicy.h>
+#include <Structs/CellMovementAuthorityPolicy.h>
+#include <Structs/MovementAuthorityPolicy.h>
+#include <Services/ObjectInteractionPolicy.h>
+#include <Services/PresentationAuthorityPolicy.h>
 
 namespace
 {
 constexpr std::uint32_t kHealthActorValue = 24;
 constexpr std::uint32_t kMagickaActorValue = 25;
 constexpr std::uint32_t kStaminaActorValue = 26;
+
+bool CanRelayNpcPresentation(World& aWorld, const Player& acSender, const uint32_t aServerId) noexcept
+{
+    const auto source = static_cast<entt::entity>(aServerId);
+    if (!aWorld.valid(source))
+        return false;
+
+    const auto* pCharacterComponent = aWorld.try_get<CharacterComponent>(source);
+    const auto* pFormIdComponent = aWorld.try_get<FormIdComponent>(source);
+    const auto* pCellComponent = aWorld.try_get<CellIdComponent>(source);
+    const bool isNpcCharacter = pCharacterComponent && !pCharacterComponent->IsPlayer();
+    const bool hasFormId = pFormIdComponent && pFormIdComponent->Id.BaseId != 0;
+    const auto& senderCell = acSender.GetCellComponent();
+    const bool hasCell = pCellComponent && static_cast<bool>(*pCellComponent) && static_cast<bool>(senderCell);
+    const bool isInRange = hasCell && pCharacterComponent && ObjectInteractionPolicy::IsInSenderRange(
+        senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+        pCellComponent->Cell, pCellComponent->WorldSpaceId, pCellComponent->CenterCoords,
+        pCharacterComponent->IsDragon());
+
+    return PresentationAuthorityPolicy::CanRelayNpcPresentation(
+        true, isNpcCharacter, hasFormId, hasCell, isInRange);
+}
 }
 
 CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
@@ -187,6 +214,12 @@ void CharacterService::OnCharacterInteriorCellChange(const CharacterInteriorCell
 void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacterRequest>& acMessage) const noexcept
 {
     auto& message = acMessage.Packet;
+    if (!message.IsValid || !FactionAuthorityPolicy::HasValidPayload(message.FactionsContent))
+    {
+        spdlog::warn("Rejected assignment from player {:X} with a malformed faction payload", acMessage.pPlayer->GetId());
+        return;
+    }
+
     const auto& refId = message.ReferenceId;
 
     const auto isPlayer = (refId.ModId == 0 && refId.BaseId == 0x14);
@@ -329,6 +362,14 @@ void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwner
         return;
     }
 
+    if (message.Reason == OwnershipReleaseReason::Relinquish && (message.WorldSpaceId || message.CellId) &&
+        !CellMovementAuthorityPolicy::HasValidReportedLocation(message.WorldSpaceId, message.CellId, message.Position))
+    {
+        spdlog::warn(
+            "Ignored ownership release with malformed location from player {:X} for actor {:X}", acMessage.pPlayer->GetId(), message.ServerId);
+        return;
+    }
+
     auto& characterComponent = view.get<CharacterComponent>(*it);
     if (characterComponent.IsPlayerSummon())
     {
@@ -425,7 +466,7 @@ void CharacterService::OnCharacterSpawned(const CharacterSpawnedEvent& acEvent) 
 
 void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReferencesMoveRequest>& acMessage) const noexcept
 {
-    OwnerView<AnimationComponent, MovementComponent, CellIdComponent> view(m_world, acMessage.GetSender());
+    OwnerView<CharacterComponent, AnimationComponent, MovementComponent, CellIdComponent> view(m_world, acMessage.GetSender());
 
     auto& message = acMessage.Packet;
 
@@ -440,6 +481,23 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
             continue;
         }
 
+        auto& update = entry.second;
+        auto& ownerComponent = view.get<OwnerComponent>(*itor);
+        if (!MovementAuthorityPolicy::IsAuthorized(
+                true, true, ownerComponent.IsCurrentOwner(acMessage.pPlayer, update.OwnershipEpoch), update.OwnershipEpoch))
+        {
+            spdlog::debug(
+                "Rejected movement update from player {:X} for actor {:X}; requested epoch {} does not match current epoch {}",
+                acMessage.pPlayer->GetId(), entry.first, update.OwnershipEpoch, ownerComponent.OwnershipEpoch);
+            continue;
+        }
+
+        if (!MovementAuthorityPolicy::HasValidPayload(update))
+        {
+            spdlog::debug("Rejected malformed movement update from player {:X} for actor {:X}", acMessage.pPlayer->GetId(), entry.first);
+            continue;
+        }
+
         auto& movementComponent = view.get<MovementComponent>(*itor);
         auto& cellIdComponent = view.get<CellIdComponent>(*itor);
         auto& animationComponent = view.get<AnimationComponent>(*itor);
@@ -448,7 +506,6 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
 
         const auto movementCopy = movementComponent;
 
-        auto& update = entry.second;
         auto& movement = update.UpdatedMovement;
 
         movementComponent.Position = movement.Position;
@@ -479,19 +536,42 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
 
 void CharacterService::OnFactionsChanges(const PacketEvent<RequestFactionsChanges>& acMessage) const noexcept
 {
-    OwnerView<CharacterComponent> view(m_world, acMessage.GetSender());
+    auto view = m_world.view<OwnerComponent, CharacterComponent>();
 
     auto& message = acMessage.Packet;
 
-    for (auto& [id, factions] : message.Changes)
+    for (auto& [id, update] : message.Changes)
     {
-        auto it = view.find(static_cast<entt::entity>(id));
+        const auto entity = static_cast<entt::entity>(id);
+        auto it = view.find(entity);
 
-        if (it == std::end(view) || view.get<OwnerComponent>(*it).GetOwner() != acMessage.pPlayer)
+        if (it == std::end(view))
             continue;
 
+        const auto& ownerComponent = view.get<OwnerComponent>(*it);
+        const bool isPersistentCharacter = m_world.all_of<PersistentCharacterComponent>(*it);
+        if (!FactionAuthorityPolicy::IsAuthorized(
+                true,
+                true,
+                ownerComponent.GetOwner() == acMessage.pPlayer,
+                isPersistentCharacter,
+                ownerComponent.OwnershipEpoch,
+                update.OwnershipEpoch))
+        {
+            spdlog::debug(
+                "Rejected faction update from player {:X} for actor {:X}; requested epoch {} does not match current epoch {}",
+                acMessage.pPlayer->GetId(), id, update.OwnershipEpoch, ownerComponent.OwnershipEpoch);
+            continue;
+        }
+
+        if (!FactionAuthorityPolicy::HasValidPayload(update.FactionsContent))
+        {
+            spdlog::debug("Rejected malformed faction update from player {:X} for actor {:X}", acMessage.pPlayer->GetId(), id);
+            continue;
+        }
+
         auto& characterComponent = view.get<CharacterComponent>(*it);
-        characterComponent.FactionsContent = factions;
+        characterComponent.FactionsContent = update.FactionsContent;
         characterComponent.SetDirtyFactions(true);
     }
 }
@@ -609,7 +689,9 @@ void CharacterService::OnRequestRespawn(const PacketEvent<RequestRespawn>& acMes
 
 void CharacterService::OnDialogueRequest(const PacketEvent<DialogueRequest>& acMessage) const noexcept
 {
-    auto& message = acMessage.Packet;
+    const auto& message = acMessage.Packet;
+    if (!CanRelayNpcPresentation(m_world, *acMessage.pPlayer, message.ServerId))
+        return;
 
     NotifyDialogue notify{};
     notify.ServerId = message.ServerId;
@@ -622,7 +704,9 @@ void CharacterService::OnDialogueRequest(const PacketEvent<DialogueRequest>& acM
 
 void CharacterService::OnSubtitleRequest(const PacketEvent<SubtitleRequest>& acMessage) const noexcept
 {
-    auto& message = acMessage.Packet;
+    const auto& message = acMessage.Packet;
+    if (!CanRelayNpcPresentation(m_world, *acMessage.pPlayer, message.ServerId))
+        return;
 
     NotifySubtitle notify{};
     notify.ServerId = message.ServerId;
@@ -1048,8 +1132,8 @@ void CharacterService::ProcessFactionsChanges() const noexcept
 
             auto& message = messages[pPlayer];
             auto& change = message.Changes[World::ToInteger(entity)];
-
-            change = characterComponent.FactionsContent;
+            change.OwnershipEpoch = ownerComponent.OwnershipEpoch;
+            change.FactionsContent = characterComponent.FactionsContent;
         }
 
         characterComponent.SetDirtyFactions(false);
@@ -1108,6 +1192,10 @@ void CharacterService::ProcessMovementChanges() const noexcept
             auto& update = message.Updates[World::ToInteger(entity)];
             auto& movement = update.UpdatedMovement;
 
+            update.OwnershipEpoch = ownerComponent.OwnershipEpoch;
+
+            movement.CellId = cellIdComponent.Cell;
+            movement.WorldSpaceId = cellIdComponent.WorldSpaceId;
             movement.Position = movementComponent.Position;
 
             movement.Rotation.x = movementComponent.Rotation.x;
@@ -1117,6 +1205,12 @@ void CharacterService::ProcessMovementChanges() const noexcept
             movement.Variables = movementComponent.Variables;
 
             update.ActionEvents = animationComponent.Actions;
+
+            if (!MovementAuthorityPolicy::HasValidPayload(update))
+            {
+                spdlog::warn("Skipped malformed server movement update for actor {:X}", World::ToInteger(entity));
+                message.Updates.erase(World::ToInteger(entity));
+            }
         }
     }
 
