@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <tuple>
+#include <vector>
 
 /**
  * Stable logical identity of a renewable encounter (a dungeon or a group of
@@ -82,8 +83,8 @@ struct RenewableEncounterPolicy final
  * The class intentionally has no packet, Player or combat API. Deaths enter
  * only through RecordVerifiedDeath, which a future handler calls after the
  * combat lane has verified the kill (W03); a client claim must never reach it
- * directly. Occupancy checks before reset (W05) and spawning (W06) are left to
- * the caller.
+ * directly. Occupancy (W05) and retired incarnations (W06) are tracked by
+ * RenewableEncounterRegistry, which owns every mutation in production.
  *
  * The epoch increases on every reset. A spawn must carry the epoch it was
  * requested in, so a spawn that completes after a reset cannot refill a slot of
@@ -104,14 +105,18 @@ public:
     {
         Recorded,
         AlreadyDead,
-        UnknownIncarnation
+        UnknownIncarnation,
+        // Only RenewableEncounterRegistry reports this: the incarnation was
+        // retired by a reset or release (W06).
+        StaleIncarnation
     };
 
     enum class ReleaseResult : std::uint8_t
     {
         Released,
         AlreadyDead,
-        UnknownIncarnation
+        UnknownIncarnation,
+        StaleIncarnation
     };
 
     struct Membership final
@@ -230,6 +235,25 @@ public:
         }
 
         return membership;
+    }
+
+    /**
+     * Slots that still need a spawn in the current epoch. A cleared encounter
+     * needs none until it resets.
+     */
+    [[nodiscard]] std::vector<SpawnSlotId> GetUnboundSlots() const
+    {
+        std::vector<SpawnSlotId> slots;
+        if (IsCleared())
+            return slots;
+
+        for (const auto& [slotId, slot] : m_slots)
+        {
+            if (slot.Status == SlotStatus::Unbound)
+                slots.push_back(slotId);
+        }
+
+        return slots;
     }
 
     [[nodiscard]] bool IsResetEligible(const std::uint64_t aNowTick) const noexcept

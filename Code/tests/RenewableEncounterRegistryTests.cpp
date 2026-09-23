@@ -77,9 +77,11 @@ TEST_CASE("W02: registry forgets incarnations on release and reset", "[renewable
     REQUIRE(registry.TryReset(kCave, 50));
     REQUIRE_FALSE(registry.FindEncounter({7, 10}));
 
-    // The freed identity may legitimately appear again in another encounter.
-    REQUIRE(registry.BindIncarnation(kCrypt, kCryptSlot, {7, 10}, EpochOf(registry, kCrypt)));
-    REQUIRE(registry.FindEncounter({7, 10}) == kCrypt);
+    // W06: a freed identity is retired, so it cannot appear again anywhere;
+    // only a fresh incarnation can fill the slot.
+    REQUIRE_FALSE(registry.BindIncarnation(kCrypt, kCryptSlot, {7, 10}, EpochOf(registry, kCrypt)));
+    REQUIRE(registry.BindIncarnation(kCrypt, kCryptSlot, {7, 12}, EpochOf(registry, kCrypt)));
+    REQUIRE(registry.FindEncounter({7, 12}) == kCrypt);
     REQUIRE_FALSE(registry.TryReset(RenewableEncounterId{0x9999u, 0}, 50));
 }
 

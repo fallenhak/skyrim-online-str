@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <vector>
 
 /**
  * Owns every renewable encounter on the server and keeps two invariants
@@ -24,6 +25,14 @@
  * group sharing them, and an occupied encounter cannot reset. The caller must
  * feed SetPlayerCell from the server's own cell tracking, never from a client
  * claim, and call RemovePlayer on disconnect.
+ *
+ * Every incarnation that leaves an encounter, through a reset or a release,
+ * is retired (roadmap W06). Packets that still carry a retired incarnation are
+ * reported as stale and never touch the encounter again, and a retired
+ * incarnation can never be bound again: a respawn must be a fresh incarnation
+ * requested through GetSpawnRequests for the current epoch. The retired set
+ * grows with every spawned actor; it is in-memory and cleared by a restart,
+ * where the combat lane issues new lifecycle generations anyway.
  */
 class RenewableEncounterRegistry final
 {
@@ -34,6 +43,25 @@ public:
         UnknownEncounter,
         NotEligible,
         Occupied
+    };
+
+    enum class IncarnationStatus : std::uint8_t
+    {
+        Unknown,
+        Current,
+        Stale
+    };
+
+    struct RetiredIncarnation final
+    {
+        RenewableEncounterId Encounter{};
+        std::uint64_t Epoch{};
+    };
+
+    struct SpawnRequest final
+    {
+        SpawnSlotId Slot{};
+        std::uint64_t Epoch{};
     };
 
     [[nodiscard]] bool AddEncounter(const RenewableEncounterId aId, const RenewableEncounterPolicy aPolicy)
@@ -102,7 +130,7 @@ public:
     [[nodiscard]] bool BindIncarnation(const RenewableEncounterId aId, const SpawnSlotId aSlot, const EncounterIncarnation aIncarnation, const std::uint64_t aSpawnEpoch)
     {
         auto* pEncounter = FindMutable(aId);
-        if (!pEncounter || FindEncounter(aIncarnation))
+        if (!pEncounter || FindEncounter(aIncarnation) || FindRetired(aIncarnation))
             return false;
 
         if (!pEncounter->BindIncarnation(aSlot, aIncarnation, aSpawnEpoch))
@@ -116,7 +144,7 @@ public:
     {
         auto* pEncounter = FindOwner(aIncarnation);
         if (!pEncounter)
-            return RenewableEncounterState::DeathResult::UnknownIncarnation;
+            return FindRetired(aIncarnation) ? RenewableEncounterState::DeathResult::StaleIncarnation : RenewableEncounterState::DeathResult::UnknownIncarnation;
 
         return pEncounter->RecordVerifiedDeath(aIncarnation, aTick);
     }
@@ -125,13 +153,55 @@ public:
     {
         auto* pEncounter = FindOwner(aIncarnation);
         if (!pEncounter)
-            return RenewableEncounterState::ReleaseResult::UnknownIncarnation;
+            return FindRetired(aIncarnation) ? RenewableEncounterState::ReleaseResult::StaleIncarnation : RenewableEncounterState::ReleaseResult::UnknownIncarnation;
 
         const auto result = pEncounter->ReleaseIncarnation(aIncarnation);
         if (result == RenewableEncounterState::ReleaseResult::Released)
+        {
+            m_retired.emplace(aIncarnation, RetiredIncarnation{pEncounter->GetId(), pEncounter->GetEpoch()});
             m_encounterByIncarnation.erase(aIncarnation);
+        }
 
         return result;
+    }
+
+    [[nodiscard]] std::optional<RetiredIncarnation> FindRetired(const EncounterIncarnation aIncarnation) const noexcept
+    {
+        const auto it = m_retired.find(aIncarnation);
+        if (it == m_retired.end())
+            return std::nullopt;
+
+        return it->second;
+    }
+
+    /**
+     * Classifies the incarnation a packet refers to: Current while bound to an
+     * encounter, Stale once retired, Unknown if the registry never bound it.
+     */
+    [[nodiscard]] IncarnationStatus GetIncarnationStatus(const EncounterIncarnation aIncarnation) const noexcept
+    {
+        if (FindEncounter(aIncarnation))
+            return IncarnationStatus::Current;
+
+        return FindRetired(aIncarnation) ? IncarnationStatus::Stale : IncarnationStatus::Unknown;
+    }
+
+    /**
+     * Slots the spawner should fill, each tagged with the epoch to pass back to
+     * BindIncarnation. A request that completes after a reset carries the old
+     * epoch and is rejected.
+     */
+    [[nodiscard]] std::vector<SpawnRequest> GetSpawnRequests(const RenewableEncounterId aId) const
+    {
+        std::vector<SpawnRequest> requests;
+        const auto* pEncounter = Find(aId);
+        if (!pEncounter)
+            return requests;
+
+        for (const auto slot : pEncounter->GetUnboundSlots())
+            requests.push_back(SpawnRequest{slot, pEncounter->GetEpoch()});
+
+        return requests;
     }
 
     /**
@@ -192,13 +262,20 @@ public:
             return false;
 
         auto* pEncounter = FindMutable(aId);
-        if (!pEncounter || !pEncounter->TryReset(aNowTick))
+        if (!pEncounter)
+            return false;
+
+        const auto retiredEpoch = pEncounter->GetEpoch();
+        if (!pEncounter->TryReset(aNowTick))
             return false;
 
         for (auto it = m_encounterByIncarnation.begin(); it != m_encounterByIncarnation.end();)
         {
             if (it->second == aId)
+            {
+                m_retired.emplace(it->first, RetiredIncarnation{aId, retiredEpoch});
                 it = m_encounterByIncarnation.erase(it);
+            }
             else
                 ++it;
         }
@@ -224,4 +301,5 @@ private:
     std::map<EncounterIncarnation, RenewableEncounterId> m_encounterByIncarnation;
     std::map<RenewableEncounterId, std::set<std::uint32_t>> m_cellsByEncounter;
     std::map<std::uint32_t, std::uint32_t> m_cellByPlayer;
+    std::map<EncounterIncarnation, RetiredIncarnation> m_retired;
 };

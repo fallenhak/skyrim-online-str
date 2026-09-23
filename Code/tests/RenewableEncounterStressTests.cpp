@@ -43,8 +43,9 @@ void CheckInvariants(const RenewableEncounterRegistry& acRegistry, const std::ma
         const auto* pEncounter = acRegistry.Find(expected.Encounter);
         const bool current = expected.Epoch == pEncounter->GetEpoch() && !expected.Released;
 
-        // Stale or released incarnations are unknown everywhere; current ones are known exactly once.
+        // Stale or released incarnations are retired everywhere; current ones are known exactly once.
         REQUIRE(acRegistry.FindEncounter(incarnation).has_value() == current);
+        REQUIRE(acRegistry.GetIncarnationStatus(incarnation) == (current ? RenewableEncounterRegistry::IncarnationStatus::Current : RenewableEncounterRegistry::IncarnationStatus::Stale));
         REQUIRE(pEncounter->FindSlot(incarnation).has_value() == current);
         if (!current)
             continue;
@@ -87,7 +88,7 @@ void RunRandomSequence(const std::uint32_t aSeed, const std::uint64_t aCooldownT
         const auto& id = kEncounters[e];
         const std::uint64_t epoch = registry.Find(id)->GetEpoch();
 
-        switch (pick(5))
+        switch (pick(6))
         {
         case 0:
         case 1: // bind a fresh incarnation, sometimes with a stale spawn epoch
@@ -111,7 +112,7 @@ void RunRandomSequence(const std::uint32_t aSeed, const std::uint64_t aCooldownT
                 const bool current = known.Epoch == registry.Find(known.Encounter)->GetEpoch() && !known.Released;
                 const auto result = registry.RecordVerifiedDeath(*pIncarnation, tick);
                 if (!current)
-                    REQUIRE(result == RenewableEncounterState::DeathResult::UnknownIncarnation);
+                    REQUIRE(result == RenewableEncounterState::DeathResult::StaleIncarnation);
                 else if (known.Dead)
                     REQUIRE(result == RenewableEncounterState::DeathResult::AlreadyDead);
                 else
@@ -130,7 +131,7 @@ void RunRandomSequence(const std::uint32_t aSeed, const std::uint64_t aCooldownT
                 const bool current = known.Epoch == registry.Find(known.Encounter)->GetEpoch() && !known.Released;
                 const auto result = registry.ReleaseIncarnation(*pIncarnation);
                 if (!current)
-                    REQUIRE(result == RenewableEncounterState::ReleaseResult::UnknownIncarnation);
+                    REQUIRE(result == RenewableEncounterState::ReleaseResult::StaleIncarnation);
                 else if (known.Dead)
                     REQUIRE(result == RenewableEncounterState::ReleaseResult::AlreadyDead);
                 else
@@ -139,6 +140,12 @@ void RunRandomSequence(const std::uint32_t aSeed, const std::uint64_t aCooldownT
                     known.Released = true;
                 }
             }
+            break;
+        }
+        case 4: // W06: rebinding any known incarnation must fail, retired or current
+        {
+            if (const auto* pIncarnation = randomKnown())
+                REQUIRE_FALSE(registry.BindIncarnation(id, SlotOf(e, pick(kSlotsPerEncounter)), *pIncarnation, epoch));
             break;
         }
         default: // reset attempt
