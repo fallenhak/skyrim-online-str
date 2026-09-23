@@ -71,6 +71,62 @@ test.describe('Character Select', () => {
   });
 
   test(
+    'submits the server character ID once and disables selection while pending',
+    async ({ page }) => {
+      await page.evaluate(() => {
+        const client = (window as any).skyrimtogether;
+        client.requestCharacterList = () => {};
+        (window as any).selectedCharacterIds = [];
+        client.selectCharacter = (characterId: string) => {
+          (window as any).selectedCharacterIds.push(characterId);
+        };
+      });
+
+      await page.locator('app-connect input').nth(0).fill('character-server');
+      await page.locator('app-connect app-action-buttons button').nth(0).click();
+
+      const characterSelect = page.locator('app-character-select');
+      await expect(
+        characterSelect.locator('[data-character-select-state="loading"]'),
+      ).toBeVisible();
+
+      const selectedCharacterId = '18446744073709551615';
+      await page.evaluate(characterId => {
+        const client = (window as any).skyrimtogether;
+        client.emit(
+          'characterList',
+          [
+            [characterId, 'First Server Character', '0', '0', 0, 1],
+            ['200', 'Second Server Character', '0', '0', 1, 12],
+          ],
+          client.characterConnectionGeneration,
+        );
+      }, selectedCharacterId);
+
+      const characterButtons = characterSelect.locator(
+        '.character-select-action',
+      );
+      await expect(characterButtons).toHaveCount(2);
+      await characterButtons.nth(0).click();
+
+      await expect(characterButtons.nth(0)).toBeDisabled();
+      await expect(characterButtons.nth(1)).toBeDisabled();
+      await expect(
+        characterSelect.getByRole('button', { name: /selecting/i }),
+      ).toBeVisible();
+
+      // A duplicate DOM activation while the request is pending must not submit
+      // the same server-owned character ID a second time.
+      await characterButtons.nth(0).evaluate((button: HTMLButtonElement) => {
+        button.click();
+      });
+      await expect
+        .poll(() => page.evaluate(() => (window as any).selectedCharacterIds))
+        .toEqual([selectedCharacterId]);
+    },
+  );
+
+  test(
     'clears old server data on errors and connection changes',
     async ({ page }) => {
       await page.evaluate(() => {
