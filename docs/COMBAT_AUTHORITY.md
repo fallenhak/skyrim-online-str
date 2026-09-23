@@ -46,6 +46,24 @@ observations and to avoid deriving XP, loot, or rewards from them.
 
 ## Phase I — Proposed validated hit-observation protocol
 
+### Client producer review (C08)
+
+The current client producers in `Actor::HookDamageActor` and
+`MagicTarget::HookAddTarget` still create local `HitEvent` values from Skyrim
+form IDs. Client `LocalComponent` and `RemoteComponent` entries can map a
+currently known actor to its server ID and non-zero ownership epoch, but that
+does not provide the target lifecycle generation required by the observation
+DTO. `ActorLifecycleComponent` is server-only, and neither spawn nor ownership
+messages send its generation. Since a server entity ID is not a substitute for
+that lifecycle token after entity reuse, the producer cannot safely identify a
+target incarnation for a network observation yet.
+
+Accordingly, this review does not enable or add a network hit producer. The
+existing `CombatService::OnHitEvent` target-update path remains disabled. A
+future producer needs a server-verifiable way to bind the target to its current
+lifecycle before it can submit an observation; current owner epochs alone do
+not provide that binding.
+
 No production packet is enabled by this phase. The pure
 `CombatAttackerAuthorizationPolicy` checks that a sender's session is in-world,
 the resolved attacker entity is a player character owned by that sender at the
