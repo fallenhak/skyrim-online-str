@@ -1294,7 +1294,16 @@ TEST(ActorPopulationIdentityResolver, ResolvesStandardAndLightServerFormIds)
 
     const auto standardNetworkId = mods.AddStandard("tEsT.ESP\r");
     EXPECT_EQ(mods.AddStandard("TEST.esp"), standardNetworkId);
+    const auto standardPluginEntry = mods.GetStandardMods().find("tEsT.ESP\r");
+    ASSERT_NE(standardPluginEntry, mods.GetStandardMods().end());
+    EXPECT_EQ(standardPluginEntry->second.refCount, 2u);
+
     const auto lightNetworkId = mods.AddLite("Light.esp");
+    EXPECT_EQ(mods.AddLite("LIGHT.ESP\r"), lightNetworkId);
+    const auto lightPluginEntry = mods.GetLiteMods().find("Light.esp");
+    ASSERT_NE(lightPluginEntry, mods.GetLiteMods().end());
+    EXPECT_EQ(lightPluginEntry->second.refCount, 2u);
+
     const auto lastStandardNetworkId = mods.AddStandard("LastStandard.esp");
     const auto lastLightNetworkId = mods.AddLite("LastLight.esl");
     const auto mismatchedNetworkId = mods.AddStandard("Light.esp");

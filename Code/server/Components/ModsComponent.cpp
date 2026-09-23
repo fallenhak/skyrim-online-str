@@ -12,14 +12,15 @@ uint32_t ModsComponent::AddStandard(const String& acpFilename) noexcept
 {
     String filenameKey;
     const bool hasFilenameKey = ESLoader::GetPluginFilenameKey(acpFilename, filenameKey);
-    for (auto& entry : m_standardMods)
+    for (const auto& entry : m_standardMods)
     {
         String existingKey;
         if ((hasFilenameKey && ESLoader::GetPluginFilenameKey(entry.first, existingKey) && existingKey == filenameKey) ||
             (!hasFilenameKey && entry.first == acpFilename))
         {
-            entry.second.refCount++;
-            return entry.second.id;
+            auto& duplicate = m_standardMods[entry.first];
+            duplicate.refCount++;
+            return duplicate.id;
         }
     }
 
@@ -34,14 +35,15 @@ uint32_t ModsComponent::AddLite(const String& acpFilename) noexcept
 {
     String filenameKey;
     const bool hasFilenameKey = ESLoader::GetPluginFilenameKey(acpFilename, filenameKey);
-    for (auto& entry : m_liteMods)
+    for (const auto& entry : m_liteMods)
     {
         String existingKey;
         if ((hasFilenameKey && ESLoader::GetPluginFilenameKey(entry.first, existingKey) && existingKey == filenameKey) ||
             (!hasFilenameKey && entry.first == acpFilename))
         {
-            entry.second.refCount++;
-            return entry.second.id;
+            auto& duplicate = m_liteMods[entry.first];
+            duplicate.refCount++;
+            return duplicate.id;
         }
     }
 
