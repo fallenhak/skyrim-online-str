@@ -51,6 +51,48 @@ public:
         return observation;
     }
 
+    /**
+     * @brief Removes at most one observation for the target lifecycle after
+     * an accepted canonical health decrease.
+     *
+     * The oldest observation for the matching target lifecycle is returned.
+     * Stale observations for the same server entity ID are discarded because
+     * lifecycle generations never become current again. Other targets retain
+     * their FIFO order.
+     */
+    [[nodiscard]] std::optional<ValidatedHitObservation> TakeForAcceptedHealthDecrease(
+        const ValidatedHitObservation::ServerId aTargetServerId,
+        const ValidatedHitObservation::LifecycleGeneration aTargetLifecycleGeneration) noexcept
+    {
+        if (aTargetServerId == 0 || aTargetLifecycleGeneration == 0)
+            return std::nullopt;
+
+        std::size_t offset = 0;
+        while (offset < m_count)
+        {
+            const auto index = (m_head + offset) % tCapacity;
+            const auto& observation = *m_observations[index];
+            if (observation.TargetServerId != aTargetServerId)
+            {
+                ++offset;
+                continue;
+            }
+
+            if (observation.TargetLifecycleGeneration == aTargetLifecycleGeneration)
+            {
+                std::optional<ValidatedHitObservation> matched{observation};
+                RemoveAt(offset);
+                return matched;
+            }
+
+            // The entity ID has been observed in another lifecycle. This
+            // pending record can no longer match the current incarnation.
+            RemoveAt(offset);
+        }
+
+        return std::nullopt;
+    }
+
     void Clear() noexcept
     {
         for (auto& observation : m_observations)
@@ -65,6 +107,23 @@ public:
     }
 
 private:
+    void RemoveAt(const std::size_t aOffset) noexcept
+    {
+        for (std::size_t offset = aOffset; offset + 1 < m_count; ++offset)
+        {
+            const auto destination = (m_head + offset) % tCapacity;
+            const auto source = (m_head + offset + 1) % tCapacity;
+            m_observations[destination].reset();
+            if (m_observations[source])
+                m_observations[destination].emplace(*m_observations[source]);
+            m_observations[source].reset();
+        }
+
+        const auto last = (m_head + m_count - 1) % tCapacity;
+        m_observations[last].reset();
+        --m_count;
+    }
+
     std::array<std::optional<ValidatedHitObservation>, tCapacity> m_observations{};
     std::size_t m_head{};
     std::size_t m_count{};

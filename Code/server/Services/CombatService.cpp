@@ -2,6 +2,8 @@
 #include <Services/CombatAttackerAuthorizationPolicy.h>
 #include <Services/CombatTargetAuthorizationPolicy.h>
 #include <Services/ProjectileLaunchAuthorityPolicy.h>
+#include <Events/AcceptedCanonicalHealthDecreaseEvent.h>
+#include <Events/CorrelatedCombatObservationEvent.h>
 #include <Components.h>
 #include <GameServer.h>
 #include <Game/Player.h>
@@ -15,9 +17,11 @@
 
 CombatService::CombatService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
     : m_world(aWorld)
+    , m_dispatcher(aDispatcher)
 {
     m_projectileLaunchConnection = aDispatcher.sink<PacketEvent<ProjectileLaunchRequest>>().connect<&CombatService::OnProjectileLaunchRequest>(this);
     m_hitObservationConnection = aDispatcher.sink<PacketEvent<CombatHitObservationRequest>>().connect<&CombatService::OnHitObservationRequest>(this);
+    m_healthDecreaseConnection = aDispatcher.sink<AcceptedCanonicalHealthDecreaseEvent>().connect<&CombatService::OnCanonicalHealthDecrease>(this);
 }
 
 void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservationRequest>& acMessage) noexcept
@@ -85,6 +89,27 @@ void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservati
     // append cannot evict an earlier pending observation.
     if (m_pendingObservations.TryAppend(observation))
         m_observationTick = observedTick;
+}
+
+void CombatService::OnCanonicalHealthDecrease(const AcceptedCanonicalHealthDecreaseEvent& acEvent) noexcept
+{
+    const auto targetEntity = static_cast<entt::entity>(acEvent.TargetServerId);
+    if (!m_world.valid(targetEntity))
+        return;
+
+    const auto* const pLifecycle = m_world.try_get<ActorLifecycleComponent>(targetEntity);
+    if (!pLifecycle || !pLifecycle->IsValid() || pLifecycle->GetGeneration() != acEvent.TargetLifecycleGeneration)
+        return;
+
+    const auto observation = m_pendingObservations.TakeForAcceptedHealthDecrease(
+        acEvent.TargetServerId, acEvent.TargetLifecycleGeneration);
+    if (!observation)
+        return;
+
+    // The correlated event contains only the validated observation identity.
+    // In particular, no submitted health delta or damage magnitude crosses
+    // this boundary.
+    m_dispatcher.trigger(CorrelatedCombatObservationEvent{*observation});
 }
 
 void CombatService::OnProjectileLaunchRequest(const PacketEvent<ProjectileLaunchRequest>& acMessage) const noexcept

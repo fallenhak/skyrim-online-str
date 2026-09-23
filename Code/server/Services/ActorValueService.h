@@ -22,6 +22,7 @@ struct ActorValueService
 
 private:
     World& m_world;
+    entt::dispatcher& m_dispatcher;
 
     void OnActorValueChanges(const PacketEvent<RequestActorValueChanges>& acMessage) const noexcept;
     void OnActorMaxValueChanges(const PacketEvent<RequestActorMaxValueChanges>& acMessage) const noexcept;

@@ -17,7 +17,9 @@ apply hit damage, award XP, grant loot, or establish kill attribution.
   numeric input, and a matching remote incarnation before launch.
 - Health changes are signed observation deltas. The server accepts them only
   from the current owner and matching epoch, applies them to the canonical
-  current health value, and relays the accepted delta.
+  current health value, and relays the accepted delta. Only an actual decrease
+  in that canonical value emits an internal signal; the signal carries target
+  server ID and lifecycle generation, not the submitted delta.
 - Death state is reported by the current simulation owner with its epoch. The
   server records and relays the state, but the sender is not treated as a
   killer identity.
@@ -42,8 +44,9 @@ The server cannot currently establish from a client hit claim alone:
 - an attribution through a projectile/effect chain after ownership changes;
 - an XP/reward contribution or a valid PvP exclusion solely from a form ID.
 
-Therefore the current safe rule is to keep accepted hit reports as pending
-observations and avoid treating them as proof of damage, kills, XP, loot, or
+Therefore accepted hit reports remain pending until a canonical health
+decrease for the same target lifecycle is accepted. That association does not
+prove the report caused the decrease and is not proof of a kill, XP, loot, or
 rewards.
 
 ## Phase I — Validated hit-observation protocol
@@ -78,11 +81,16 @@ identity, and canonical cell range before consulting the replay cache.
 
 An accepted request is appended to a fixed 1024-entry pending FIFO. A full FIFO
 rejects new requests and retains existing entries. The server assigns the
-observation tick. The handler does not apply damage, mutate health/death,
-record contribution, award XP, or grant loot. Client `HitEvent` production
-remains disabled: the target lifecycle generation is server-only and is not yet
-sent in spawn or ownership messages, so ordinary clients currently have no
-producer that can populate that field correctly.
+observation tick. After an accepted canonical health decrease, at most one
+pending observation for that target server ID and lifecycle generation is
+correlated and forwarded as a server-internal event. Stale generations for the
+same entity ID are discarded. The match contains no client damage magnitude
+and does not prove that the observation caused the decrease. The handler does
+not apply damage, mutate death state, record contribution, award XP, or grant
+loot. Client `HitEvent` production remains disabled: the target lifecycle
+generation is server-only and is not yet sent in spawn or ownership messages,
+so ordinary clients currently have no producer that can populate that field
+correctly.
 
 Later correlation work must use the accepted request's bounded, replayable
 identity rather than trusting a client-provided persistent character ID:

@@ -75,3 +75,64 @@ TEST_CASE("pending combat observations reject malformed identities without consu
     REQUIRE(pending.Size() == 0);
     REQUIRE(pending.TryAppend(ValidatedHitObservation{1, 1, 2, 3, 4, 5}));
 }
+
+TEST_CASE("accepted canonical health decrease correlates one matching pending target lifecycle", "[combat_authority]")
+{
+    PendingCombatObservationStore<4> pending;
+    const ValidatedHitObservation firstTargetHit{1, 2, 10, 20, 30, 1};
+    const ValidatedHitObservation otherTargetHit{4, 5, 11, 21, 31, 2};
+    const ValidatedHitObservation secondTargetHit{6, 7, 10, 20, 32, 3};
+    REQUIRE(pending.TryAppend(firstTargetHit));
+    REQUIRE(pending.TryAppend(otherTargetHit));
+    REQUIRE(pending.TryAppend(secondTargetHit));
+
+    const auto firstMatch = pending.TakeForAcceptedHealthDecrease(10, 20);
+    REQUIRE(firstMatch == firstTargetHit);
+    REQUIRE(pending.Size() == 2);
+
+    // One canonical decrease correlates only one pending observation. The
+    // unrelated target remains in FIFO order.
+    const auto secondMatch = pending.TakeForAcceptedHealthDecrease(10, 20);
+    REQUIRE(secondMatch == secondTargetHit);
+    REQUIRE(pending.Pop() == otherTargetHit);
+    REQUIRE_FALSE(pending.Pop().has_value());
+}
+
+TEST_CASE("health correlation discards stale target lifecycle observations without matching them", "[combat_authority]")
+{
+    PendingCombatObservationStore<4> pending;
+    const ValidatedHitObservation staleHit{1, 2, 10, 20, 30, 1};
+    const ValidatedHitObservation currentHit{1, 2, 10, 22, 31, 2};
+    const ValidatedHitObservation unrelatedHit{3, 4, 11, 21, 32, 3};
+    REQUIRE(pending.TryAppend(staleHit));
+    REQUIRE(pending.TryAppend(unrelatedHit));
+    REQUIRE(pending.TryAppend(currentHit));
+
+    const auto match = pending.TakeForAcceptedHealthDecrease(10, 22);
+    REQUIRE(match == currentHit);
+    REQUIRE(pending.Size() == 1);
+    REQUIRE(pending.Pop() == unrelatedHit);
+
+    REQUIRE_FALSE(pending.TakeForAcceptedHealthDecrease(10, 22).has_value());
+    REQUIRE_FALSE(pending.TakeForAcceptedHealthDecrease(0, 22).has_value());
+    REQUIRE_FALSE(pending.TakeForAcceptedHealthDecrease(10, 0).has_value());
+}
+
+TEST_CASE("health correlation preserves FIFO order across wrapped pending storage", "[combat_authority]")
+{
+    PendingCombatObservationStore<3> pending;
+    const ValidatedHitObservation discarded{1, 2, 9, 19, 29, 1};
+    const ValidatedHitObservation firstRetained{3, 4, 11, 21, 31, 2};
+    const ValidatedHitObservation matched{5, 6, 10, 20, 32, 3};
+    const ValidatedHitObservation lastRetained{7, 8, 12, 22, 33, 4};
+    REQUIRE(pending.TryAppend(discarded));
+    REQUIRE(pending.Pop() == discarded);
+    REQUIRE(pending.TryAppend(firstRetained));
+    REQUIRE(pending.TryAppend(matched));
+    REQUIRE(pending.TryAppend(lastRetained));
+
+    REQUIRE(pending.TakeForAcceptedHealthDecrease(10, 20) == matched);
+    REQUIRE(pending.Pop() == firstRetained);
+    REQUIRE(pending.Pop() == lastRetained);
+    REQUIRE_FALSE(pending.Pop().has_value());
+}
