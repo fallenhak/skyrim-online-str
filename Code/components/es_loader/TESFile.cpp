@@ -4,6 +4,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <system_error>
 
 namespace ESLoader
@@ -130,6 +131,8 @@ bool TESFile::IndexRecords(RecordCollection& aRecordCollection) noexcept
 
 bool TESFile::InitializeFormIdPrefixes() noexcept
 {
+    m_parentToFormIdPrefix.clear();
+
     if (!m_setupValid)
     {
         spdlog::warn("Plugin {} has no valid load-order ID", m_filename);
@@ -153,7 +156,16 @@ bool TESFile::InitializeFormIdPrefixes() noexcept
     fileHeader.CopyRecordData(*pFileHeader);
     fileHeader.ParseChunks(*pFileHeader, m_parentToFormIdPrefix);
 
-    uint8_t parentId = 0;
+    // Each MAST entry needs one parent slot and the plugin itself needs the
+    // next slot. Parent indices are one byte, so 255 masters is the maximum
+    // count that still leaves a distinct slot for this plugin.
+    if (fileHeader.m_masterFiles.size() > std::numeric_limits<uint8_t>::max())
+    {
+        spdlog::warn("Plugin {} has too many masters for distinct parent slots", m_filename);
+        return false;
+    }
+
+    uint16_t parentId = 0;
     for (const Chunks::MAST& master : fileHeader.m_masterFiles)
     {
         // An unresolved master must fail closed; operator[] would silently
@@ -166,10 +178,10 @@ bool TESFile::InitializeFormIdPrefixes() noexcept
             return false;
         }
 
-        m_parentToFormIdPrefix[parentId++] = masterId->second;
+        m_parentToFormIdPrefix[static_cast<uint8_t>(parentId++)] = masterId->second;
     }
 
-    m_parentToFormIdPrefix[parentId] = m_formIdPrefix;
+    m_parentToFormIdPrefix[static_cast<uint8_t>(parentId)] = m_formIdPrefix;
     return true;
 }
 
@@ -198,11 +210,17 @@ bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aReco
     {
         Record* pRecord = reinterpret_cast<Record*>(m_buffer.GetWriteData() + aReader.GetBytePosition());
         const auto formIdPrefix = GetFormIdPrefix(pRecord->GetFormId(), m_parentToFormIdPrefix);
+        const auto parentFormIdPrefix = m_parentToFormIdPrefix.find(static_cast<uint8_t>(pRecord->GetFormId() >> 24));
+        const bool hasOutOfRangeLightLocalId =
+            parentFormIdPrefix != std::end(m_parentToFormIdPrefix) &&
+            (parentFormIdPrefix->second & 0xFF000000u) == 0xFE000000u &&
+            (pRecord->GetFormId() & 0x00FFFFFFu) > 0x00000FFFu;
+        const bool isActorPopulationRecord =
+            pRecord->GetType() == FormEnum::ACHR || pRecord->GetType() == FormEnum::NPC_ || pRecord->GetType() == FormEnum::RACE;
 
-        if ((pRecord->GetType() == FormEnum::ACHR || pRecord->GetType() == FormEnum::NPC_ || pRecord->GetType() == FormEnum::RACE) &&
-            !formIdPrefix)
+        if (hasOutOfRangeLightLocalId || (isActorPopulationRecord && !formIdPrefix))
         {
-            spdlog::warn("Plugin {} has an unresolved actor-population record prefix for form {:X}; skipping record", m_filename, pRecord->GetFormId());
+            spdlog::warn("Plugin {} has an invalid or unresolved form ID {:X}; skipping record", m_filename, pRecord->GetFormId());
             aReader.Advance(sizeof(Record) + size);
             return true;
         }
@@ -321,6 +339,13 @@ std::optional<uint32_t> TESFile::GetFormIdPrefix(uint32_t aFormId, Map<uint8_t, 
         // TODO: this is weird, but for some reason, in Skyrim.esm,
         // the GMST record with EDID "iDaysToRespawnVendor" has a base id of 0x01
         spdlog::warn("Form id prefix not found: {:X}", baseId);
+        return std::nullopt;
+    }
+
+    const uint32_t localFormId = aFormId & 0x00FFFFFFu;
+    if ((masterId->second & 0xFF000000u) == 0xFE000000u && localFormId > 0x00000FFFu)
+    {
+        spdlog::warn("Light-plugin form ID has an out-of-range local ID: {:X}", aFormId);
         return std::nullopt;
     }
 

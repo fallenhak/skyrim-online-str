@@ -598,6 +598,7 @@ TEST(ESLoader, ResolvesReferencesToLightMasters)
         ASSERT_TRUE(loadOrder.good());
         loadOrder << "EarlierLight.esl\n"
                   << "LightMaster.esp\n"
+                  << "NextLight.esl\n"
                   << "Dependent.esp\n";
     }
 
@@ -613,11 +614,25 @@ TEST(ESLoader, ResolvesReferencesToLightMasters)
     constexpr uint32_t lightMasterNpcRaceRawId = 0x00000010;
     AppendRecord(lightMaster, FormEnum::RACE, lightMasterRaceRawId, MakeRaceData("LightMasterRace"));
     AppendRecord(lightMaster, FormEnum::NPC_, 0x00000020, MakeNpcData("LightMasterNpc", &lightMasterNpcRaceRawId));
+    AppendRecord(lightMaster, FormEnum::NPC_, 0x00000FFF, MakeNpcData("MaxLightLocalNpc", &lightMasterNpcRaceRawId));
     AppendRecord(lightMaster, FormEnum::ACHR, 0x00000030, MakeActorReferenceData(0x00000020));
+    // This malformed light local ID would overflow into NextLight's namespace
+    // if all 24 low bits were added to the light master prefix.
+    AppendRecord(lightMaster, FormEnum::RACE, 0x00001001, MakeRaceData("InvalidAliasedLightRace"));
     {
         std::ofstream file(dataDirectory.Path() / "LightMaster.esp", std::ios::binary);
         ASSERT_TRUE(file.good());
         file.write(reinterpret_cast<const char*>(lightMaster.data()), static_cast<std::streamsize>(lightMaster.size()));
+    }
+
+    Bytes nextLight = MakePluginHeaderWithMaster("LightMaster.esp");
+    constexpr uint32_t nextLightNpcRaceRawId = 0x00000010;
+    AppendRecord(nextLight, FormEnum::NPC_, 0x01000001, MakeNpcData("NextLightNpc", &nextLightNpcRaceRawId));
+    AppendRecord(nextLight, FormEnum::ACHR, 0x01000031, MakeActorReferenceData(0x00001001));
+    {
+        std::ofstream file(dataDirectory.Path() / "NextLight.esl", std::ios::binary);
+        ASSERT_TRUE(file.good());
+        file.write(reinterpret_cast<const char*>(nextLight.data()), static_cast<std::streamsize>(nextLight.size()));
     }
 
     Bytes dependent = MakePluginHeaderWithMaster("LightMaster.esp");
@@ -634,11 +649,13 @@ TEST(ESLoader, ResolvesReferencesToLightMasters)
     const auto records = loader.BuildRecordCollection(true);
     ASSERT_NE(records, nullptr);
     const auto& plugins = loader.GetLoadOrder();
-    ASSERT_EQ(plugins.size(), 3U);
+    ASSERT_EQ(plugins.size(), 4U);
     EXPECT_TRUE(plugins[0].IsLite());
     EXPECT_TRUE(plugins[1].IsLite());
     EXPECT_EQ(plugins[1].m_liteId, 1U);
-    EXPECT_FALSE(plugins[2].IsLite());
+    EXPECT_TRUE(plugins[2].IsLite());
+    EXPECT_EQ(plugins[2].m_liteId, 2U);
+    EXPECT_FALSE(plugins[3].IsLite());
     const auto* const pLightMasterRace = records->FindRaceById(0xFE001010);
     ASSERT_NE(pLightMasterRace, nullptr);
     EXPECT_EQ(pLightMasterRace->m_editorId, "LightMasterRace");
@@ -646,6 +663,10 @@ TEST(ESLoader, ResolvesReferencesToLightMasters)
     const auto* const pLightMasterNpc = records->FindNpcById(0xFE001020);
     ASSERT_NE(pLightMasterNpc, nullptr);
     EXPECT_EQ(pLightMasterNpc->m_raceId, 0xFE001010);
+
+    const auto* const pMaxLightLocalNpc = records->FindNpcById(0xFE001FFF);
+    ASSERT_NE(pMaxLightLocalNpc, nullptr);
+    EXPECT_EQ(pMaxLightLocalNpc->m_editorId, "MaxLightLocalNpc");
 
     const auto* const pLightMasterActorReference = records->FindActorReferenceById(0xFE001030);
     ASSERT_NE(pLightMasterActorReference, nullptr);
@@ -658,7 +679,78 @@ TEST(ESLoader, ResolvesReferencesToLightMasters)
     const auto* const pDependentActorReference = records->FindActorReferenceById(0x00000031);
     ASSERT_NE(pDependentActorReference, nullptr);
     EXPECT_EQ(pDependentActorReference->m_baseObject.m_baseId, 0xFE001020);
+
+    const auto* const pNextLightNpc = records->FindNpcById(0xFE002001);
+    ASSERT_NE(pNextLightNpc, nullptr);
+    EXPECT_EQ(pNextLightNpc->m_editorId, "NextLightNpc");
+    EXPECT_EQ(records->FindRaceById(0xFE002001), nullptr);
+
+    const auto* const pNextLightActorReference = records->FindActorReferenceById(0xFE002031);
+    ASSERT_NE(pNextLightActorReference, nullptr);
+    EXPECT_EQ(pNextLightActorReference->m_baseObject.m_baseId, 0u);
+    ActorPopulationPolicy policy(records.get());
+    EXPECT_EQ(policy.ClassifyNpcBase(pNextLightActorReference->m_baseObject.m_baseId).Class, ActorPopulationClass::kUnknown);
     EXPECT_TRUE(records->HasAnyRecords());
+}
+
+TEST(ESLoader, RejectsMasterListsWithoutDistinctSelfParentSlot)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    TiltedPhoques::Map<String, uint32_t> masterPrefixes;
+    std::vector<String> masterNames;
+    masterNames.reserve(256);
+    for (uint16_t i = 0; i < 256; ++i)
+    {
+        String masterName = "Master" + std::to_string(i) + ".esm";
+        masterPrefixes.emplace(masterName, static_cast<uint32_t>(i) << 24);
+        masterNames.push_back(std::move(masterName));
+    }
+
+    const auto makePluginWithMasters = [&masterNames](const size_t aMasterCount, const uint32_t aRaceFormId) {
+        Bytes headerData;
+        for (size_t i = 0; i < aMasterCount; ++i)
+        {
+            const String& masterName = masterNames[i];
+            Bytes masterNameData(masterName.begin(), masterName.end());
+            masterNameData.push_back(0);
+            AppendChunk(headerData, ChunkId::MAST_ID, masterNameData);
+            AppendChunk(headerData, ChunkId::DATA_ID, Bytes(sizeof(uint64_t), 0));
+        }
+
+        Bytes pluginData;
+        AppendRecord(pluginData, FormEnum::TES4, 0, headerData);
+        AppendRecord(pluginData, FormEnum::RACE, aRaceFormId, MakeRaceData("ParentSlotBoundaryRace"));
+        return pluginData;
+    };
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    ASSERT_TRUE(writePlugin("MaxMasters.esp", makePluginWithMasters(255, 0xFF000001)));
+    ASSERT_TRUE(writePlugin("TooManyMasters.esp", makePluginWithMasters(256, 0x00000001)));
+
+    ESLoader::TESFile maxMastersFile(masterPrefixes);
+    ASSERT_TRUE(maxMastersFile.Setup(1));
+    ASSERT_TRUE(maxMastersFile.LoadFile(dataDirectory.Path() / "MaxMasters.esp"));
+    ESLoader::RecordCollection maxMastersRecords;
+    EXPECT_TRUE(maxMastersFile.IndexRecords(maxMastersRecords));
+    const auto* const pBoundaryRace = maxMastersRecords.FindRaceById(0x01000001);
+    ASSERT_NE(pBoundaryRace, nullptr);
+    EXPECT_EQ(pBoundaryRace->m_editorId, "ParentSlotBoundaryRace");
+
+    ESLoader::TESFile tooManyMastersFile(masterPrefixes);
+    ASSERT_TRUE(tooManyMastersFile.Setup(1));
+    ASSERT_TRUE(tooManyMastersFile.LoadFile(dataDirectory.Path() / "TooManyMasters.esp"));
+    ESLoader::RecordCollection tooManyMastersRecords;
+    EXPECT_FALSE(tooManyMastersFile.IndexRecords(tooManyMastersRecords));
+    EXPECT_FALSE(tooManyMastersRecords.HasAnyRecords());
 }
 
 TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
