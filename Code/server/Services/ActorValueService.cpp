@@ -5,7 +5,9 @@
 #include <Messages/RequestDeathStateChange.h>
 #include <Services/ActorValueService.h>
 #include <Services/ActorHealthChangePolicy.h>
+#include <Services/CanonicalCreatureDeathPolicy.h>
 #include <Events/AcceptedCanonicalHealthDecreaseEvent.h>
+#include <Events/AcceptedCanonicalCreatureDeathEvent.h>
 #include <World.h>
 #include <GameServer.h>
 #include <Messages/NotifyActorValueChanges.h>
@@ -180,7 +182,22 @@ void ActorValueService::OnDeathStateChange(const PacketEvent<RequestDeathStateCh
         return;
 
     auto& characterComponent = characterView.get<CharacterComponent>(*it);
+    const bool wasDead = characterComponent.IsDead();
+    if (wasDead == message.IsDead)
+        return;
+
     characterComponent.SetDead(message.IsDead);
+
+    const auto entity = *it;
+    const auto* const pPopulationIdentity = m_world.try_get<ActorPopulationIdentityComponent>(entity);
+    const auto* const pLifecycle = m_world.try_get<ActorLifecycleComponent>(entity);
+    if (CanonicalCreatureDeathPolicy::IsEligibleTransition(
+            wasDead, message.IsDead, pPopulationIdentity, pLifecycle))
+    {
+        m_dispatcher.trigger(AcceptedCanonicalCreatureDeathEvent{
+            World::ToInteger(entity), pLifecycle->GetGeneration()});
+    }
+
     spdlog::debug("Updating death state {:x}:{}", message.Id, message.IsDead);
 
     NotifyDeathStateChange notify;

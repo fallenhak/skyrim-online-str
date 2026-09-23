@@ -21,8 +21,10 @@ apply hit damage, award XP, grant loot, or establish kill attribution.
   in that canonical value emits an internal signal; the signal carries target
   server ID and lifecycle generation, not the submitted delta.
 - Death state is reported by the current simulation owner with its epoch. The
-  server records and relays the state, but the sender is not treated as a
-  killer identity.
+  server records and relays state changes while ignoring duplicate reports. A
+  trusted Creature's accepted alive-to-dead transition emits an internal event
+  for its server ID and lifecycle generation only; the sender is not treated
+  as a killer identity.
 
 ## Authority boundaries
 
