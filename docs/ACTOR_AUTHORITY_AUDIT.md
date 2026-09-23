@@ -98,6 +98,12 @@ player actor, and now carries that actor's epoch. The server accepts only the
 current owner, then recipients apply the notification only to a matching
 remote incarnation.
 
+These message layouts are not backward-compatible with clients that omit the
+new ownership epoch fields. The client sends `BUILD_COMMIT` during
+authentication, and the server rejects a client whose version does not exactly
+match its own `BUILD_COMMIT`; clients and servers must therefore run the same
+build when using these messages.
+
 ## High-confidence conclusions
 
 1. Health is the clear canonical-state vulnerability: the server currently

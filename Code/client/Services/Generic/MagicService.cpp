@@ -527,18 +527,9 @@ void MagicService::OnRemoveSpellEvent(const RemoveSpellEvent& acEvent) noexcept
         return;
     }
 
-    auto view = m_world.view<FormIdComponent>();
-    const auto it = std::find_if(std::begin(view), std::end(view), [id = acEvent.TargetId, view](auto entity) {
-        return view.get<FormIdComponent>(entity).Id == id;
-    });
-
-    if (it == std::end(view))
-    {
-        spdlog::warn("Form id not found for magic remove target, form id: {:X}", acEvent.TargetId);
-        return;
-    }
-
-    const auto ownershipToken = Utils::GetOwnershipToken(*it);
+    // RemoveSpellEvent is raised for the local player actor only. Keep this
+    // request on that owner route instead of accepting a remote actor token.
+    const auto ownershipToken = Utils::GetLocalOwnershipToken(acEvent.TargetId);
     if (!ownershipToken)
     {
         spdlog::warn("Current ownership not found for magic remove target, form id: {:X}", acEvent.TargetId);
