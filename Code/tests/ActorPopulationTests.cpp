@@ -492,9 +492,9 @@ TEST(ESLoader, SkipsPluginsWithMalformedTES4Headers)
     std::error_code directoryError;
     ASSERT_TRUE(std::filesystem::create_directory(dataDirectory.Path() / "Directory.esp", directoryError)) << directoryError.message();
 
-    EXPECT_FALSE(TESFile::ReadHeaderFlags(dataDirectory.Path() / "Truncated.esl").has_value());
-    EXPECT_FALSE(TESFile::ReadHeaderFlags(dataDirectory.Path() / "WrongType.esp").has_value());
-    EXPECT_FALSE(TESFile::ReadHeaderFlags(dataDirectory.Path() / "Oversized.esm").has_value());
+    EXPECT_FALSE(ESLoader::TESFile::ReadHeaderFlags(dataDirectory.Path() / "Truncated.esl").has_value());
+    EXPECT_FALSE(ESLoader::TESFile::ReadHeaderFlags(dataDirectory.Path() / "WrongType.esp").has_value());
+    EXPECT_FALSE(ESLoader::TESFile::ReadHeaderFlags(dataDirectory.Path() / "Oversized.esm").has_value());
 
     ESLoader::ESLoader loader(dataDirectory.Path());
     const auto metadataOnly = loader.BuildRecordCollection(false);
