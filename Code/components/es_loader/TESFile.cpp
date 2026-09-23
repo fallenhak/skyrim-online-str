@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <set>
 #include <system_error>
 
 namespace ESLoader
@@ -182,6 +183,7 @@ bool TESFile::InitializeFormIdPrefixes() noexcept
     }
 
     uint16_t parentId = 0;
+    std::set<String> seenMasterFilenames;
     for (const Chunks::MAST& master : fileHeader.m_masterFiles)
     {
         // An unresolved master must fail closed; operator[] would silently
@@ -190,6 +192,13 @@ bool TESFile::InitializeFormIdPrefixes() noexcept
         if (!GetPluginFilenameKey(master.m_masterName, masterFilenameKey))
         {
             spdlog::warn("Plugin {} references invalid master {}; skipping its records", m_filename, master.m_masterName);
+            m_parentToFormIdPrefix.clear();
+            return false;
+        }
+
+        if (!seenMasterFilenames.emplace(masterFilenameKey).second)
+        {
+            spdlog::warn("Plugin {} has duplicate master {}; skipping its records", m_filename, master.m_masterName);
             m_parentToFormIdPrefix.clear();
             return false;
         }

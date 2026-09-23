@@ -521,7 +521,7 @@ TEST(ESLoader, UsesTES4ESLFlagForLightPluginNamespace)
     }
 
     ESLoader::ESLoader loader(dataDirectory.Path());
-    const auto metadataOnly = loader.BuildRecordCollection(false);
+    const auto metadataOnly = loader.BuildRecordCollection();
     ASSERT_NE(metadataOnly, nullptr);
     EXPECT_FALSE(metadataOnly->HasAnyRecords());
 
@@ -1337,6 +1337,54 @@ TEST(ESLoader, MissingMasterDoesNotAliasSlotZeroOrClassifyActor)
     const auto actor = resolver.Resolve(GameId(networkModId, 0x00003000));
     EXPECT_EQ(actor.Source, ActorPopulationIdentitySource::kUnknown);
     EXPECT_EQ(actor.Classification.Class, ActorPopulationClass::kUnknown);
+}
+
+TEST(ESLoader, DuplicateMastersDoNotResolveRecordsOrOverrideTheirMaster)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Master.esm\n"
+                  << "DuplicateMasterDependent.esp\n";
+    }
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    constexpr uint32_t masterRaceRawId = 0x00001000;
+    Bytes master = MakePluginHeaderWithMasters({});
+    AppendRecord(master, FormEnum::RACE, masterRaceRawId, MakeRaceData("MasterRace"));
+    AppendRecord(master, FormEnum::NPC_, 0x00002000, MakeNpcData("MasterNpc", &masterRaceRawId));
+
+    // Master names are case-insensitive. The duplicate header must not be
+    // allowed to add records or override the real master namespace.
+    Bytes duplicateMaster = MakePluginHeaderWithMasters({"Master.esm", "master.ESM"});
+    AppendRecord(duplicateMaster, FormEnum::NPC_, 0x02002000, MakeNpcData("DuplicateOverrideNpc", &masterRaceRawId));
+    AppendRecord(duplicateMaster, FormEnum::ACHR, 0x02003000, MakeActorReferenceData(0x00002000));
+
+    ASSERT_TRUE(writePlugin("Master.esm", master));
+    ASSERT_TRUE(writePlugin("DuplicateMasterDependent.esp", duplicateMaster));
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+
+    const auto* const pMasterNpc = records->FindNpcById(0x00002000);
+    ASSERT_NE(pMasterNpc, nullptr);
+    EXPECT_EQ(pMasterNpc->m_editorId, "MasterNpc");
+    EXPECT_EQ(records->FindNpcById(0x01002000), nullptr);
+    EXPECT_EQ(records->FindActorReferenceById(0x01003000), nullptr);
+
+    ActorPopulationPolicy policy(records.get());
+    EXPECT_EQ(policy.ClassifyNpcBase(0x01002000).Class, ActorPopulationClass::kUnknown);
 }
 
 TEST(ActorPopulationIdentityResolver, ResolvesStandardAndLightServerFormIds)
