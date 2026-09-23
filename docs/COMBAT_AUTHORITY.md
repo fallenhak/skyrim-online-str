@@ -46,8 +46,17 @@ observations and to avoid deriving XP, loot, or rewards from them.
 
 ## Phase I — Proposed validated hit-observation protocol
 
-No production packet is enabled by this phase. If combat attribution is added
-later, a request such as `CombatHitObservationRequest` should identify an event
+No production packet is enabled by this phase. The pure
+`CombatAttackerAuthorizationPolicy` checks that a sender's session is in-world,
+the resolved attacker entity is a player character owned by that sender at the
+requested nonzero ownership epoch, and the attacker's server-resolved
+persistent `CharacterId` matches the character selected in that session. The
+policy takes server-resolved identity facts; it does not receive a
+client-selected `CharacterId`. It does not enable hit handling or establish
+target eligibility.
+
+If combat attribution is added later, a request such as
+`CombatHitObservationRequest` should identify an event
 with bounded, replayable identity rather than trusting a client-provided
 persistent character ID:
 
