@@ -1,5 +1,11 @@
 {
-  "captured_at": "2026-09-23T01:39:45+00:00",
+  "captured_at": "2026-09-23T08:44:28+00:00",
+  "infra": {
+    "branch": "infra/vds-orchestrator-review",
+    "implementation_commit": "323033ceccb99874e2767531abbb94791243d24d",
+    "merge_commit": "889199056594c246286a5fd93cba942443996575",
+    "pushed_to_origin": true
+  },
   "global_mode": "RUNNING",
   "service": {
     "name": "skyrim-dev-orchestrator.service",
@@ -25,66 +31,132 @@
       "model": "gpt-6-luna",
       "reasoning_effort": "max",
       "max_concurrent_workers": 2,
-      "live_count": 1
+      "live_count": 0
     },
     "architect": {
       "model": "gpt-6-sol",
       "reasoning_effort": "max",
       "max_processes": 1,
-      "live_count": 1
+      "live_count": 0
     }
   },
   "live_processes": {
-    "combat_worker_pid": 275905,
-    "population_reviewer_pid": 277103
+    "development_workers": {},
+    "architect_review_id": null,
+    "architect_reviewer_pid": null
   },
   "architect_review": {
     "enabled": true,
-    "active_review_id": "71b2cb0de6a6d84e5a3e9cf3cdb8daf1d732c124fc2909a3ee4c09b17505700c",
+    "active_review_id": null,
     "queued": 0,
+    "idle_reason": "remaining roadmap tasks are externally gated",
+    "availability": "AVAILABLE",
     "last_applied": {
-      "combat": "RETRY",
+      "authority": "BLOCK",
+      "combat": "BLOCK",
+      "population": "BLOCK",
       "ui": "BLOCK"
     }
   },
   "lanes": {
-    "combat": {
-      "state": "CODING",
-      "phase": "C05",
-      "head": "e54145143df19f55b7e9556120e3c01fab5d5ccd",
-      "worker_pid": 275905,
-      "ci": "PASS for previous committed SHA; current staged changes need exact-SHA CI"
-    },
     "authority": {
-      "state": "NEEDS_SOL_REVIEW",
-      "phase": "A06",
-      "head": "322562962508abae49d82839a745c5996de044e7",
+      "phase": "A09",
+      "state": "BLOCKED",
+      "head": "c9fae7f73f65d813c3fe3a4284caad71fada53a9",
       "worker_pid": null,
       "ci": {
-        "Build linux": "FAIL run 35792965327",
-        "Build windows": "IN_PROGRESS run 35792965343"
-      }
+        "Build linux": {
+          "sha": "c9fae7f73f65d813c3fe3a4284caad71fada53a9",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        "Build windows": {
+          "sha": "c9fae7f73f65d813c3fe3a4284caad71fada53a9",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      },
+      "sol_decision": "BLOCK",
+      "block_reason": "A08 is satisfied and exact-SHA CI passed, but A09 leaves ordinary object activation and lock synchronization suppressed without a settled authority contract. The incomplete patch evidence and focused validation prevent clearing this trust checkpoint."
+    },
+    "combat": {
+      "phase": "C05",
+      "state": "BLOCKED",
+      "head": "8007bfa4625bd611458cd714241c1ea69dad9abf",
+      "worker_pid": null,
+      "ci": {
+        "Build linux": {
+          "sha": "8007bfa4625bd611458cd714241c1ea69dad9abf",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        "Build windows": {
+          "sha": "8007bfa4625bd611458cd714241c1ea69dad9abf",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      },
+      "sol_decision": "BLOCK",
+      "block_reason": "C04 is recorded complete and exact-SHA CI passed, but approval requires a safety review of the C05 implementation. The supplied evidence does not include the committed code needed for that review."
     },
     "population": {
-      "state": "NEEDS_SOL_REVIEW",
-      "phase": "L03",
-      "head": "52c97ba4d5da993e6ef2fa4bdf398f13c22b456a",
+      "phase": "L05",
+      "state": "BLOCKED",
+      "head": "74d992001cfc63a7bb16ee7418f11bf05de07148",
       "worker_pid": null,
-      "ci": "NOT_RUN"
+      "ci": {
+        "Build linux": {
+          "sha": "74d992001cfc63a7bb16ee7418f11bf05de07148",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        "Build windows": {
+          "sha": "74d992001cfc63a7bb16ee7418f11bf05de07148",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      },
+      "sol_decision": "BLOCK",
+      "block_reason": "L04 is recorded as complete and exact-SHA CI passed, but this CURRENT_PHASE_REVIEW has a structural failure and no reviewable diff. The evidence is insufficient to judge the committed L05 implementation or advance the phase."
     },
     "ui": {
-      "state": "BLOCKED",
       "phase": "U04",
+      "state": "BLOCKED",
       "head": "6d32bdab944a904098c0c91953fe6d3c0b641753",
       "worker_pid": null,
-      "ci": "PASS on exact reviewed SHA",
-      "block_reason": "insufficient source and session-transition evidence"
+      "ci": {
+        "Build linux": {
+          "sha": "6d32bdab944a904098c0c91953fe6d3c0b641753",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        "Build windows": {
+          "sha": "6d32bdab944a904098c0c91953fe6d3c0b641753",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      },
+      "sol_decision": "BLOCK",
+      "block_reason": "U03 is complete and both required workflows passed at the reviewed SHA, but the supplied evidence does not establish that the U04 implementation is safe. Approval must wait for the missing source and session-transition evidence."
     }
   },
   "future_external_gated_tasks": 10,
+  "tests": {
+    "python_compile": "PASS",
+    "full_deterministic_suite": "149 passed",
+    "self_test": "SELF_TEST_OK",
+    "healthcheck": "PASS (5 checks)",
+    "worker_smoke": "WORKER_SMOKE_OK",
+    "architect_review_smoke": "PASS (gpt-6-sol/max; strict RETRY JSON; no tool events)"
+  },
   "safety": {
-    "max_development_workers_observed": 1,
+    "memory_pressure_pauses_during_validation": 2,
+    "threshold_relaxed": false,
+    "max_live_development_workers_observed": 2,
+    "no_destructive_git_operation": true,
+    "no_development_branch_merge": true,
+    "no_ci_bypass": true,
     "no_milestone_acceptance": true,
-    "no_destructive_git_operation": true
+    "user_pc_shutdown": false
   }
 }
