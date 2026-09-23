@@ -64,10 +64,95 @@ test.describe('Character Select', () => {
     ).toHaveCount(0);
 
     await page.evaluate(() => {
-      (window as any).skyrimtogether.emit('characterSelectionResult', 2);
+      const client = (window as any).skyrimtogether;
+      // A rejection without a pending request must not replace the server's
+      // empty-list state.
+      client.emit(
+        'characterSelectionResult',
+        2,
+        client.characterConnectionGeneration,
+      );
+    });
+    await expect(page.locator('[data-character-select-state="empty"]'))
+      .toBeVisible();
+
+    await page.evaluate(() => {
+      const client = (window as any).skyrimtogether;
+      client.selectCharacter = () => {};
+      client.emit(
+        'characterList',
+        [['100', 'Unavailable Character', '0', '0', 0, 1]],
+        client.characterConnectionGeneration,
+      );
+    });
+    const characterSelect = page.locator('app-character-select');
+    await characterSelect.locator('.character-select-action').click();
+    await expect(
+      characterSelect.getByRole('button', { name: /selecting/i }),
+    ).toBeVisible();
+    await page.evaluate(() => {
+      const client = (window as any).skyrimtogether;
+      client.emit(
+        'characterSelectionResult',
+        2,
+        client.characterConnectionGeneration,
+      );
     });
     await expect(page.locator('[data-character-select-state="error"]'))
       .toContainText('This character is unavailable for this account');
+    await expect(
+      characterSelect.getByRole('button', { name: /back/i }),
+    ).toBeVisible();
+
+    await page.evaluate(() => {
+      const client = (window as any).skyrimtogether;
+      client.emit(
+        'characterList',
+        [['100', 'Still Server Listed', '0', '0', 0, 1]],
+        client.characterConnectionGeneration,
+      );
+    });
+    await characterSelect.locator('.character-select-action').click();
+    await page.evaluate(() => {
+      const client = (window as any).skyrimtogether;
+      client.emit(
+        'characterSelectionResult',
+        3,
+        client.characterConnectionGeneration,
+      );
+    });
+    await expect(page.locator('[data-character-select-state="error"]'))
+      .toContainText('The server could not accept this selection request');
+  });
+
+  test('wraps very long server-provided names inside the character row', async ({
+    page,
+  }) => {
+    await page.locator('app-connect input').nth(0).fill('character-server');
+    await page.locator('app-connect app-action-buttons button').nth(0).click();
+
+    const longName = 'VeryLongCharacterName'.repeat(20);
+    await page.evaluate(name => {
+      const client = (window as any).skyrimtogether;
+      client.emit(
+        'characterList',
+        [['100', name, '0', '0', 0, 1]],
+        client.characterConnectionGeneration,
+      );
+    }, longName);
+
+    const nameElement = page.locator('.character-name');
+    await expect(nameElement).toHaveText(longName);
+    await expect(nameElement).toHaveCSS('overflow-wrap', 'anywhere');
+    const overflows = await page.evaluate(() => {
+      const name = document.querySelector('.character-name') as HTMLElement;
+      const row = name.closest('li') as HTMLElement;
+      return (
+        name.scrollWidth > name.clientWidth ||
+        row.scrollWidth > row.clientWidth
+      );
+    });
+    expect(overflows).toBe(false);
   });
 
   test(
@@ -263,7 +348,12 @@ test.describe('Character Select', () => {
       await expect(characterSelect).toBeVisible();
 
       await page.evaluate(() => {
-        (window as any).skyrimtogether.emit('characterSelectionResult', 0);
+        const client = (window as any).skyrimtogether;
+        client.emit(
+          'characterSelectionResult',
+          0,
+          client.characterConnectionGeneration,
+        );
       });
       await expect(
         characterSelect.locator('[data-character-select-state="loading"]'),
@@ -305,7 +395,12 @@ test.describe('Character Select', () => {
         characterSelect.getByRole('button', { name: /selecting/i }),
       ).toBeVisible();
       await page.evaluate(() => {
-        (window as any).skyrimtogether.emit('characterSelectionResult', 0);
+        const client = (window as any).skyrimtogether;
+        client.emit(
+          'characterSelectionResult',
+          0,
+          client.characterConnectionGeneration,
+        );
       });
 
       await page.evaluate(() => {
@@ -414,7 +509,12 @@ test.describe('Character Select', () => {
     await expect(characterSelect.locator('section')).toBeFocused();
 
     await page.evaluate(() => {
-      (window as any).skyrimtogether.emit('characterSelectionResult', 2);
+      const client = (window as any).skyrimtogether;
+      client.emit(
+        'characterSelectionResult',
+        2,
+        client.characterConnectionGeneration,
+      );
     });
     await expect(backButton).toBeFocused();
     await page.evaluate(() => {
@@ -437,5 +537,78 @@ test.describe('Character Select', () => {
     expect(
       await page.evaluate(() => (window as any).escapeDeactivatedOverlay),
     ).toBe(true);
+  });
+
+  test('clears a pending selection on disconnect and ignores its late result', async ({
+    page,
+  }) => {
+    await page.locator('app-connect input').nth(0).fill('character-server');
+    await page.locator('app-connect app-action-buttons button').nth(0).click();
+
+    await page.evaluate(() => {
+      const client = (window as any).skyrimtogether;
+      client.selectCharacter = () => {};
+      client.emit(
+        'characterList',
+        [['100', 'Pending Character', '0', '0', 0, 1]],
+        client.characterConnectionGeneration,
+      );
+    });
+
+    const characterSelect = page.locator('app-character-select');
+    await characterSelect.locator('.character-select-action').click();
+    await expect(
+      characterSelect.getByRole('button', { name: /selecting/i }),
+    ).toBeVisible();
+    const oldGeneration = await page.evaluate(
+      () => (window as any).skyrimtogether.characterConnectionGeneration,
+    );
+
+    await page.evaluate(() => {
+      (window as any).skyrimtogether.disconnect();
+    });
+    await expect(
+      characterSelect.locator('[data-character-select-state="error"]'),
+    ).toContainText('connection to the server was lost');
+    await expect(characterSelect.locator('.character-list li')).toHaveCount(0);
+    await expect(
+      characterSelect.getByRole('button', { name: /selecting/i }),
+    ).toHaveCount(0);
+    await expect(
+      characterSelect.getByRole('button', { name: /back/i }),
+    ).toBeVisible();
+
+    await page.evaluate(generation => {
+      (window as any).skyrimtogether.emit(
+        'characterSelectionResult',
+        0,
+        generation,
+      );
+    }, oldGeneration);
+    await expect(
+      characterSelect.locator('[data-character-select-state="error"]'),
+    ).toContainText('connection to the server was lost');
+
+    await page.evaluate(() => {
+      (window as any).skyrimtogether.connect('character-server', 10578, '');
+    });
+    await expect(
+      characterSelect.locator('[data-character-select-state="list"]'),
+    ).toBeVisible();
+    await characterSelect.locator('.character-select-action').click();
+    await expect(
+      characterSelect.getByRole('button', { name: /selecting/i }),
+    ).toBeVisible();
+    await page.evaluate(generation => {
+      // A result queued for the old connection cannot settle a new request.
+      (window as any).skyrimtogether.emit(
+        'characterSelectionResult',
+        2,
+        generation,
+      );
+    }, oldGeneration);
+    await expect(
+      characterSelect.getByRole('button', { name: /selecting/i }),
+    ).toBeVisible();
   });
 });

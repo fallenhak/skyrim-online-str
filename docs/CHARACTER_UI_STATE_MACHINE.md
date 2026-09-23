@@ -159,7 +159,7 @@ network opcodes.
 | --- | --- | --- | --- |
 | native -> Angular | `characterList` | One complete `CharacterSummaryBridge[]` argument. `[]` is meaningful. | Adapt `CharacterListReceivedEvent` from `NotifyCharacterList`. |
 | Angular -> native | `requestCharacterList()` | No arguments. | Call `CharacterSessionService::RequestCharacterList()`. |
-| native -> Angular | `characterSelectionResult` | One `CharacterSelectionStatus` value (`0..3`). | Adapt `CharacterSelectionResultEvent`; do not add a client-selected ID. |
+| native -> Angular | `characterSelectionResult` | `CharacterSelectionStatus` value (`0..3`) and connection generation. | Adapt `CharacterSelectionResultEvent`; do not add a client-selected ID. Ignore responses from an old generation or without a pending request. |
 | Angular -> native | `selectCharacter(characterId: CharacterId)` | One canonical decimal character ID string. | Parse only for transport and call `CharacterSessionService::SelectCharacter`; the server validates ownership/state. |
 
 The existing `connect` and `disconnect` callbacks remain transport lifecycle

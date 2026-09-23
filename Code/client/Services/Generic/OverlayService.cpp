@@ -483,6 +483,7 @@ void OverlayService::OnCharacterSelectionResult(const CharacterSelectionResultEv
 
     auto pArguments = CefListValue::Create();
     pArguments->SetInt(0, static_cast<int>(acEvent.Status));
+    pArguments->SetDouble(1, static_cast<double>(m_characterConnectionGeneration));
     m_pOverlay->ExecuteAsync("characterSelectionResult", pArguments);
 }
 

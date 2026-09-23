@@ -146,6 +146,7 @@ declare namespace SkyrimTogetherTypes {
 
   type CharacterSelectionResultCallback = (
     status: CharacterSelectionStatus,
+    connectionGeneration: number,
   ) => void;
 
   type CharacterSessionStateCallback = (state: CharacterSessionState) => void;

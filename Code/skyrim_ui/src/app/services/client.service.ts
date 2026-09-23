@@ -481,7 +481,20 @@ export class ClientService implements OnDestroy {
 
   private onCharacterSelectionResult(
     status: SkyrimTogetherTypes.CharacterSelectionStatus,
+    connectionGeneration: number,
   ): void {
+    // A selection response belongs to the connection that received it. Ignore
+    // late responses after disconnect/reconnect, and unsolicited duplicates.
+    if (
+      !this._acceptCharacterListMessages ||
+      !this.connectionStateChange.getValue() ||
+      this.characterSessionStateChange.getValue() === 'disconnected' ||
+      connectionGeneration !== this._characterConnectionGeneration ||
+      this.characterSelectionPendingIdChange.getValue() === null
+    ) {
+      return;
+    }
+
     this.zone.run(() => {
       this.characterSelectionPendingIdChange.next(null);
       this.characterSelectionResultChange.next(status);

@@ -90,6 +90,7 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
         if (error) {
           this.emit('disconnect', false, connectionGeneration);
         } else {
+          this.emit('characterSessionState', 'awaitingCharacterSelection');
           this.emit('connect', connectionGeneration);
         }
         if (error && typeof error !== 'boolean') {
@@ -149,7 +150,14 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
     );
     const status: SkyrimTogetherTypes.CharacterSelectionStatus =
       hasServerCharacter ? 0 : 2;
-    this.emit('characterSelectionResult', status);
+    if (status === 0) {
+      this.emit('characterSessionState', 'characterSelected');
+    }
+    this.emit(
+      'characterSelectionResult',
+      status,
+      this.characterConnectionGeneration,
+    );
   }
 
   reconnect(): void {
