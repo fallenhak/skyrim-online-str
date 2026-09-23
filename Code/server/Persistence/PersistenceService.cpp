@@ -16,6 +16,7 @@ namespace
 PersistenceService::PersistenceService(std::filesystem::path aDatabasePath)
     : m_database(ResolveDatabasePath(std::move(aDatabasePath)))
     , m_characterRepository(m_database)
+    , m_renewableEncounterRepository(m_database)
 {
     m_database.Migrate();
 }

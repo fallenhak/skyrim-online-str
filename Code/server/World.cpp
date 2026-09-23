@@ -18,6 +18,7 @@
 #include <Services/WeatherService.h>
 #include <Services/ScriptService.h>
 #include <Services/MapService.h>
+#include <Services/RenewableEncounterService.h>
 
 #include <es_loader/ESLoader.h>
 
@@ -71,6 +72,10 @@ World::World(
     }
     ctx().emplace<ActorPopulationIdentityResolver>(modsComponent, m_recordCollection.get(), ctx().at<ActorPopulationPolicy>());
     ctx().emplace<ActorPopulationAssignmentPolicy>(aEnableHumanoidAssignmentGate, aAllowUnknownActorAssignments);
+
+    // Needs the server load order above to resolve cell ids. Encounters are added by the
+    // encounter configuration, which then calls RestorePersistedState() once.
+    ctx().emplace<RenewableEncounterService>(*this, m_dispatcher, ctx().at<PersistenceService>().GetRenewableEncounterRepository());
 
     // late initialize the ScriptService to ensure all components are valid
     m_pScriptService = TiltedPhoques::MakeUnique<ScriptService>(*this, m_dispatcher);
