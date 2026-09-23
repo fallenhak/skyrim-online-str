@@ -53,13 +53,14 @@
           "id": "M01-WORLD",
           "lane": "world",
           "mode": "ROADMAP_TASKS",
-          "status": "BLOCKED_DEPENDENCY",
+          "status": "BLOCKED_EXTERNAL_GATE",
           "branch": null,
           "blocked_by": [
             "M01-COMBAT",
             "M01-POPULATION"
           ],
           "external_gates": [
+            "external owner batudev0 controls M01-WORLD on human/batuhan/world-encounters; orchestrator must not schedule W01-W10",
             "reviewed integration branch containing required combat lifecycle and population-classification foundations"
           ],
           "tasks": [
@@ -151,7 +152,10 @@
                 "W09"
               ]
             }
-          ]
+          ],
+          "owner": "batudev0",
+          "owner_kind": "EXTERNAL_HUMAN_COLLABORATOR",
+          "owner_branch": "human/batuhan/world-encounters"
         }
       ],
       "acceptance": [
