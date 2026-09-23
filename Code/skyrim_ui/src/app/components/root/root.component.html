@@ -43,13 +43,6 @@
         -->
         <button
           data-style-ornament="inverted"
-          [attr.data-style-active]="(view$ | async) === RootView.PLAYER_MANAGER"
-          (click)="setView(RootView.PLAYER_MANAGER)"
-        >
-          {{ 'COMPONENT.ROOT.PLAYER_MANAGER' | transloco }}
-        </button>
-        <button
-          data-style-ornament="inverted"
           data-character-select-trigger="true"
           [attr.data-style-active]="(view$ | async) === RootView.CHARACTER_SELECT"
           (click)="setView(RootView.CHARACTER_SELECT)"
@@ -117,12 +110,6 @@
           (done)="closeView()"
           (settingsUpdated)="updateGroupPosition()"
         ></app-settings>
-      </app-popup>
-      <app-popup
-        *ngSwitchCase="RootView.PLAYER_MANAGER"
-        data-popup="playerManager"
-      >
-        <app-player-manager (done)="closeView()"></app-player-manager>
       </app-popup>
       <app-popup
         *ngSwitchCase="RootView.CHARACTER_SELECT"
