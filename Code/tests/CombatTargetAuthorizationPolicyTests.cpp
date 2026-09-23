@@ -3,7 +3,7 @@
 #include <TiltedCore/Buffer.hpp>
 #include <TiltedCore/Stl.hpp>
 
-#include <Components.h>
+#include <server/Components.h>
 #include <Services/CombatTargetAuthorizationPolicy.h>
 
 #include <limits>

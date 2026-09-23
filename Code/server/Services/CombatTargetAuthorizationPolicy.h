@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Components.h>
+#include <server/Components.h>
 
 #include <cstdint>
 #include <limits>
