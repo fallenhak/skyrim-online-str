@@ -1,5 +1,16 @@
 # Supervisor Hardening V2 changelog
 
+
+## Isolated Sol architect review — 2026-09-23
+
+- Added a serialized `gpt-6-sol/max` reviewer, strict identity-bound JSON decisions, immutable redacted evidence bundles, bounded retries/backoff, and stale-state checks.
+- The model receives the evidence inline and has no shell, MCP, browser, plugin, or network tools. Bubblewrap hides operator state, worker trees, service files, logs, and host credentials; any unexpected tool event fails the review.
+- Added the real-model isolation smoke command and deterministic reviewer tests. The final Linux suite passed 148 tests and the smoke decision returned `RETRY` for the deliberately unsafe fixture with no tool events.
+- Follow-up stabilized review identity by recursively removing scheduler-only `evaluated_at` fields from the state digest and persisted immutable bundle, versioned the bundle identity to avoid legacy collisions, and coalesced superseded queue entries.
+- RETRY policy now permits actionable high-severity findings within the existing bounds; APPROVE still fails closed on critical/high findings, and low-confidence or actionless RETRY is blocked. One-time exact-state reevaluation recovers an actionable RETRY blocked by the earlier over-broad severity rule.
+- Configured the reviewer without changing the exact control-plane SHA or the preserved lane worktrees. No milestone/runtime acceptance was recorded.
+
+
 ## Phases 5–10 worker-model and recovery maintenance — 2026-09-23
 
 - Changed only the future development worker model arguments to gpt-6-luna; max reasoning, review configuration, approval/sandbox arguments, and max_concurrent_workers=2 remain unchanged.

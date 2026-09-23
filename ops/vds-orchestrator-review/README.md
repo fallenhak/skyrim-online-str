@@ -273,3 +273,49 @@ The installed supervisor and the infra branch source now agree on the two-worker
 The three exact checkpoint approvals and the guarded Population retry completed while paused. After Phase 8 passed, a five-minute observation recorded no more than two workers. The 20 root-owned loose-object fan-out directories were corrected to the repository's skyrimdev owner, and the Population temporary-index check passes without changing its real index. In the 01:38 capture, GLOBAL was RUNNING with a valid control plane; Combat C05 and Population L03 awaited Sol review, UI U03 awaited Sol review after passing CI, and Authority A06 was retrying after a Linux CI failure with one live GPT-6 Luna/max worker. No new review packet was approved after resume.
 
 See [verification/phase5-10-recovery.md](verification/phase5-10-recovery.md) for source paths, hashes, tests, permission evidence, lane decisions, worker command evidence, and final worktree status.
+
+
+## Isolated Sol architect review — 2026-09-23
+
+The supervisor now runs one serialized `gpt-6-sol/max` architect review alongside
+at most two Luna development workers. It builds an immutable, secret-redacted
+bundle for the exact lane, phase, worktree diff, validation, CI, product context,
+roadmap dependencies, and cross-lane interfaces, then sends that bounded bundle
+inline to the reviewer. The reviewer receives no file, shell, MCP, browser,
+plugin, or network tools. Codex MCP is disabled per invocation, the CLI uses
+`approval_policy=never` with `read-only` sandboxing, and the supervisor rejects
+the result if the JSONL event stream contains any non-text tool item. The
+outer Bubblewrap boundary also hides supervisor state and inbox, worker trees,
+service files, logs, and host credentials.
+
+Responses use a strict JSON schema and must match the exact review ID, lane,
+phase, worktree SHA, and state digest. The supervisor rechecks that identity
+before applying any decision. Exact-SHA CI and dependency gates remain enforced;
+review actions are recovery guidance only. A current-phase approval cannot
+advance a phase, and milestone/runtime acceptance remains human-owned. Review
+retries, repeated findings, CI repairs, failures, and backoff all have explicit
+bounds. `skyrim-dev review-status` shows the queue, while
+`skyrim-dev architect-review-smoke-test` runs the disposable Bubblewrap and real
+Sol-model smoke check.
+
+
+## 24/7 autonomous review verification — 2026-09-23
+
+This deployment supersedes the earlier paused-mode status captured above. The
+supervisor is active and enabled, and autonomous development is running with a
+maximum of two `gpt-6-luna`/max workers plus one independent serialized
+`gpt-6-sol`/max review process. Review identity excludes scheduler-only
+`evaluated_at` fields from both the state digest and immutable evidence bundle;
+a versioned identity prevents collisions with bundles written by the earlier
+format. Each tick coalesces superseded queued review items.
+
+The RETRY gate requires concrete bounded actions and remaining budget; high
+findings can be repaired in the same phase, while low-confidence/actionless
+RETRY and any critical/high APPROVE remain blocked. The earlier policy's
+actionable RETRY is rechecked against the exact saved bundle and current lane
+state before it can resume.
+
+The final verification record contains the exact control-plane SHA, service and
+worker state, lane HEAD/CI status, reviewer queue, test results, and deployed
+source hashes. M01 runtime acceptance remains human-gated.
+See [verification/final-verification.md](verification/final-verification.md).

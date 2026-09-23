@@ -1,27 +1,90 @@
 {
-  "captured_at": "2026-09-22",
-  "global_mode": "PAUSED",
-  "service": "active",
-  "healthcheck_timer": "active/enabled",
-  "state_version": 4,
+  "captured_at": "2026-09-23T01:39:45+00:00",
+  "global_mode": "RUNNING",
+  "service": {
+    "name": "skyrim-dev-orchestrator.service",
+    "active": true,
+    "enabled": true
+  },
+  "healthcheck_timer": {
+    "active": true,
+    "enabled": true
+  },
   "control_plane": {
     "branch": "orchestration/control-plane",
     "applied_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
     "observed_sha": "3e7e893b4018b488e158aa5cda977399c0e55a75",
     "status": "VALID"
   },
+  "milestone": {
+    "M01": "ACTIVE",
+    "runtime_acceptance": "human_gated"
+  },
+  "models": {
+    "development": {
+      "model": "gpt-6-luna",
+      "reasoning_effort": "max",
+      "max_concurrent_workers": 2,
+      "live_count": 1
+    },
+    "architect": {
+      "model": "gpt-6-sol",
+      "reasoning_effort": "max",
+      "max_processes": 1,
+      "live_count": 1
+    }
+  },
+  "live_processes": {
+    "combat_worker_pid": 275905,
+    "population_reviewer_pid": 277103
+  },
+  "architect_review": {
+    "enabled": true,
+    "active_review_id": "71b2cb0de6a6d84e5a3e9cf3cdb8daf1d732c124fc2909a3ee4c09b17505700c",
+    "queued": 0,
+    "last_applied": {
+      "combat": "RETRY",
+      "ui": "BLOCK"
+    }
+  },
   "lanes": {
-    "combat": {"state": "NEEDS_SOL_REVIEW", "phase": "C04", "worker_pid": null, "head": "500bf5ea5e04341f565776ed5263119c1cf06893"},
-    "authority": {"state": "NEEDS_SOL_REVIEW", "phase": "A04", "review_type": "POST_PHASE_CHECKPOINT", "worker_pid": null, "head": "b8fc40415fceee88ae6424d25bd68a2a0ddeb70a"},
-    "population": {"state": "NEEDS_SOL_REVIEW", "phase": "L03", "worker_pid": null, "head": "52c97ba4d5da993e6ef2fa4bdf398f13c22b456a"},
-    "ui": {"state": "NEEDS_SOL_REVIEW", "phase": "U02", "worker_pid": null, "head": "a473531ad16a82cecc8a4cdecc460934ba7efcfa"}
+    "combat": {
+      "state": "CODING",
+      "phase": "C05",
+      "head": "e54145143df19f55b7e9556120e3c01fab5d5ccd",
+      "worker_pid": 275905,
+      "ci": "PASS for previous committed SHA; current staged changes need exact-SHA CI"
+    },
+    "authority": {
+      "state": "NEEDS_SOL_REVIEW",
+      "phase": "A06",
+      "head": "322562962508abae49d82839a745c5996de044e7",
+      "worker_pid": null,
+      "ci": {
+        "Build linux": "FAIL run 35792965327",
+        "Build windows": "IN_PROGRESS run 35792965343"
+      }
+    },
+    "population": {
+      "state": "NEEDS_SOL_REVIEW",
+      "phase": "L03",
+      "head": "52c97ba4d5da993e6ef2fa4bdf398f13c22b456a",
+      "worker_pid": null,
+      "ci": "NOT_RUN"
+    },
+    "ui": {
+      "state": "BLOCKED",
+      "phase": "U04",
+      "head": "6d32bdab944a904098c0c91953fe6d3c0b641753",
+      "worker_pid": null,
+      "ci": "PASS on exact reviewed SHA",
+      "block_reason": "insufficient source and session-transition evidence"
+    }
   },
   "future_external_gated_tasks": 10,
-  "processed_operator_requests": 1,
-  "live_fixture": {
-    "request_id": "infra-fixture-invalid-20260922",
-    "status": "FAILED",
-    "return_code": 2,
-    "mutation": "none"
+  "safety": {
+    "max_development_workers_observed": 1,
+    "no_milestone_acceptance": true,
+    "no_destructive_git_operation": true
   }
 }

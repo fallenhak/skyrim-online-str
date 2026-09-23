@@ -14,7 +14,7 @@
   "log_root": "/var/log/skyrim-dev",
   "min_free_gb": 8.0,
   "min_memory_available_gb": 1.0,
-  "min_memory_available_fraction": 0.10,
+  "min_memory_available_fraction": 0.1,
   "max_concurrent_workers": 2,
   "worker_timeout_seconds": 5400,
   "worker_stale_seconds": 1200,
@@ -96,6 +96,25 @@
         "Code/immersive_elf/"
       ]
     }
+  },
+  "architect_review": {
+    "enabled": true,
+    "root": "/var/lib/skyrim-review",
+    "repo_root": "/srv/projects/skyrim-online-str/repo",
+    "auth_file": "/home/skyrimdev/.codex/auth.json",
+    "model": "gpt-6-sol",
+    "reasoning_effort": "max",
+    "max_review_failures": 3,
+    "max_retry_cycles": 3,
+    "max_same_fingerprint_cycles": 3,
+    "max_ci_repair_cycles": 3,
+    "retry_base_seconds": 900,
+    "retry_max_seconds": 3600,
+    "timeout_seconds": 1800,
+    "idle_stall_seconds": 900,
+    "idle_warning_interval_seconds": 1800,
+    "max_context_files": 32,
+    "max_context_bytes": 524288,
+    "smoke_timeout_seconds": 240
   }
 }
-

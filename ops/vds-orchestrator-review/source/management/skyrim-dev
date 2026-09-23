@@ -6,7 +6,7 @@ UNIT=skyrim-dev-orchestrator.service
 ENVV="HOME=/home/skyrimdev CODEX_HOME=/home/skyrimdev/.codex GH_CONFIG_DIR=/home/skyrimdev/.config/gh PATH=/usr/local/bin:/usr/bin:/bin"
 
 usage() {
-    printf '%s\n' 'usage: skyrim-dev {status|roadmap-status|milestone-status|sync-control-plane|start|pause|resume|stop|logs|healthcheck|self-test|worker-smoke-test|review-status|approve|retry|block|approve-task|approve-control-plane|accept-milestone} [argument]'
+    printf '%s\n' 'usage: skyrim-dev {status|roadmap-status|milestone-status|sync-control-plane|start|pause|resume|stop|logs|healthcheck|self-test|worker-smoke-test|architect-review-smoke-test|review-status|approve|retry|block|approve-task|approve-control-plane|accept-milestone} [argument]'
 }
 
 run_service() {
@@ -63,6 +63,9 @@ case "$command_name" in
         ;;
     worker-smoke-test)
         run_service worker-smoke-test
+        ;;
+    architect-review-smoke-test)
+        run_service architect-review-smoke-test
         ;;
     review-status)
         run_service review-status

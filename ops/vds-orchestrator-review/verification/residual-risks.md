@@ -60,3 +60,18 @@
 - `COMPLETE_WITH_VALIDATION_GAP` remains a claim by the worker until local
   structural checks and required CI pass; any actual failure invalidates the
   gap and follows recovery/review.
+
+
+## Autonomous Sol reviewer — 2026-09-23
+
+The Sol reviewer deliberately receives only the bounded inline evidence bundle
+and has no file, shell, MCP, browser, plugin, or network tools. That limits its
+ability to discover context omitted from the bundle; the bundle builder includes
+the exact diff, bounded changed-file contents, validation, CI, roadmap and
+product context, and cross-lane interfaces. If the bundle is oversized,
+malformed, stale, or incomplete, the review fails closed for human or worker
+recovery instead of granting access to additional files. A real gpt-6-sol/max
+smoke run verified a strict `RETRY` response for a synthetic unsafe fixture and
+no tool events. Human runtime acceptance remains required for M01.
+
+- The resource guard automatically paused global work once during this deployment when it observed memory pressure. The paused state was preserved through maintenance, then resumed after checks; no memory threshold was relaxed. Continue monitoring the VDS while worker and reviewer processes run.
