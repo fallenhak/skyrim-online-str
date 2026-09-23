@@ -32,6 +32,8 @@
       "EMPTY": "No characters are available on this server. Character creation is not available from this screen.",
       "DISCONNECTED": "The connection to the server was lost. Connect again to load its characters.",
       "LEVEL": "Level {{level}}",
+      "RACE_FORM": "Race form (base {{baseId}}, mod {{modId}})",
+      "SEX": "Sex {{sex}}",
       "BACK": "Back",
       "ERROR": {
         "IDENTITY_NOT_READY": "The server identity is not ready. Try again after reconnecting.",

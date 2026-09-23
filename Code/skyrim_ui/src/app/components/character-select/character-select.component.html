@@ -23,7 +23,10 @@
       class="character-list"
       [attr.aria-label]="'COMPONENT.CHARACTER_SELECT.TITLE' | transloco"
     >
-      <li *ngFor="let character of characters; trackBy: trackByCharacterId">
+      <li
+        *ngFor="let character of characters; trackBy: trackByCharacterId"
+        [attr.data-character-id]="character.characterId"
+      >
         <span class="character-name">{{ character.name }}</span>
         <span class="character-level">
           {{
@@ -31,6 +34,23 @@
               | transloco: { level: character.level }
           }}
         </span>
+        <div class="character-details">
+          <span>
+            {{
+              'COMPONENT.CHARACTER_SELECT.RACE_FORM'
+                | transloco: {
+                    baseId: character.race.baseId,
+                    modId: character.race.modId
+                  }
+            }}
+          </span>
+          <span>
+            {{
+              'COMPONENT.CHARACTER_SELECT.SEX'
+                | transloco: { sex: character.sex }
+            }}
+          </span>
+        </div>
       </li>
     </ul>
   </ng-container>

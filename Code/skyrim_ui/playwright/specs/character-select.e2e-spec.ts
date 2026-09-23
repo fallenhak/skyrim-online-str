@@ -29,8 +29,17 @@ test.describe('Character Select', () => {
     });
     await expect(page.locator('[data-character-select-state="list"]'))
       .toBeVisible();
-    await expect(page.locator('.character-list')).toContainText('Server Character');
-    await expect(page.locator('.character-list')).toContainText('Level 17');
+    const character = page.locator('.character-list li');
+    await expect(character).toHaveAttribute(
+      'data-character-id',
+      '18446744073709551615',
+    );
+    await expect(character).toContainText('Server Character');
+    await expect(character).toContainText('Level 17');
+    await expect(character).toContainText(
+      'Race form (base 4294967295, mod 0)',
+    );
+    await expect(character).toContainText('Sex 1');
 
     await page.evaluate(() => {
       (window as any).skyrimtogether.emit('characterList', []);
