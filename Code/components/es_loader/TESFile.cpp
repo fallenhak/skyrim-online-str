@@ -132,6 +132,8 @@ bool TESFile::InitializeFormIdPrefixes() noexcept
     uint8_t parentId = 0;
     for (const Chunks::MAST& master : fileHeader.m_masterFiles)
     {
+        // A missing light-master mapping must fail closed; operator[] would
+        // silently turn it into standard prefix zero.
         const auto masterId = m_masterFiles.find(master.m_masterName);
         if (masterId == std::end(m_masterFiles))
         {

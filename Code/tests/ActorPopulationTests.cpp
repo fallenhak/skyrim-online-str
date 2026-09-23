@@ -412,7 +412,9 @@ TEST(ESLoader, UsesTES4ESLFlagForLightPluginNamespace)
     {
         std::ofstream pluginFile(dataDirectory.Path() / plugin.first, std::ios::binary);
         ASSERT_TRUE(pluginFile.good());
-        const Bytes data = MakePluginHeader(plugin.second);
+        Bytes data = MakePluginHeader(plugin.second);
+        if (std::string(plugin.first) == "Flagged.esp")
+            AppendRecord(data, FormEnum::NPC_, 0x00000001, {});
         pluginFile.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
     }
 
@@ -447,6 +449,11 @@ TEST(ESLoader, UsesTES4ESLFlagForLightPluginNamespace)
     EXPECT_EQ(plugins[5].m_filename, "Unflagged.esl");
     EXPECT_TRUE(plugins[5].IsLite());
     EXPECT_EQ(plugins[5].m_liteId, 3U);
+
+    const auto loadedRecords = loader.BuildRecordCollection(true);
+    ASSERT_NE(loadedRecords, nullptr);
+    EXPECT_NE(loadedRecords->FindNpcById(0xFE000001), nullptr);
+    EXPECT_EQ(loadedRecords->FindNpcById(0x00000001), nullptr);
 }
 
 TEST(ESLoader, SkipsPluginsWithMalformedTES4Headers)
@@ -459,7 +466,8 @@ TEST(ESLoader, SkipsPluginsWithMalformedTES4Headers)
         ASSERT_TRUE(loadOrder.good());
         loadOrder << "Truncated.esl\n"
                   << "WrongType.esp\n"
-                  << "Oversized.esm\n";
+                  << "Oversized.esm\n"
+                  << "Directory.esp\n";
     }
 
     const auto writeFile = [&](const char* apFilename, const Bytes& aData) {
@@ -480,6 +488,9 @@ TEST(ESLoader, SkipsPluginsWithMalformedTES4Headers)
     ASSERT_TRUE(writeFile("Truncated.esl", truncated));
     ASSERT_TRUE(writeFile("WrongType.esp", wrongType));
     ASSERT_TRUE(writeFile("Oversized.esm", oversized));
+
+    std::error_code directoryError;
+    ASSERT_TRUE(std::filesystem::create_directory(dataDirectory.Path() / "Directory.esp", directoryError)) << directoryError.message();
 
     EXPECT_FALSE(TESFile::ReadHeaderFlags(dataDirectory.Path() / "Truncated.esl").has_value());
     EXPECT_FALSE(TESFile::ReadHeaderFlags(dataDirectory.Path() / "WrongType.esp").has_value());
@@ -507,6 +518,7 @@ TEST(ESLoader, SkipsDependentPluginWithUnresolvedLightMasterMapping)
     }
 
     Bytes lightMaster = MakePluginHeader(Record::FLAGS::kESL);
+    AppendRecord(lightMaster, FormEnum::NPC_, 0x00000001, {});
     {
         std::ofstream file(dataDirectory.Path() / "LightMaster.esm", std::ios::binary);
         ASSERT_TRUE(file.good());
@@ -524,8 +536,13 @@ TEST(ESLoader, SkipsDependentPluginWithUnresolvedLightMasterMapping)
     ESLoader::ESLoader loader(dataDirectory.Path());
     const auto records = loader.BuildRecordCollection(true);
     ASSERT_NE(records, nullptr);
+    const auto& plugins = loader.GetLoadOrder();
+    ASSERT_EQ(plugins.size(), 2U);
+    EXPECT_TRUE(plugins[0].IsLite());
+    EXPECT_FALSE(plugins[1].IsLite());
+    EXPECT_NE(records->FindNpcById(0xFE000001), nullptr);
     EXPECT_EQ(records->FindNpcById(0x01000001), nullptr);
-    EXPECT_FALSE(records->HasAnyRecords());
+    EXPECT_TRUE(records->HasAnyRecords());
 }
 
 TEST(ESLoader, MissingLoadOrderClearsPreviouslyLoadedMetadata)

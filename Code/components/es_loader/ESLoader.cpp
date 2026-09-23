@@ -229,6 +229,8 @@ bool ESLoader::LoadLoadOrder()
         switch (pluginType)
         {
         case PluginType::kMaster:
+            // Only standard master prefixes are mapped here. Light-master
+            // prefix resolution is unsupported, so dependent records fail closed.
             m_masterFiles.emplace(plugin.m_filename, standardId);
             [[fallthrough]];
         case PluginType::kStandard:
@@ -296,7 +298,7 @@ fs::path ESLoader::GetPath(const String& acFilename) const
 
     const fs::path pluginPath = m_directory / fs::path(acFilename);
     std::error_code error;
-    const bool isRegularFile = fs::is_regular_file(pluginPath, error);
+    const auto status = fs::symlink_status(pluginPath, error);
     if (error)
     {
         // Only a confirmed missing path may use filename-derived metadata.
@@ -308,10 +310,9 @@ fs::path ESLoader::GetPath(const String& acFilename) const
         return {};
     }
 
-    if (isRegularFile)
-        return pluginPath;
-
-    return fs::path();
+    // Preserve existing non-regular paths too: they cannot supply a valid TES4
+    // header, and treating them as missing would incorrectly trust the suffix.
+    return status.type() == fs::file_type::not_found ? fs::path() : pluginPath;
 }
 
 } // namespace ESLoader
