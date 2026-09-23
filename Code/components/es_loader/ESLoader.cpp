@@ -386,6 +386,9 @@ fs::path ESLoader::GetPath(const String& acFilename) const
     if (!GetPluginFilenameKey(acFilename, filenameKey))
         return {};
 
+    // Containment checks are point-in-time checks followed by path-based opens.
+    // The TOCTOU window is accepted because the server operator owns and
+    // trusts the Data directory.
     const fs::path pluginPath = m_directory / PathFromUtf8(acFilename);
     std::error_code error;
     const auto status = fs::symlink_status(pluginPath, error);
