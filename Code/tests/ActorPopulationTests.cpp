@@ -456,6 +456,80 @@ TEST(ESLoader, UsesTES4ESLFlagForLightPluginNamespace)
     EXPECT_EQ(loadedRecords->FindNpcById(0x00000001), nullptr);
 }
 
+TEST(ESLoader, RejectsPluginCountsThatExceedFormIdNamespaces)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    const auto writeLoadOrder = [&](const char* apExtension, const uint32_t aPluginCount) {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt", std::ios::trunc);
+        if (!loadOrder.good())
+            return false;
+
+        for (uint32_t i = 0; i < aPluginCount; ++i)
+            loadOrder << "Plugin" << i << apExtension << '\n';
+
+        return loadOrder.good();
+    };
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+
+    const uint32_t standardPluginCapacity = ESLoader::kMaxStandardPluginId + 1;
+    ASSERT_TRUE(writeLoadOrder(".esp", standardPluginCapacity));
+    ASSERT_NE(loader.BuildRecordCollection(false), nullptr);
+    ASSERT_EQ(loader.GetLoadOrder().size(), standardPluginCapacity);
+    EXPECT_EQ(loader.GetLoadOrder().front().m_standardId, 0U);
+    EXPECT_EQ(loader.GetLoadOrder().back().m_standardId, ESLoader::kMaxStandardPluginId);
+
+    ASSERT_TRUE(writeLoadOrder(".esp", standardPluginCapacity + 1));
+    EXPECT_EQ(loader.BuildRecordCollection(false), nullptr);
+    EXPECT_TRUE(loader.GetLoadOrder().empty());
+
+    const uint32_t litePluginCapacity = ESLoader::kMaxLitePluginId + 1;
+    ASSERT_TRUE(writeLoadOrder(".esl", litePluginCapacity));
+    ASSERT_NE(loader.BuildRecordCollection(false), nullptr);
+    ASSERT_EQ(loader.GetLoadOrder().size(), litePluginCapacity);
+    EXPECT_EQ(loader.GetLoadOrder().front().m_liteId, 0U);
+    EXPECT_EQ(loader.GetLoadOrder().back().m_liteId, ESLoader::kMaxLitePluginId);
+
+    ASSERT_TRUE(writeLoadOrder(".esl", litePluginCapacity + 1));
+    EXPECT_EQ(loader.BuildRecordCollection(false), nullptr);
+    EXPECT_TRUE(loader.GetLoadOrder().empty());
+}
+
+TEST(ESLoader, TESFileSetupRejectsOutOfRangeFormIdPrefixes)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    const auto pluginPath = dataDirectory.Path() / "Empty.esp";
+    const Bytes pluginData = MakePluginHeader(0);
+    {
+        std::ofstream plugin(pluginPath, std::ios::binary);
+        ASSERT_TRUE(plugin.good());
+        plugin.write(reinterpret_cast<const char*>(pluginData.data()), static_cast<std::streamsize>(pluginData.size()));
+        ASSERT_TRUE(plugin.good());
+    }
+
+    TiltedPhoques::Map<TiltedPhoques::String, uint8_t> masterFiles;
+    ESLoader::TESFile standardFile(masterFiles);
+    EXPECT_TRUE(standardFile.Setup(static_cast<uint8_t>(ESLoader::kMaxStandardPluginId)));
+    EXPECT_FALSE(standardFile.Setup(uint8_t{0xFE}));
+    ASSERT_TRUE(standardFile.LoadFile(pluginPath));
+    ESLoader::RecordCollection records;
+    EXPECT_FALSE(standardFile.IndexRecords(records));
+    EXPECT_TRUE(standardFile.Setup(static_cast<uint8_t>(ESLoader::kMaxStandardPluginId)));
+    EXPECT_TRUE(standardFile.IndexRecords(records));
+
+    ESLoader::TESFile liteFile(masterFiles);
+    EXPECT_TRUE(liteFile.Setup(ESLoader::kMaxLitePluginId));
+    EXPECT_FALSE(liteFile.Setup(static_cast<uint16_t>(ESLoader::kMaxLitePluginId + 1)));
+    ASSERT_TRUE(liteFile.LoadFile(pluginPath));
+    EXPECT_FALSE(liteFile.IndexRecords(records));
+    EXPECT_TRUE(liteFile.Setup(ESLoader::kMaxLitePluginId));
+    EXPECT_TRUE(liteFile.IndexRecords(records));
+}
+
 TEST(ESLoader, SkipsPluginsWithMalformedTES4Headers)
 {
     TemporaryDirectory dataDirectory;
@@ -585,9 +659,13 @@ TEST(ActorPopulationIdentityResolver, ResolvesStandardAndLightServerFormIds)
     ModsComponent mods;
     AddServerPlugin(mods, "Test.esp", 2, false);
     AddServerPlugin(mods, "Light.esp", 7, true);
+    AddServerPlugin(mods, "LastStandard.esp", ESLoader::kMaxStandardPluginId, false);
+    AddServerPlugin(mods, "LastLight.esl", ESLoader::kMaxLitePluginId, true);
 
     const auto standardNetworkId = mods.AddStandard("Test.esp");
     const auto lightNetworkId = mods.AddLite("Light.esp");
+    const auto lastStandardNetworkId = mods.AddStandard("LastStandard.esp");
+    const auto lastLightNetworkId = mods.AddLite("LastLight.esl");
     const auto mismatchedNetworkId = mods.AddStandard("Light.esp");
     const auto unknownNetworkId = mods.AddStandard("Unknown.esp");
 
@@ -598,8 +676,28 @@ TEST(ActorPopulationIdentityResolver, ResolvesStandardAndLightServerFormIds)
     EXPECT_TRUE(mods.ResolveServerFormId(GameId(lightNetworkId, 0x12345ABC), resolvedFormId));
     EXPECT_EQ(resolvedFormId, 0xFE007ABCu);
 
+    EXPECT_TRUE(mods.ResolveServerFormId(GameId(lastStandardNetworkId, 0xFFFFFFFF), resolvedFormId));
+    EXPECT_EQ(resolvedFormId, 0xFDFFFFFFu);
+
+    EXPECT_TRUE(mods.ResolveServerFormId(GameId(lastLightNetworkId, 0xFFFFFFFF), resolvedFormId));
+    EXPECT_EQ(resolvedFormId, 0xFEFFFFFFu);
+
     EXPECT_FALSE(mods.ResolveServerFormId(GameId(mismatchedNetworkId, 0x00000ABC), resolvedFormId));
     EXPECT_FALSE(mods.ResolveServerFormId(GameId(unknownNetworkId, 0x00000ABC), resolvedFormId));
+}
+
+TEST(ModsComponent, RejectsOutOfRangeServerPluginLoadOrderIds)
+{
+    ModsComponent mods;
+    AddServerPlugin(mods, "InvalidStandard.esp", 0xFE, false);
+    AddServerPlugin(mods, "InvalidLight.esl", ESLoader::kMaxLitePluginId + 1, true);
+
+    const auto standardNetworkId = mods.AddStandard("InvalidStandard.esp");
+    const auto liteNetworkId = mods.AddLite("InvalidLight.esl");
+    uint32_t resolvedFormId = 0;
+
+    EXPECT_FALSE(mods.ResolveServerFormId(GameId(standardNetworkId, 0x00001234), resolvedFormId));
+    EXPECT_FALSE(mods.ResolveServerFormId(GameId(liteNetworkId, 0x00000123), resolvedFormId));
 }
 
 TEST(ActorPopulationAssignmentPolicy, AppliesGateTrustAndUnknownRules)

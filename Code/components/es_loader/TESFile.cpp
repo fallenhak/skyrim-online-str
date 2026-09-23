@@ -13,16 +13,34 @@ TESFile::TESFile(Map<String, uint8_t>& aMasterFiles)
 {
 }
 
-void TESFile::Setup(uint8_t aStandardId)
+bool TESFile::Setup(uint8_t aStandardId)
 {
+    m_setupValid = false;
+    if (aStandardId > kMaxStandardPluginId)
+    {
+        spdlog::warn("Plugin {} has an out-of-range standard load-order ID: {}", m_filename, static_cast<uint32_t>(aStandardId));
+        return false;
+    }
+
     m_standardId = aStandardId;
-    m_formIdPrefix = m_standardId * 0x1000000;
+    m_formIdPrefix = static_cast<uint32_t>(m_standardId) << 24;
+    m_setupValid = true;
+    return true;
 }
 
-void TESFile::Setup(uint16_t aLiteId)
+bool TESFile::Setup(uint16_t aLiteId)
 {
+    m_setupValid = false;
+    if (aLiteId > kMaxLitePluginId)
+    {
+        spdlog::warn("Plugin {} has an out-of-range light load-order ID: {}", m_filename, aLiteId);
+        return false;
+    }
+
     m_liteId = aLiteId;
-    m_formIdPrefix = 0xFE000000 + (m_liteId * 0x1000);
+    m_formIdPrefix = 0xFE000000u | (static_cast<uint32_t>(m_liteId) << 12);
+    m_setupValid = true;
+    return true;
 }
 
 std::optional<uint32_t> TESFile::ReadHeaderFlags(const std::filesystem::path& acPath) noexcept
@@ -112,6 +130,12 @@ bool TESFile::IndexRecords(RecordCollection& aRecordCollection) noexcept
 
 bool TESFile::InitializeFormIdPrefixes() noexcept
 {
+    if (!m_setupValid)
+    {
+        spdlog::warn("Plugin {} has no valid load-order ID", m_filename);
+        return false;
+    }
+
     if (m_buffer.GetSize() < sizeof(Record))
     {
         spdlog::warn("Plugin {} has no complete TES4 header", m_filename);

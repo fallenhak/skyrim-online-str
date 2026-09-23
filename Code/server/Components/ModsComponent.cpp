@@ -40,11 +40,19 @@ uint32_t ModsComponent::AddLite(const String& acpFilename) noexcept
 
 void ModsComponent::AddServerMod(const ESLoader::PluginData& acData)
 {
-    m_serverPluginIdentities[acData.m_filename] = ServerPluginIdentity{
-        static_cast<uint16_t>(acData.IsLite() ? acData.m_liteId : acData.m_standardId), acData.IsLite()};
+    const uint16_t loadOrderId = acData.IsLite() ? acData.m_liteId : acData.m_standardId;
+    const uint16_t maximumId = acData.IsLite() ? ESLoader::kMaxLitePluginId : ESLoader::kMaxStandardPluginId;
+    if (loadOrderId > maximumId)
+    {
+        spdlog::warn("Ignoring server plugin {} with out-of-range load-order ID {}", acData.m_filename, loadOrderId);
+        return;
+    }
 
-    // kind of a hack since we want to store both, so we take the two byte value
-    m_serverMods.emplace(acData.m_filename, Entry{acData.m_liteId, 1});
+    m_serverPluginIdentities[acData.m_filename] = ServerPluginIdentity{
+        loadOrderId, acData.IsLite()};
+
+    // Keep the installed-mod entry consistent with the validated namespace ID.
+    m_serverMods.emplace(acData.m_filename, Entry{loadOrderId, 1});
 }
 
 bool ModsComponent::ResolveServerFormId(const GameId& acNetworkId, uint32_t& aResolvedFormId) const noexcept
@@ -61,6 +69,9 @@ bool ModsComponent::ResolveServerFormId(const GameId& acNetworkId, uint32_t& aRe
 
     if (serverIt->second.IsLite)
     {
+        if (serverIt->second.LoadOrderId > ESLoader::kMaxLitePluginId)
+            return false;
+
         // Light-plugin forms live in the FE namespace and use only the low 12
         // bits of the network BaseId. The server supplies the FE/load-order
         // prefix; high client bits are never authoritative.
@@ -68,6 +79,9 @@ bool ModsComponent::ResolveServerFormId(const GameId& acNetworkId, uint32_t& aRe
     }
     else
     {
+        if (serverIt->second.LoadOrderId > ESLoader::kMaxStandardPluginId)
+            return false;
+
         // Standard-plugin forms use the server's load-order byte and the
         // client-provided record-local 24-bit portion only.
         aResolvedFormId = (static_cast<uint32_t>(serverIt->second.LoadOrderId) << 24) | (acNetworkId.BaseId & 0x00FFFFFFu);

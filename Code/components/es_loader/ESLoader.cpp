@@ -148,7 +148,7 @@ UniquePtr<RecordCollection> ESLoader::BuildRecordCollection(bool aLoadRecords) n
     if (!LoadLoadOrder())
     {
         if (aLoadRecords)
-            spdlog::warn("Actor population record loading unavailable: ESLoader could not read loadorder.txt from '{}'", m_directory.string());
+            spdlog::warn("Actor population record loading unavailable: ESLoader could not establish valid load-order metadata from '{}'", m_directory.string());
         return nullptr;
     }
 
@@ -180,8 +180,8 @@ bool ESLoader::LoadLoadOrder()
         return false;
     }
 
-    uint8_t standardId = 0x0;
-    uint16_t liteId = 0x0;
+    uint32_t standardId = 0;
+    uint32_t liteId = 0;
     std::set<String> seenFilenames;
     bool firstLine = true;
     String line;
@@ -229,16 +229,40 @@ bool ESLoader::LoadLoadOrder()
         switch (pluginType)
         {
         case PluginType::kMaster:
-            // Only standard master prefixes are mapped here. Light-master
-            // prefix resolution is unsupported, so dependent records fail closed.
-            m_masterFiles.emplace(plugin.m_filename, standardId);
-            [[fallthrough]];
         case PluginType::kStandard:
-            plugin.m_standardId = standardId++;
+            if (standardId > kMaxStandardPluginId)
+            {
+                spdlog::error(
+                    "Too many standard plugins in loadorder.txt: '{}' exceeds the maximum load-order ID {}",
+                    plugin.m_filename,
+                    kMaxStandardPluginId);
+                m_loadOrder.clear();
+                m_masterFiles.clear();
+                return false;
+            }
+
+            plugin.m_standardId = static_cast<uint8_t>(standardId++);
             plugin.m_isLite = false;
+            if (pluginType == PluginType::kMaster)
+            {
+                // Only standard master prefixes are mapped here. Light-master
+                // prefix resolution is unsupported, so dependent records fail closed.
+                m_masterFiles.emplace(plugin.m_filename, plugin.m_standardId);
+            }
             break;
         case PluginType::kLite:
-            plugin.m_liteId = liteId++;
+            if (liteId > kMaxLitePluginId)
+            {
+                spdlog::error(
+                    "Too many light plugins in loadorder.txt: '{}' exceeds the maximum load-order ID {}",
+                    plugin.m_filename,
+                    kMaxLitePluginId);
+                m_loadOrder.clear();
+                m_masterFiles.clear();
+                return false;
+            }
+
+            plugin.m_liteId = static_cast<uint16_t>(liteId++);
             plugin.m_isLite = true;
             break;
         case PluginType::kInvalid: break;
@@ -272,10 +296,10 @@ UniquePtr<RecordCollection> ESLoader::LoadFiles()
         }
 
         TESFile pluginFile(m_masterFiles);
-        if (plugin.IsLite())
-            pluginFile.Setup(plugin.m_liteId);
-        else
-            pluginFile.Setup(plugin.m_standardId);
+        const bool setupResult = plugin.IsLite() ? pluginFile.Setup(static_cast<uint16_t>(plugin.m_liteId))
+                                                 : pluginFile.Setup(static_cast<uint8_t>(plugin.m_standardId));
+        if (!setupResult)
+            continue;
 
         bool loadResult = pluginFile.LoadFile(pluginPath);
 

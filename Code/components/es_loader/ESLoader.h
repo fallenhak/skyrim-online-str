@@ -15,10 +15,10 @@ struct PluginData
     String m_filename;
     union
     {
-        uint8_t m_standardId;
+        uint8_t m_standardId = 0;
         uint16_t m_liteId;
     };
-    bool m_isLite;
+    bool m_isLite = false;
 };
 using PluginCollection = Vector<PluginData>;
 
