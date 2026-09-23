@@ -232,6 +232,19 @@ Bytes MakePluginHeaderWithMaster(const char* apMasterFilename)
     return MakePluginHeaderWithMasters({apMasterFilename});
 }
 
+Bytes MakePluginHeaderWithMasterAndFlags(const char* apMasterFilename, const uint32_t aFlags)
+{
+    Bytes headerData;
+    Bytes masterName(apMasterFilename, apMasterFilename + std::char_traits<char>::length(apMasterFilename));
+    masterName.push_back(0);
+    AppendChunk(headerData, ChunkId::MAST_ID, masterName);
+    AppendChunk(headerData, ChunkId::DATA_ID, Bytes(sizeof(uint64_t), 0));
+
+    Bytes data;
+    AppendRecord(data, FormEnum::TES4, 0, headerData, aFlags);
+    return data;
+}
+
 Bytes MakePluginData()
 {
     Bytes data;
@@ -1507,6 +1520,130 @@ TEST(ActorPopulationAssignmentPolicy, AppliesGateTrustAndUnknownRules)
     EXPECT_EQ(strict.Decide(unknown), ActorPopulationAssignmentDecision::kRejectUnknown);
     EXPECT_EQ(strict.Decide(clientCreatureClaim), ActorPopulationAssignmentDecision::kRejectUnknown);
     EXPECT_EQ(strict.Decide(conflictingClaim), ActorPopulationAssignmentDecision::kRejectHumanoid);
+}
+
+TEST(ActorPopulationAssignmentPolicy, UsesHardenedLoaderMetadataAndKeepsRecordLoadingOptIn)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt", std::ios::binary);
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Skyrim.esm\r\n" << "Population.esp\r\n";
+    }
+
+    constexpr uint32_t nordRaceRawId = 0x00001000;
+    constexpr uint32_t wolfRaceRawId = 0x00001001;
+    constexpr uint32_t unknownRaceRawId = 0x00001002;
+    constexpr uint32_t nordNpcRawId = 0x00002000;
+    constexpr uint32_t wolfNpcRawId = 0x00002001;
+    constexpr uint32_t unknownNpcRawId = 0x00002002;
+
+    Bytes master = MakePluginHeaderWithMasters({});
+    AppendRecord(master, FormEnum::RACE, nordRaceRawId, MakeRaceData("NordRace"));
+    AppendRecord(master, FormEnum::RACE, wolfRaceRawId, MakeRaceData("WolfRace"));
+    AppendRecord(master, FormEnum::RACE, unknownRaceRawId, MakeRaceData("UnlistedRace"));
+    AppendRecord(master, FormEnum::NPC_, nordNpcRawId, MakeNpcData("NordNpc", &nordRaceRawId));
+    AppendRecord(master, FormEnum::NPC_, wolfNpcRawId, MakeNpcData("WolfNpc", &wolfRaceRawId));
+    AppendRecord(master, FormEnum::NPC_, unknownNpcRawId, MakeNpcData("UnlistedNpc", &unknownRaceRawId));
+
+    // The .esp extension is promoted into the light namespace by the TES4 ESL
+    // flag. Its placed references use the master prefix for NAME and self slot
+    // 1 for their own form IDs.
+    Bytes lightPopulationPlugin = MakePluginHeaderWithMasterAndFlags("Skyrim.esm", Record::FLAGS::kESL);
+    AppendRecord(lightPopulationPlugin, FormEnum::ACHR, 0x01000300, MakeActorReferenceData(nordNpcRawId));
+    AppendRecord(lightPopulationPlugin, FormEnum::ACHR, 0x01000301, MakeActorReferenceData(wolfNpcRawId));
+    AppendRecord(lightPopulationPlugin, FormEnum::ACHR, 0x01000302, MakeActorReferenceData(unknownNpcRawId));
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acData.data()), static_cast<std::streamsize>(acData.size()));
+        return plugin.good();
+    };
+    ASSERT_TRUE(writePlugin("Skyrim.esm", master));
+    ASSERT_TRUE(writePlugin("Population.esp", lightPopulationPlugin));
+
+    const auto addServerMetadata = [](ModsComponent& aMods, const ESLoader::PluginCollection& acLoadOrder) {
+        for (const auto& plugin : acLoadOrder)
+            aMods.AddServerMod(plugin);
+    };
+
+    // The no-argument loader call is the default production mode: it keeps
+    // hardened load-order metadata while leaving record parsing opt-in.
+    ESLoader::ESLoader metadataOnlyLoader(dataDirectory.Path());
+    const auto metadataOnlyRecords = metadataOnlyLoader.BuildRecordCollection();
+    ASSERT_NE(metadataOnlyRecords, nullptr);
+    EXPECT_FALSE(metadataOnlyRecords->HasAnyRecords());
+    ASSERT_EQ(metadataOnlyLoader.GetLoadOrder().size(), 2U);
+    EXPECT_FALSE(metadataOnlyLoader.GetLoadOrder()[0].IsLite());
+    EXPECT_TRUE(metadataOnlyLoader.GetLoadOrder()[1].IsLite());
+    EXPECT_EQ(metadataOnlyLoader.GetLoadOrder()[1].m_liteId, 0U);
+
+    ModsComponent metadataOnlyMods;
+    addServerMetadata(metadataOnlyMods, metadataOnlyLoader.GetLoadOrder());
+    const uint32_t metadataOnlyPopulationModId = metadataOnlyMods.AddLite("Population.esp");
+    uint32_t resolvedReference = 0;
+    ASSERT_TRUE(metadataOnlyMods.ResolveServerFormId(GameId(metadataOnlyPopulationModId, 0xABCD0300), resolvedReference));
+    EXPECT_EQ(resolvedReference, 0xFE000300u);
+    const uint32_t mismatchedNamespaceModId = metadataOnlyMods.AddStandard("Population.esp");
+    EXPECT_FALSE(metadataOnlyMods.ResolveServerFormId(GameId(mismatchedNamespaceModId, 0x00000300), resolvedReference));
+
+    ActorPopulationPolicy metadataOnlyPolicy(metadataOnlyRecords.get());
+    ActorPopulationIdentityResolver metadataOnlyResolver(metadataOnlyMods, metadataOnlyRecords.get(), metadataOnlyPolicy);
+    const auto metadataOnlyIdentity = metadataOnlyResolver.Resolve(GameId(metadataOnlyPopulationModId, 0xABCD0300));
+    EXPECT_EQ(metadataOnlyIdentity.Source, ActorPopulationIdentitySource::kUnknown);
+    EXPECT_EQ(metadataOnlyIdentity.Classification.Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(ActorPopulationAssignmentPolicy().Decide(metadataOnlyIdentity), ActorPopulationAssignmentDecision::kAllow);
+    EXPECT_EQ(
+        ActorPopulationAssignmentPolicy(true, true).Decide(metadataOnlyIdentity), ActorPopulationAssignmentDecision::kAllow);
+    EXPECT_EQ(
+        ActorPopulationAssignmentPolicy(true, false).Decide(metadataOnlyIdentity), ActorPopulationAssignmentDecision::kRejectUnknown);
+
+    // Full parsing resolves the same light-plugin reference through ACHR,
+    // NPC, RNAM and RACE using the loader's server-owned prefixes.
+    ESLoader::ESLoader fullLoader(dataDirectory.Path());
+    const auto records = fullLoader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+    ASSERT_EQ(fullLoader.GetLoadOrder().size(), 2U);
+    EXPECT_TRUE(fullLoader.GetLoadOrder()[1].IsLite());
+
+    ModsComponent mods;
+    addServerMetadata(mods, fullLoader.GetLoadOrder());
+    const uint32_t populationModId = mods.AddLite("Population.esp");
+    const uint32_t clientClaimModId = mods.AddStandard("Skyrim.esm");
+
+    ActorPopulationPolicy policy(records.get());
+    ASSERT_TRUE(policy.ApplyRaceClassificationOverrides("WolfRace=Creature"));
+    ActorPopulationIdentityResolver resolver(mods, records.get(), policy);
+    ActorPopulationAssignmentPolicy gate(true, true);
+    ActorPopulationAssignmentPolicy strictGate(true, false);
+
+    const auto humanoid = resolver.Resolve(GameId(populationModId, 0xABCD0300));
+    EXPECT_EQ(humanoid.Source, ActorPopulationIdentitySource::kServerPlacedReference);
+    EXPECT_EQ(humanoid.ResolvedReferenceFormId, 0xFE000300u);
+    EXPECT_EQ(humanoid.Classification.Class, ActorPopulationClass::kHumanoidNpc);
+    EXPECT_EQ(gate.Decide(humanoid), ActorPopulationAssignmentDecision::kRejectHumanoid);
+
+    // A client claim to a creature cannot replace the humanoid identity found
+    // through the server-resolved ACHR.
+    const auto conflictingClaim = resolver.Resolve(
+        GameId(populationModId, 0x00000300), GameId(clientClaimModId, wolfNpcRawId));
+    EXPECT_TRUE(conflictingClaim.HasClientClaimedIdentity);
+    EXPECT_EQ(conflictingClaim.ClientClaimedClassification.Class, ActorPopulationClass::kCreature);
+    EXPECT_EQ(conflictingClaim.Classification.Class, ActorPopulationClass::kHumanoidNpc);
+    EXPECT_EQ(gate.Decide(conflictingClaim), ActorPopulationAssignmentDecision::kRejectHumanoid);
+
+    const auto configuredCreature = resolver.Resolve(GameId(populationModId, 0x00000301));
+    EXPECT_EQ(configuredCreature.Classification.Class, ActorPopulationClass::kCreature);
+    EXPECT_EQ(gate.Decide(configuredCreature), ActorPopulationAssignmentDecision::kAllow);
+
+    const auto unsupportedRace = resolver.Resolve(GameId(populationModId, 0x00000302));
+    EXPECT_EQ(unsupportedRace.Classification.Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(gate.Decide(unsupportedRace), ActorPopulationAssignmentDecision::kAllow);
+    EXPECT_EQ(strictGate.Decide(unsupportedRace), ActorPopulationAssignmentDecision::kRejectUnknown);
 }
 
 TEST_F(ActorPopulationTests, ResolvesPlacedActorsWithServerAuthorityAndKeepsClaimsUntrusted)
