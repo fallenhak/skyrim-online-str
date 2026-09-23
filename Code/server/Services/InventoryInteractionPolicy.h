@@ -53,6 +53,7 @@ struct InventoryInteractionPolicy final
         const bool aIsCurrentOwner,
         const bool aOwnershipEpochMatches,
         const bool aIsObject,
+        const bool aHasTrustedObjectState,
         const bool aIsCharacter,
         const bool aIsPlayer,
         const bool aHasPersistentCharacter,
@@ -62,10 +63,11 @@ struct InventoryInteractionPolicy final
             return false;
 
         // Object inventories are deliberately ownerless, but only entities
-        // created through ObjectService may use this branch. An arbitrary
-        // InventoryComponent without an owner is not an interaction target.
+        // created through ObjectService with a trusted server baseline may use
+        // this branch. A provisional discovered reference is not an inventory
+        // mutation target, and an arbitrary InventoryComponent is not either.
         if (!aHasOwner)
-            return aIsObject && !aIsCharacter && !aIsPlayer && !aHasPersistentCharacter;
+            return aIsObject && aHasTrustedObjectState && !aIsCharacter && !aIsPlayer && !aHasPersistentCharacter;
 
         if (aIsCurrentOwner)
             return true;

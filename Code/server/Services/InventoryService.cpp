@@ -47,7 +47,9 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(*it);
     const auto* pCellComponent = m_world.try_get<CellIdComponent>(*it);
     const auto* pPersistentCharacterComponent = m_world.try_get<PersistentCharacterComponent>(*it);
-    const bool isObject = m_world.all_of<ObjectComponent>(*it);
+    const auto* pObjectComponent = m_world.try_get<ObjectComponent>(*it);
+    const bool isObject = pObjectComponent != nullptr;
+    const bool hasTrustedObjectState = pObjectComponent && pObjectComponent->HasTrustedState;
     const bool hasOwner = pOwnerComponent && pOwnerComponent->GetOwner();
     const bool isCurrentOwner = pOwnerComponent && pOwnerComponent->IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch);
     const bool ownershipEpochMatches = pOwnerComponent
@@ -60,6 +62,7 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
             isCurrentOwner,
             ownershipEpochMatches,
             isObject,
+            hasTrustedObjectState,
             pCharacterComponent != nullptr,
             pCharacterComponent && pCharacterComponent->IsPlayer(),
             pPersistentCharacterComponent != nullptr,
@@ -67,9 +70,9 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     {
         const uint32_t ownerId = pOwnerComponent && pOwnerComponent->GetOwner() ? pOwnerComponent->GetOwner()->GetId() : 0;
         spdlog::debug(
-            "Rejected inventory change from player {:X} for entity {:X}; owner {:X}, epoch {} (current {}), object {}, character {}, persistent {}, in range {}",
+            "Rejected inventory change from player {:X} for entity {:X}; owner {:X}, epoch {} (current {}), object {} (trusted {}), character {}, persistent {}, in range {}",
             acMessage.pPlayer->GetId(), message.ServerId, ownerId, message.OwnershipEpoch, pOwnerComponent ? pOwnerComponent->OwnershipEpoch : 0,
-            isObject, pCharacterComponent != nullptr, pPersistentCharacterComponent != nullptr, isInRange);
+            isObject, hasTrustedObjectState, pCharacterComponent != nullptr, pPersistentCharacterComponent != nullptr, isInRange);
         return;
     }
 

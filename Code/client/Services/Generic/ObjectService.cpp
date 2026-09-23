@@ -199,7 +199,7 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
 
         CreateObjectEntity(pObject->formID, objectData.ServerId);
 
-        if (objectData.IsSenderFirst)
+        if (objectData.IsStateUntrusted)
             continue;
 
         if (objectData.CurrentLockData != LockData{})

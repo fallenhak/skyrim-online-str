@@ -6,27 +6,41 @@
 
 TEST_CASE("Inventory interaction permits current owner at the matching epoch", "[actor_authority]")
 {
-    REQUIRE(InventoryInteractionPolicy::IsAuthorized(true, true, true, false, true, true, true, false));
-    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(true, true, false, false, true, true, true, false));
+    REQUIRE(InventoryInteractionPolicy::IsAuthorized(true, true, true, false, false, true, true, true, false));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(true, true, false, false, false, true, true, true, false));
 }
 
 TEST_CASE("Inventory interaction permits only in-range non-persistent NPC exceptions", "[actor_authority]")
 {
-    REQUIRE(InventoryInteractionPolicy::IsAuthorized(true, false, true, false, true, false, false, true));
-    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(true, false, false, false, true, false, false, true));
-    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(true, false, true, false, true, false, false, false));
-    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(true, false, true, false, true, true, false, true));
-    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(true, false, true, false, true, false, true, true));
+    REQUIRE(InventoryInteractionPolicy::IsAuthorized(true, false, true, false, false, true, false, false, true));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(true, false, false, false, false, true, false, false, true));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(true, false, true, false, false, true, false, false, false));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(true, false, true, false, false, true, true, false, true));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(true, false, true, false, false, true, false, true, true));
 }
 
 TEST_CASE("Inventory interaction does not treat arbitrary ownerless entities as objects", "[actor_authority]")
 {
-    REQUIRE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, false, false, false, false));
-    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, false, true, false, false, false, false));
-    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, false, false, false, false, false));
-    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, false, false, false));
-    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, false, true, false, false));
-    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, false, false, true, false));
+    REQUIRE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, false, false, false, false));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, false, true, true, false, false, false, false));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, false, false, false, false, false, false));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, true, false, false, false));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, false, true, false, false));
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(false, false, true, true, true, false, false, true, false));
+}
+
+TEST_CASE("A discovered provisional object rejects later inventory deltas", "[actor_authority]")
+{
+    // AssignObjects creates this object with HasTrustedState false. Its later
+    // ownerless inventory request must not turn that forged discovery into
+    // shared server inventory state.
+    REQUIRE_FALSE(InventoryInteractionPolicy::IsAuthorized(
+        false, false, true, true, false, false, false, false, false));
+
+    // The gate leaves any future server-baselined object eligible for the
+    // existing shared-object path.
+    REQUIRE(InventoryInteractionPolicy::IsAuthorized(
+        false, false, true, true, true, false, false, false, false));
 }
 
 TEST_CASE("Inventory interaction rejects malformed item payloads", "[actor_authority]")

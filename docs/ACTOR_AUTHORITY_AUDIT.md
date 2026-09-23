@@ -35,7 +35,7 @@ boundary. A client-side send restriction is not treated as authority.
 | Message / handler | State mutated or represented | Entity identifier | Current owner required? | Ownership epoch | Session / range validation | Class | Recommended action | Implemented this batch? |
 |---|---|---|---|---|---|---|---|---|
 | `AssignCharacterRequest` / `CharacterService` | Creates server actor entity and initial state | client reference, then server entity | assignment-specific | created by server | pre-world local-player exception; non-player requires InWorld | A/D | Keep server identity gate; continue reducing client-authoritative fields | No |
-| `AssignObjectsRequest` / `ObjectService` | Creates object entity and initial inventory/lock state | client object form ID | first discoverer for current legacy object model | none | InWorld only; no sender range check | E/D | Define object discovery/interaction authority before accepting client inventory | No |
+| `AssignObjectsRequest` / `ObjectService` | Creates provisional object entity; initial inventory/lock snapshot is not accepted as trusted state | client object form ID | no object owner; shared use | none | InWorld; new objects must fall within sender's reported cell/range; known objects must match stored cell and range | D/E | Add authoritative static-reference identity and location before establishing shared object state | A09 (initial client state discarded; server reference source unresolved) |
 | `ClientReferencesMoveRequest` / `CharacterService` | Movement and action replay cache | map key is server entity ID | yes | per-entry current epoch | `OwnerView` requires a character entity and current owner; InWorld gate; finite/bounded payload validation; no range restriction on owner simulation | A | Keep epoch, entity-membership, and payload validation | A05 |
 | `RequestActorValueChanges` / `ActorValueService` | Canonical actor values | server entity ID | yes | current epoch required | generated InWorld gate; no finite/value-key validation | B/E | Validate finite values and known keys; avoid insertion on malformed state | No |
 | `RequestActorMaxValueChanges` / `ActorValueService` | Canonical permanent/max values | server entity ID | yes | current epoch required | generated InWorld gate; no finite/value-key validation | B/E | Validate finite values and known keys | No |
@@ -53,10 +53,10 @@ boundary. A client-side send restriction is not treated as authority.
 | `InterruptCastRequest` / `MagicService` | Remote cast interruption | caster ID | current caster owner | caster epoch required | generated InWorld gate; casting source is bounded | A/D | Bind to caster authority/incarnation | A08 |
 | `AddTargetRequest` / `MagicService` | Applies remote magic effect presentation | target + optional caster IDs | target owner or explicit caster owner | current target epoch and optional caster epoch | generated InWorld gate; target/caster must resolve to owned character entities; finite magnitude; fan-out around target but no sender/spell range check | C/E | Preserve target-owner incoming/environmental reports and caster-owner reports; validate both endpoint incarnations | A07/A08 |
 | `RemoveSpellRequest` / `MagicService` | Removes spell on remote actor | target ID | current target owner | target epoch required | generated InWorld gate; notification carries epoch and receivers require matching remote incarnation | A/D | Bind removal to the actor's current owner/incarnation | A08 |
-| `RequestInventoryChanges` / `InventoryService` | Actor/object inventory contents | server entity ID | owner for actor; non-owner NPC interaction allowed | epoch checked | non-owner NPC requires in-range, non-player, non-persistent character; malformed item payloads are rejected; ownerless path requires an object entity, but object interaction proof is still absent | A/C/E | Preserve loot/pickpocket semantics; continue object interaction review | A02/A03 |
+| `RequestInventoryChanges` / `InventoryService` | Actor/object inventory contents | server entity ID | owner for actor; non-owner NPC interaction allowed | epoch checked | non-owner NPC requires in-range, non-player, non-persistent character; malformed item payloads are rejected; ownerless path requires an object entity with trusted state | A/C/E | Preserve loot/pickpocket semantics; establish a server-authoritative object baseline before enabling object deltas | A02/A03/A09 |
 | `RequestEquipmentChanges` / `InventoryService` | Actor equipment | server entity ID | owner for owned entity; object/no-owner edge exists | epoch checked when owner exists | generated InWorld gate; no range | A/E | Ensure non-character inventory entities cannot enter equipment path | No |
-| `ActivateRequest` / `ObjectService` | Activation relay | object ID, cell, activator ID | no actor owner requirement | none | cell-based fan-out; interaction semantics are legacy client-observed | C/D | Define server-side object interaction authority before tightening | No |
-| `LockChangeRequest` / `ObjectService` | Server object lock state and relay | object form ID + cell | no explicit owner | none | cell fan-out; no sender range check | C/E | Add object interaction authorization with object ownership/range | No |
+| `ActivateRequest` / `ObjectService` | Activation relay | object ID, cell, activator ID | activator must be sender-owned; shared object use remains allowed | request has no epoch | object must be known; supplied cell must match stored cell; sender and activator must be in stored range; open state is bounded | C/D | Keep shared object semantics; add an epoch only with a protocol change | A09 |
+| `LockChangeRequest` / `ObjectService` | Lock state and peer relay for trusted references | object form ID + cell | no object owner check; shared lock use remains allowed | none | object must be known; supplied cell must match stored cell; sender must be in stored range; provisional references are rejected before mutation or relay | C/D | Establish a reviewed lock-outcome authority before applying client-reported results | A09 (provisional results are rejected) |
 | `ScriptAnimationRequest` / `ObjectService` | Animation presentation | raw form ID | no check | none | broadcasts to all clients | D/E | Restrict to validated local actor/object source | No |
 | `DialogueRequest` / `CharacterService` | Voice presentation | server actor ID | no; non-owner interaction can be legitimate | none | origin must exist for range fan-out, sender range not checked | C/D | Treat as interaction/presentation, add range/target validation later | No |
 | `SubtitleRequest` / `CharacterService` | Subtitle presentation | server actor ID | no; non-owner interaction can be legitimate | none | origin must exist for range fan-out | C/D | Same as dialogue; not canonical actor mutation | No |
@@ -66,6 +66,48 @@ boundary. A client-side send restriction is not treated as authority.
 | `RequestWeatherChange` / `WeatherService` | Canonical shared weather | no entity | world authority | n/a | `AuthorityService` elects lowest InWorld player ID | A | Keep independent of parties | No |
 | `RequestQuestUpdate` / `QuestService` | Legacy quest log relay | sender player | sender-derived | n/a | InWorld gate; feature disabled by constant | F | Do not enable without a separate quest authority design | No |
 | party/map/chat requests | Social state or UI | player/party IDs | social authorization | n/a | service-specific | A/C | Keep separate from actor authority | No |
+
+## Object discovery and interaction semantics
+
+Object assignment accepts provisional references only when their submitted
+cell/worldspace/grid coordinates fall within the sender's tracked range. The
+server ignores client-supplied server IDs and does not seed canonical inventory
+or lock state from the request. Responses mark that state untrusted, and clients
+keep their own local container state instead of applying the unverified server
+snapshot. Inventory deltas for provisional ownerless objects are rejected;
+the existing shared-object path is available only when a trusted baseline
+exists. No current lane source establishes that baseline, so discovered object
+inventory is not synchronized as server state.
+
+There is no usable authoritative reference-location source in this lane. The
+server `World` loads full plugin records only behind the disabled-by-default
+`Population:bEnableActorRecordLoading` setting. Even when loaded, ESLoader's
+`REFR` parser records base-object/marker data but not parent cell or position,
+and `ObjectService` does not consult it. A server-side reference ID/type check
+alone would not validate the submitted location. This leaves provisional
+reference identity and placement, and all discovered object state, unresolved
+for a follow-up authority design. Range still relies on player cell/movement
+reports and does not prove how the sender reached that location; see the
+separate cell/teleport work.
+
+The client producer is `TESObjectREFR::HookActivate`, which emits an
+`ActivateEvent`; `ObjectService::OnActivate` maps its activator to a server
+entity ID and sends `ActivateRequest`. Applying `NotifyActivate` on an observer
+calls the same game activation hook and can produce a replay request, so a
+nearby non-owner report is not a legitimate new interaction. The server now
+requires a live sender-owned character entity and checks that both the sender
+and activator are in the object's tracked grid range. The request has no
+ownership epoch, so it cannot distinguish a delayed packet from the same
+sender after an ownership release and reacquisition. Ordinary nearby shared
+object use remains allowed.
+
+Lock changes remain client-observed: the producer reports the result after the
+game's lock-change hook, but the server has no lock-picking simulation to prove
+that result. The server validates object existence, stored cell, and sender
+range, then rejects provisional object results before changing stored lock data
+or notifying peers. There is no current source that marks discovered objects as
+trusted, so their lock results cannot unlock observers' doors. A reviewed
+lock-outcome authority remains unresolved even if a trusted baseline is added.
 
 ## AddTarget semantics and authorization
 
