@@ -2,11 +2,11 @@
 
 | Review snapshot | Installed path | Purpose |
 | --- | --- | --- |
-| `source/orchestrator/architect_review.py` | `/srv/services/skyrim-dev/orchestrator/architect_review.py` | Isolated tool-free Sol review, strict decision validation, stable versioned evidence identity, and bounded lifecycle |
-| `source/orchestrator/test_architect_review.py` | `/srv/services/skyrim-dev/orchestrator/test_architect_review.py` | Deterministic reviewer schema, isolation, tool-free invocation, and policy tests |
+| `source/orchestrator/architect_review.py` | `/srv/services/skyrim-dev/orchestrator/architect_review.py` | Isolated tool-free Sol review, strict decision validation, stable versioned evidence identity, bounded lifecycle, and accurate resumed idle state |
+| `source/orchestrator/test_architect_review.py` | `/srv/services/skyrim-dev/orchestrator/test_architect_review.py` | 47 deterministic reviewer schema, isolation, tool-free invocation, and policy tests |
 | `source/orchestrator/supervisor.py` | `/srv/services/skyrim-dev/orchestrator/supervisor.py` | Runtime-owner/observer-safe supervisor, fail-closed gates, and worker smoke test |
 | `source/orchestrator/roadmap.py` | `/srv/services/skyrim-dev/orchestrator/roadmap.py` | Validated roadmap schema, dependency scheduler, task identity, gates, and fairness |
-| `source/orchestrator/test_supervisor.py` | `/srv/services/skyrim-dev/orchestrator/test_supervisor.py` | 45 supervisor, runtime-owner, observer, lock, prompt, and smoke regressions |
+| `source/orchestrator/test_supervisor.py` | `/srv/services/skyrim-dev/orchestrator/test_supervisor.py` | 82 supervisor, runtime-owner, observer, lock, prompt, and smoke regressions |
 | `source/orchestrator/test_roadmap.py` | `/srv/services/skyrim-dev/orchestrator/test_roadmap.py` | 20 deterministic control-plane and scheduler tests |
 | `source/config/supervisor.json` | `/srv/services/skyrim-dev/config/supervisor.json` | Required workflows, bounds, paths, retry policy |
 | `source/management/skyrim-dev` | `/usr/local/bin/skyrim-dev` | Operator command wrapper, including `worker-smoke-test` and `architect-review-smoke-test` |

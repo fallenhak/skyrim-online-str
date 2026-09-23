@@ -1,5 +1,25 @@
 # Skyrim Supervisor Roadmap / Dependency Control Plane review snapshot
 
+## V3.2 bounded supervisor concurrency repair — 2026-09-22
+
+The production VDS was paused before this repair. `advance_lane()` no longer
+admits a `RECOVERING` worker; `schedule()` is the single admission authority
+for `READY` and `RECOVERING` lanes, and `start_worker()` independently rejects
+admission when the configured `max_concurrent_workers` cap is full. The cap
+remains `2` and normal/recovery workers share the same slots.
+
+The deterministic suite now passes 101 tests (baseline: 92), including the
+resume-with-three-recoveries regression through the real
+`run_once()`/`refresh_control()`/`advance_lane()`/`schedule()` path, direct
+`start_worker()` defense-in-depth, slot refill, review gating, non-worker
+states, rate-limit cap protection, and spawn-failure refill behavior. The
+installed VDS source and tests match the review worktree; `self-test`,
+`healthcheck`, and the disposable `worker-smoke-test` all pass. Production
+remains globally paused with no development Codex worker. See
+[verification/architect-review-20260922/v32-concurrency-repair.md](verification/architect-review-20260922/v32-concurrency-repair.md)
+for the root cause, exact preserved lane snapshot, bounded worker log evidence,
+and final service state.
+
 This is the secret-free architect-review snapshot of Supervisor V3.1 with the
 roadmap/dependency control plane, runtime-owner/worker-sandbox repair, and
 daemon request durability repair. It was captured on 2026-09-22 after
@@ -189,7 +209,7 @@ not itself authorize autonomous development.
 
 ## Verification
 
-- 91 deterministic unit tests passed, including the V3.1 request durability
+- 92 deterministic unit tests passed, including the V3.1 request durability
   rollback, same-daemon retry, restart replay, duplicate suppression, and
   idempotent control-plane replay regressions.
 - `skyrim-dev self-test` passed, including Codex/GitHub authentication checks,
@@ -252,7 +272,7 @@ Prospective commits are checked with an isolated temporary Git index before the
 real index is staged; the real cached diff check remains as defense in depth.
 See [verification/prospective-diff-validation.md](verification/prospective-diff-validation.md).
 
-The VDS suite passed 91 tests. The disposable Luna smoke test returned
+The VDS suite passed 92 tests. The disposable Luna smoke test returned
 `WORKER_SMOKE_OK` with the operator inbox probe `BLOCKED`. C04, A04, L03, and
 U02 remain pending exactly as captured, with protected heads and dirty-worktree
 bytes preserved. See [verification/final-verification.md](verification/final-verification.md),
@@ -265,6 +285,17 @@ request, emits no receipt, and stops the current request pass. The request is
 then safe to replay in the same daemon or after restart. See
 [verification/operator-request-durability.md](verification/operator-request-durability.md).
 
+## Bounded architect-directed correction — 2026-09-22
+
+The architect-directed recovery correction was applied only to the retained
+production L03 and U02 worktrees while global mode remained `PAUSED`.
+L03 now preserves the light namespace for every `.esl` file, promotes
+ESL-flagged `.esp` and `.esm` files, and falls back conservatively
+for malformed headers. Its focused tests include malformed TES4 headers and
+metadata-only loading. U02 has the accepted EOF and historical recovery-text
+corrections, with both working-tree and cached diff checks passing. No lane
+decision or development HEAD changed. Full evidence is in
+[verification/architect-review-20260922/bounded-correction-20260922.md](verification/architect-review-20260922/bounded-correction-20260922.md).
 
 ## 2026-09-23 worker model and recovery verification
 

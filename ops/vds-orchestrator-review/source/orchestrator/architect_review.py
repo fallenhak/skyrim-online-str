@@ -1356,7 +1356,9 @@ class ArchitectReviewMixin:
             self.start_next_reviewer()
         summary = self.scheduler_idle_summary()
         if self.processes or self.review_process is not None or review_state.get("active_review_id"):
+            review_state["idle_reason"] = None
             return
+        review_state["idle_reason"] = summary.get("idle_reason")
         now = time.time()
         reviewer_waiting = bool(summary.get("queued_reviews"))
         if reviewer_waiting:

@@ -1413,9 +1413,26 @@ class SupervisorLogicTests(unittest.TestCase):
         h.state["lanes"]["combat"] = {"state": "COMMITTING"}
         called = []
         h.commit_phase = lambda lane: called.append(lane) or True
-        h.advance_lane("combat")
+        with patch.object(supervisor, "read_json", return_value={"desired_mode": "PAUSED"}):
+            h.advance_lane("combat")
         self.assertEqual(called, [])
         self.assertEqual(h.state["lanes"]["combat"]["state"], "PAUSED")
+
+    def test_active_worker_clears_stale_pause_idle_reason(self) -> None:
+        h = Harness()
+        h.state["control_plane"] = {"status": "VALID", "applied_sha": "a" * 40}
+        h.state["architect_review"] = {
+            "enabled": True, "active_review_id": None, "idle_reason": "global mode is paused",
+            "items": {}, "queue": [], "phase_counters": {},
+        }
+        h.processes["combat"] = object()
+        h.review_process = None
+        h.active_review_id = None
+        with patch.object(h, "_control_plane_valid", return_value=True):
+            with patch.object(h, "queue_sol_reviews", return_value=0):
+                with patch.object(h, "start_next_reviewer"):
+                    h.architect_review_tick()
+        self.assertIsNone(h.state["architect_review"]["idle_reason"])
 
     def test_codex_rate_limit_classifier_is_conservative(self) -> None:
         self.assertTrue(supervisor.classify_codex_usage_limit(1, "Codex usage limit reached; resets soon"))

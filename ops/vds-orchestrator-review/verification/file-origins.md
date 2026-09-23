@@ -35,7 +35,7 @@
   exactly-once processed ledger, validation-gap protocol, temporary-index
   prospective diff check, review-gated scheduler summary, and preserved review
   worktree self-test behavior.
-- `source/orchestrator/test_supervisor.py`: 91-test deterministic suite,
+- `source/orchestrator/test_supervisor.py`: 92-test deterministic suite,
   including operator ownership/replay, malformed/inactive requests,
   validation gaps, prospective Git checks, and cross-lane scheduling.
 - `source/config/supervisor.json`: private operator request root and bounded
@@ -46,3 +46,15 @@
   secret-free design and final evidence captured from the VDS.
 - `verification/operator-request-durability.md`: V3.1 transactional rollback,
   retained-inbox, restart-replay, duplicate, and idempotent sync evidence.
+
+## V3.2 bounded concurrency repair additions
+
+- `source/orchestrator/supervisor.py`: single scheduler admission for
+  `READY`/`RECOVERING` workers, defense-in-depth worker cap, and paused-review
+  self-test recognition.
+- `source/orchestrator/test_supervisor.py`: 101-test deterministic suite with
+  the production resume path, direct admission, refill, review, non-worker,
+  rate-limit, failure, and paused-review regressions.
+- `verification/architect-review-20260922/v32-concurrency-repair.md`:
+  secret-free production guard, exact protected-lane snapshot, bounded worker
+  output evidence, validation results, and final state.

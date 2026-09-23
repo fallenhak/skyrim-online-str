@@ -1,13 +1,13 @@
 # Supervisor Hardening V2 changelog
 
-
 ## Isolated Sol architect review — 2026-09-23
 
 - Added a serialized `gpt-6-sol/max` reviewer, strict identity-bound JSON decisions, immutable redacted evidence bundles, bounded retries/backoff, and stale-state checks.
 - The model receives the evidence inline and has no shell, MCP, browser, plugin, or network tools. Bubblewrap hides operator state, worker trees, service files, logs, and host credentials; any unexpected tool event fails the review.
-- Added the real-model isolation smoke command and deterministic reviewer tests. The final Linux suite passed 148 tests and the smoke decision returned `RETRY` for the deliberately unsafe fixture with no tool events.
+- Added the real-model isolation smoke command and deterministic reviewer tests. The final Linux suite passed 149 tests and the smoke decision returned `RETRY` for the deliberately unsafe fixture with no tool events.
 - Follow-up stabilized review identity by recursively removing scheduler-only `evaluated_at` fields from the state digest and persisted immutable bundle, versioned the bundle identity to avoid legacy collisions, and coalesced superseded queue entries.
 - RETRY policy now permits actionable high-severity findings within the existing bounds; APPROVE still fails closed on critical/high findings, and low-confidence or actionless RETRY is blocked. One-time exact-state reevaluation recovers an actionable RETRY blocked by the earlier over-broad severity rule.
+- Fixed stale idle-reason reporting after recovery from a safety pause; added a deterministic regression test.
 - Configured the reviewer without changing the exact control-plane SHA or the preserved lane worktrees. No milestone/runtime acceptance was recorded.
 
 
@@ -19,6 +19,22 @@
 - Passed the 101-test supervisor/roadmap suite, self-test, MODEL_OK probe, and disposable worker smoke. Approved only the specified Combat, Authority, and UI checkpoints; retried Population L03 and did not approve it.
 - Resumed only after Phase 8 passed. Thirty-one samples over five minutes observed a maximum of two development workers with the expected model and reasoning. Combat's new C05 review packet remains unapproved.
 
+## V3.2 bounded supervisor concurrency repair — 2026-09-22
+
+- Made `schedule()` the sole development-worker admission authority by keeping
+  `RECOVERING` runnable but removing its direct launch from `advance_lane()`.
+- Added a shared worker-limit helper and a defense-in-depth cap check in
+  `start_worker()`, counting normal and recovery processes identically.
+- Added eight deterministic concurrency regressions covering resume with three
+  recoveries, scheduler bypass, direct admission, slot refill, review gating,
+  CI/non-worker states, rate-limit probes, and spawn failure.
+- Updated the observer self-test to recognize a paused current-review lane with
+  a preserved dirty recovery worktree without changing any development lane
+  decision.
+- Installed and verified the production source while globally paused: 101 tests,
+  self-test, healthcheck, disposable worker smoke, and all status paths passed.
+- No development lane was approved, retried, blocked, advanced, committed,
+  pushed, merged, reset, cleaned, checked out, restored, or discarded.
 
 ## V3.1 durability repair — 2026-09-22
 
@@ -31,7 +47,7 @@
 - Added deterministic same-daemon retry, restart replay, duplicate suppression,
   stale-memory, and idempotent `sync-control-plane` replay coverage.
 - Updated the final service/timer and lane status evidence; the suite now
-  passes 91 tests while global mode remains `PAUSED`.
+  passes 92 tests while global mode remains `PAUSED`.
 
 ## V3 bounded infrastructure repair — 2026-09-22
 

@@ -74,4 +74,4 @@ recovery instead of granting access to additional files. A real gpt-6-sol/max
 smoke run verified a strict `RETRY` response for a synthetic unsafe fixture and
 no tool events. Human runtime acceptance remains required for M01.
 
-- The resource guard automatically paused global work once during this deployment when it observed memory pressure. The paused state was preserved through maintenance, then resumed after checks; no memory threshold was relaxed. Continue monitoring the VDS while worker and reviewer processes run.
+- The resource guard paused global work twice during the validation window after classifying memory as unsafe. It stopped active Luna workers with SIGTERM while preserving their dirty diffs. After available memory recovered to about 3.4 GiB and healthchecks passed, the supervisor was resumed; no memory threshold was relaxed. Heavy validation alongside two active workers can trigger another safety pause.
