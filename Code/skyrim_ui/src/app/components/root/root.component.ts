@@ -1,5 +1,5 @@
 import { Overlay } from '@angular/cdk/overlay';
-import { Component, OnInit, ViewChild } from '@angular/core';
+import { Component, HostListener, OnInit, ViewChild } from '@angular/core';
 import { TranslocoService } from '@ngneat/transloco';
 import { takeUntil } from 'rxjs';
 import { environment } from '../../../environments/environment';
@@ -159,5 +159,16 @@ export class RootComponent implements OnInit {
 
     this.sound.play(Sound.Focus);
     this.client.revealPlayers();
+  }
+
+  @HostListener('window:keydown.escape', ['$event'])
+  private onEscape(event: KeyboardEvent): void {
+    if (this.uiRepository.isViewOpen()) {
+      return;
+    }
+
+    this.client.deactivate();
+    event.stopPropagation();
+    event.preventDefault();
   }
 }

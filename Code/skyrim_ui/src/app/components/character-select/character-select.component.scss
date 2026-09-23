@@ -59,3 +59,10 @@ h2 {
   grid-row: 1;
   white-space: nowrap;
 }
+
+.character-select-action:focus,
+.character-select-back:focus {
+  outline: 2px solid mod($-color-background, 1);
+  outline-offset: 2px;
+  opacity: 1;
+}

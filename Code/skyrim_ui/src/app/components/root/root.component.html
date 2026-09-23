@@ -50,6 +50,7 @@
         </button>
         <button
           data-style-ornament="inverted"
+          data-character-select-trigger="true"
           [attr.data-style-active]="(view$ | async) === RootView.CHARACTER_SELECT"
           (click)="setView(RootView.CHARACTER_SELECT)"
         >

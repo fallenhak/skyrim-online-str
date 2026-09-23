@@ -255,4 +255,125 @@ test.describe('Character Select', () => {
       await expect(characterSelect).toHaveCount(0);
     },
   );
+
+  test('supports keyboard and controller focus, confirm, and back actions', async ({
+    page,
+  }) => {
+    await page.locator('app-connect input').nth(0).fill('character-server');
+    await page.locator('app-connect app-action-buttons button').nth(0).click();
+
+    const characterSelect = page.locator('app-character-select');
+    const characterButtons = characterSelect.locator('.character-select-action');
+    await expect(characterSelect.locator('[data-character-select-state="list"]'))
+      .toBeVisible();
+
+    await page.evaluate(() => {
+      const client = (window as any).skyrimtogether;
+      client.emit(
+        'characterList',
+        [
+          ['100', 'First Server Character', '0', '0', 0, 1],
+          ['200', 'Second Server Character', '0', '0', 1, 12],
+        ],
+        client.characterConnectionGeneration,
+      );
+      client.selectCharacter = (characterId: string) => {
+        (window as any).selectedServerCharacterId = characterId;
+      };
+    });
+
+    await expect(characterButtons).toHaveCount(2);
+    await expect(characterButtons.nth(0)).toBeFocused();
+
+    const backButton = characterSelect.getByRole('button', { name: /back/i });
+    await page.keyboard.press('Shift+Tab');
+    await expect(backButton).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(characterButtons.nth(0)).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(characterButtons.nth(1)).toBeFocused();
+
+    await page.evaluate(() => {
+      const gamepad = {
+        axes: [0, 0],
+        buttons: Array.from({ length: 16 }, () => ({
+          pressed: false,
+          touched: false,
+          value: 0,
+        })),
+        connected: true,
+        id: 'Character Select test pad',
+        index: 0,
+        mapping: 'standard',
+        timestamp: 0,
+      };
+      Object.defineProperty(navigator, 'getGamepads', {
+        configurable: true,
+        value: () => [gamepad],
+      });
+      (window as any).testCharacterSelectGamepad = gamepad;
+    });
+    await page.waitForTimeout(100);
+
+    await page.evaluate(() => {
+      (window as any).testCharacterSelectGamepad.axes[1] = -1;
+    });
+    await expect(characterButtons.nth(0)).toBeFocused();
+    await page.evaluate(() => {
+      (window as any).testCharacterSelectGamepad.axes[1] = 0;
+    });
+    await page.waitForTimeout(50);
+
+    await page.evaluate(() => {
+      (window as any).testCharacterSelectGamepad.buttons[13].pressed = true;
+    });
+    await expect(characterButtons.nth(1)).toBeFocused();
+    await page.evaluate(() => {
+      (window as any).testCharacterSelectGamepad.buttons[13].pressed = false;
+    });
+    await page.waitForTimeout(50);
+
+    await page.evaluate(() => {
+      (window as any).testCharacterSelectGamepad.buttons[0].pressed = true;
+    });
+    await expect(
+      characterSelect.getByRole('button', { name: /selecting/i }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() => (window as any).selectedServerCharacterId),
+    ).toBe('200');
+    await page.evaluate(() => {
+      (window as any).testCharacterSelectGamepad.buttons[0].pressed = false;
+    });
+    await page.waitForTimeout(50);
+
+    await page.keyboard.press('Escape');
+    await expect(characterSelect).toBeVisible();
+    await expect(characterSelect.locator('section')).toBeFocused();
+
+    await page.evaluate(() => {
+      (window as any).skyrimtogether.emit('characterSelectionResult', 2);
+    });
+    await expect(backButton).toBeFocused();
+    await page.evaluate(() => {
+      (window as any).testCharacterSelectGamepad.buttons[1].pressed = true;
+    });
+    await expect(characterSelect).toHaveCount(0);
+    await expect(
+      page.locator('[data-character-select-trigger="true"]'),
+    ).toBeFocused();
+
+    await page.evaluate(() => {
+      const client = (window as any).skyrimtogether;
+      const deactivate = client.deactivate.bind(client);
+      client.deactivate = () => {
+        (window as any).escapeDeactivatedOverlay = true;
+        deactivate();
+      };
+    });
+    await page.keyboard.press('Escape');
+    expect(
+      await page.evaluate(() => (window as any).escapeDeactivatedOverlay),
+    ).toBe(true);
+  });
 });

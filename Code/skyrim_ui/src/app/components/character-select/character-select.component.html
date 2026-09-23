@@ -1,9 +1,16 @@
 <section
+  #host
   class="character-select"
   [attr.data-character-select-state]="state"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="character-select-title"
+  tabindex="-1"
   aria-live="polite"
 >
-  <h2>{{ 'COMPONENT.CHARACTER_SELECT.TITLE' | transloco }}</h2>
+  <h2 id="character-select-title">
+    {{ 'COMPONENT.CHARACTER_SELECT.TITLE' | transloco }}
+  </h2>
 
   <ng-container [ngSwitch]="state">
     <p *ngSwitchCase="'loading'" class="state-message" role="status">
@@ -54,6 +61,10 @@
         <button
           class="character-select-action"
           data-style-ornament="simple"
+          [attr.aria-label]="
+            ('COMPONENT.CHARACTER_SELECT.SELECT' | transloco) + ' ' +
+            character.name
+          "
           [disabled]="pendingCharacterId !== null"
           (click)="selectCharacter(character.characterId)"
         >
@@ -71,6 +82,7 @@
 
   <app-action-buttons>
     <button
+      class="character-select-back"
       *ngIf="!selectionFlowActive && pendingCharacterId === null"
       data-style-ornament="simple"
       (click)="close()"

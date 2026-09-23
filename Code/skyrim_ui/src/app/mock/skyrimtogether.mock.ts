@@ -171,7 +171,10 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
   }
 
   deactivate(): void {
-    throw new Error('NOT YET IMPLEMENTED');
+    if (this.active) {
+      this.active = false;
+      this.emit('deactivate');
+    }
   }
 
   teleportToPlayer(playerId: number): void {
