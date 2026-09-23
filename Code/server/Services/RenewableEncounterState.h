@@ -265,6 +265,35 @@ public:
     }
 
     /**
+     * Reapplies persisted state after a server restart (roadmap W07). Only a
+     * freshly configured encounter with no bound slot accepts it. A cleared
+     * encounter comes back with every slot dead, so a restart never revives
+     * killed creatures, and its cooldown keeps counting from the clear tick.
+     */
+    [[nodiscard]] bool Restore(const std::uint64_t aEpoch, const std::optional<std::uint64_t> aClearedTick)
+    {
+        if (!m_slotByIncarnation.empty() || IsCleared())
+            return false;
+
+        for (const auto& [slotId, slot] : m_slots)
+        {
+            if (slot.Status != SlotStatus::Unbound)
+                return false;
+        }
+
+        m_resetCount = aEpoch;
+        if (aClearedTick)
+        {
+            for (auto& [slotId, slot] : m_slots)
+                slot.Status = SlotStatus::Dead;
+
+            m_clearedTick = aClearedTick;
+        }
+
+        return true;
+    }
+
+    /**
      * Empties every slot so fresh incarnations can be bound. Previously bound
      * incarnations become unknown and can no longer affect the encounter.
      */

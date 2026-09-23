@@ -33,6 +33,15 @@
  * requested through GetSpawnRequests for the current epoch. The retired set
  * grows with every spawned actor; it is in-memory and cleared by a restart,
  * where the combat lane issues new lifecycle generations anyway.
+ *
+ * Spawns are claimed before they happen (roadmap W07). ClaimSpawn hands out at
+ * most one ticket per slot, so concurrent players or an ownership transfer
+ * cannot spawn the same slot twice; only CompleteSpawn with that ticket fills a
+ * claimed slot. A disconnect (ReleasePlayerClaims) or a timeout
+ * (ExpireSpawnClaims) voids the ticket, so a late completion from the old
+ * owner is refused. Snapshot/Restore carry each encounter's epoch and cleared
+ * state across a restart; the restored epoch is one higher, which makes every
+ * ticket and spawn request issued before the restart stale.
  */
 class RenewableEncounterRegistry final
 {
@@ -62,6 +71,22 @@ public:
     {
         SpawnSlotId Slot{};
         std::uint64_t Epoch{};
+    };
+
+    struct SpawnTicket final
+    {
+        std::uint64_t Id{};
+        RenewableEncounterId Encounter{};
+        SpawnSlotId Slot{};
+        std::uint64_t Epoch{};
+        std::uint32_t Owner{};
+    };
+
+    struct EncounterSnapshot final
+    {
+        RenewableEncounterId Id{};
+        std::uint64_t Epoch{};
+        std::optional<std::uint64_t> ClearedTick{};
     };
 
     [[nodiscard]] bool AddEncounter(const RenewableEncounterId aId, const RenewableEncounterPolicy aPolicy)
@@ -127,16 +152,93 @@ public:
         return it->second;
     }
 
+    /**
+     * Binds an incarnation to an unclaimed slot. A claimed slot can only be
+     * filled through CompleteSpawn with its ticket.
+     */
     [[nodiscard]] bool BindIncarnation(const RenewableEncounterId aId, const SpawnSlotId aSlot, const EncounterIncarnation aIncarnation, const std::uint64_t aSpawnEpoch)
     {
-        auto* pEncounter = FindMutable(aId);
-        if (!pEncounter || FindEncounter(aIncarnation) || FindRetired(aIncarnation))
+        if (m_claims.count(aSlot) != 0)
             return false;
 
-        if (!pEncounter->BindIncarnation(aSlot, aIncarnation, aSpawnEpoch))
+        return Bind(aId, aSlot, aIncarnation, aSpawnEpoch);
+    }
+
+    [[nodiscard]] std::optional<SpawnTicket> ClaimSpawn(const RenewableEncounterId aId, const SpawnSlotId aSlot, const std::uint64_t aSpawnEpoch, const std::uint32_t aPlayerId, const std::uint64_t aNowTick)
+    {
+        const auto* pEncounter = Find(aId);
+        if (aPlayerId == 0 || !pEncounter || !(FindEncounter(aSlot) == aId) || aSpawnEpoch != pEncounter->GetEpoch())
+            return std::nullopt;
+
+        if (pEncounter->IsCleared() || pEncounter->GetSlotStatus(aSlot) != RenewableEncounterState::SlotStatus::Unbound || m_claims.count(aSlot) != 0)
+            return std::nullopt;
+
+        const SpawnTicket ticket{m_nextTicketId++, aId, aSlot, aSpawnEpoch, aPlayerId};
+        m_claims.emplace(aSlot, Claim{ticket, aNowTick});
+        return ticket;
+    }
+
+    /**
+     * Fills the slot of a live ticket. The ticket is consumed on success; if
+     * the incarnation is rejected the claim stays so its owner can retry.
+     */
+    [[nodiscard]] bool CompleteSpawn(const SpawnTicket& acTicket, const EncounterIncarnation aIncarnation)
+    {
+        const auto it = m_claims.find(acTicket.Slot);
+        if (it == m_claims.end() || it->second.Ticket.Id != acTicket.Id)
             return false;
 
-        m_encounterByIncarnation.emplace(aIncarnation, aId);
+        if (!Bind(acTicket.Encounter, acTicket.Slot, aIncarnation, acTicket.Epoch))
+            return false;
+
+        m_claims.erase(it);
+        return true;
+    }
+
+    /** Voids every claim a player holds (disconnect, lost ownership). */
+    std::size_t ReleasePlayerClaims(const std::uint32_t aPlayerId)
+    {
+        return EraseClaimsIf([aPlayerId](const Claim& acClaim) { return acClaim.Ticket.Owner == aPlayerId; });
+    }
+
+    /** Voids claims held for aTtlTicks or longer. */
+    std::size_t ExpireSpawnClaims(const std::uint64_t aNowTick, const std::uint64_t aTtlTicks)
+    {
+        return EraseClaimsIf([aNowTick, aTtlTicks](const Claim& acClaim) { return aNowTick >= acClaim.ClaimedTick && aNowTick - acClaim.ClaimedTick >= aTtlTicks; });
+    }
+
+    [[nodiscard]] std::vector<EncounterSnapshot> Snapshot() const
+    {
+        std::vector<EncounterSnapshot> snapshot;
+        for (const auto& [id, encounter] : m_encounters)
+            snapshot.push_back(EncounterSnapshot{id, encounter.GetEpoch(), encounter.GetClearedTick()});
+
+        return snapshot;
+    }
+
+    /**
+     * Applies a snapshot to a registry freshly loaded from server
+     * configuration. Nothing is applied unless every encounter in the
+     * snapshot exists and the registry has no bound incarnation or claim.
+     */
+    [[nodiscard]] bool Restore(const std::vector<EncounterSnapshot>& acSnapshot)
+    {
+        if (!m_encounterByIncarnation.empty() || !m_claims.empty())
+            return false;
+
+        for (const auto& entry : acSnapshot)
+        {
+            const auto* pEncounter = Find(entry.Id);
+            if (!pEncounter || pEncounter->GetEpoch() != 0 || pEncounter->IsCleared())
+                return false;
+        }
+
+        for (const auto& entry : acSnapshot)
+        {
+            if (!FindMutable(entry.Id)->Restore(entry.Epoch + 1, entry.ClearedTick))
+                return false;
+        }
+
         return true;
     }
 
@@ -199,7 +301,10 @@ public:
             return requests;
 
         for (const auto slot : pEncounter->GetUnboundSlots())
-            requests.push_back(SpawnRequest{slot, pEncounter->GetEpoch()});
+        {
+            if (m_claims.count(slot) == 0)
+                requests.push_back(SpawnRequest{slot, pEncounter->GetEpoch()});
+        }
 
         return requests;
     }
@@ -280,10 +385,47 @@ public:
                 ++it;
         }
 
+        EraseClaimsIf([aId](const Claim& acClaim) { return acClaim.Ticket.Encounter == aId; });
         return true;
     }
 
 private:
+    struct Claim final
+    {
+        SpawnTicket Ticket{};
+        std::uint64_t ClaimedTick{};
+    };
+
+    [[nodiscard]] bool Bind(const RenewableEncounterId aId, const SpawnSlotId aSlot, const EncounterIncarnation aIncarnation, const std::uint64_t aSpawnEpoch)
+    {
+        auto* pEncounter = FindMutable(aId);
+        if (!pEncounter || FindEncounter(aIncarnation) || FindRetired(aIncarnation))
+            return false;
+
+        if (!pEncounter->BindIncarnation(aSlot, aIncarnation, aSpawnEpoch))
+            return false;
+
+        m_encounterByIncarnation.emplace(aIncarnation, aId);
+        return true;
+    }
+
+    template <class TPredicate> std::size_t EraseClaimsIf(const TPredicate aPredicate)
+    {
+        std::size_t count = 0;
+        for (auto it = m_claims.begin(); it != m_claims.end();)
+        {
+            if (aPredicate(it->second))
+            {
+                it = m_claims.erase(it);
+                ++count;
+            }
+            else
+                ++it;
+        }
+
+        return count;
+    }
+
     [[nodiscard]] RenewableEncounterState* FindMutable(const RenewableEncounterId aId) noexcept
     {
         const auto it = m_encounters.find(aId);
@@ -302,4 +444,6 @@ private:
     std::map<RenewableEncounterId, std::set<std::uint32_t>> m_cellsByEncounter;
     std::map<std::uint32_t, std::uint32_t> m_cellByPlayer;
     std::map<EncounterIncarnation, RetiredIncarnation> m_retired;
+    std::map<SpawnSlotId, Claim> m_claims;
+    std::uint64_t m_nextTicketId{1};
 };
