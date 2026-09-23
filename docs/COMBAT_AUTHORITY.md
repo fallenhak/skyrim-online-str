@@ -78,6 +78,14 @@ observation must be correlated with canonical health/death changes before any
 future contribution is recorded. No client-provided XP amount or reward amount
 should be authoritative.
 
+`CombatObservationReplayCache` provides the bounded replay window for this
+future handler. It keys an observation ID by attacker server entity ID and
+ownership epoch, plus target server entity ID and lifecycle generation. It
+retains a fixed FIFO window (1024 entries by default); a key can be considered
+new again after eviction. The handler must validate the current attacker and
+target first, then consult the cache immediately before accepting the
+observation. The client tick is not part of replay identity.
+
 ## Contribution and transfer implications
 
 An attacker can disconnect or lose ownership before a target dies. Any future
