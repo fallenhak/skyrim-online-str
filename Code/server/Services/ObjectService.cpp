@@ -4,6 +4,7 @@
 #include <World.h>
 #include <Components.h>
 #include <Services/ObjectInteractionPolicy.h>
+#include <Services/PresentationAuthorityPolicy.h>
 
 #include <Events/PlayerLeaveCellEvent.h>
 
@@ -229,15 +230,32 @@ void ObjectService::OnLockChange(const PacketEvent<LockChangeRequest>& acMessage
 
 void ObjectService::OnScriptAnimationRequest(const PacketEvent<ScriptAnimationRequest>& acMessage) noexcept
 {
-    auto& packet = acMessage.Packet;
+    const auto& packet = acMessage.Packet;
+    const auto source = static_cast<entt::entity>(packet.ServerId);
+    if (!m_world.valid(source))
+        return;
+
+    const auto* pFormIdComponent = m_world.try_get<FormIdComponent>(source);
+    const auto* pCellComponent = m_world.try_get<CellIdComponent>(source);
+    const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(source);
+    const bool isNpcCharacter = pCharacterComponent && !pCharacterComponent->IsPlayer();
+    const bool isObject = m_world.all_of<ObjectComponent>(source);
+    const auto& senderCell = acMessage.pPlayer->GetCellComponent();
+    const bool hasCell = pCellComponent && static_cast<bool>(*pCellComponent) && static_cast<bool>(senderCell);
+    const bool isInRange = hasCell && ObjectInteractionPolicy::IsInSenderRange(
+        senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+        pCellComponent->Cell, pCellComponent->WorldSpaceId, pCellComponent->CenterCoords,
+        pCharacterComponent && pCharacterComponent->IsDragon());
+    if (!PresentationAuthorityPolicy::CanRelayScriptAnimation(
+            true, pFormIdComponent && pFormIdComponent->Id.BaseId != 0,
+            hasCell, isNpcCharacter, isObject, isInRange))
+        return;
 
     NotifyScriptAnimation message{};
-    message.FormID = packet.FormID;
+    message.FormID = pFormIdComponent->Id;
     message.Animation = packet.Animation;
     message.EventName = packet.EventName;
 
-    for (Player* pPlayer : m_world.GetPlayerManager())
-    {
-        pPlayer->Send(message);
-    }
+    if (!GameServer::Get()->SendToPlayersInRange(message, source, acMessage.GetSender()))
+        spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }

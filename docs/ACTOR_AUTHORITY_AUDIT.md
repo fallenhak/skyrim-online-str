@@ -57,9 +57,9 @@ boundary. A client-side send restriction is not treated as authority.
 | `RequestEquipmentChanges` / `InventoryService` | Actor equipment | server entity ID | sender must own a character | current nonzero epoch required | generated InWorld gate; target must have CharacterComponent and OwnerComponent; no range | A | Preserve owner-driven character equipment; reject object and other non-character inventories | A09 |
 | `ActivateRequest` / `ObjectService` | Activation relay | object ID, cell, activator ID | activator must be sender-owned; shared object use is gated by object trust | request has no epoch | object must be known and trusted; supplied cell must match stored cell; sender and activator must be in stored range; open state is bounded | C/D | Keep provisional references closed until an authoritative static-reference source is reviewed; add an epoch only with a protocol change | A09 |
 | `LockChangeRequest` / `ObjectService` | Lock state and peer relay for trusted references | object form ID + cell | no object owner check; shared use needs an authoritative outcome | none | object must be known; supplied cell must match stored cell; sender must be in stored range; provisional references and unvalidated client outcomes are rejected before mutation or relay | C/D | Establish a reviewed lock-outcome authority before applying client-reported results | A09 (all current client reports are rejected) |
-| `ScriptAnimationRequest` / `ObjectService` | Animation presentation | raw form ID | no check | none | broadcasts to all clients | D/E | Restrict to validated local actor/object source | No |
-| `DialogueRequest` / `CharacterService` | Voice presentation | server actor ID | no; non-owner interaction can be legitimate | none | origin must exist for range fan-out, sender range not checked | C/D | Treat as interaction/presentation, add range/target validation later | No |
-| `SubtitleRequest` / `CharacterService` | Subtitle presentation | server actor ID | no; non-owner interaction can be legitimate | none | origin must exist for range fan-out | C/D | Same as dialogue; not canonical actor mutation | No |
+| `ScriptAnimationRequest` / `ObjectService` | Animation presentation | server entity ID resolved from the local form ID | no; nearby interaction may be non-owner | none | source must be a registered NPC/object with form and cell components; sender must be in its tracked range; fan-out is range-limited | D/E | Keep presentation-only and range-bound; object location remains provisional | A10 |
+| `DialogueRequest` / `CharacterService` | Voice presentation | server actor ID | no; non-owner interaction can be legitimate | none | source must be a registered non-player character with form and cell components; sender must be in range; fan-out is range-limited | C/D | Preserve nearby non-owner dialogue; sound filename remains client-reported presentation | A10 |
+| `SubtitleRequest` / `CharacterService` | Subtitle presentation | server actor ID | no; non-owner interaction can be legitimate | none | same registered-NPC and sender-range checks as dialogue; fan-out is range-limited | C/D | Preserve nearby non-owner dialogue; subtitle text/topic remain client-reported presentation | A10 |
 | `PlayerRespawnRequest` / `PlayerService` | Own persistent-player respawn and gold loss | sender's server character | sender's own player | server resolves sender | generated InWorld gate | A | Keep sender-derived identity | No |
 | `PlayerLevelRequest` / `PlayerService` | Player level presentation | sender player | sender's own player | n/a | generated InWorld gate; persistent players rejected | A/D | Keep persistent level server-controlled | No |
 | `RequestPlayerHealthUpdate` / `OverlayService` | UI health percentage | sender player | sender-derived | n/a | generated InWorld gate | D | Keep non-canonical and validate finite percentage if UI abuse matters | No |
@@ -151,6 +151,10 @@ authentication, and the server rejects a client whose version does not exactly
 match its own `BUILD_COMMIT`; clients and servers must therefore run the same
 build when using these messages.
 
+The stock client currently compiles script-animation capture behind
+`OBJECT_ANIM_SYNC=0`; server-side source and range checks still apply to crafted
+or custom-client requests.
+
 ## High-confidence conclusions
 
 1. Health is the clear canonical-state vulnerability: the server currently
@@ -160,9 +164,12 @@ build when using these messages.
    clients to render a shot from an arbitrary server entity. This is a serious
    presentation/interaction spoofing issue, but its safe fix must preserve
    legitimate player and owner-controlled creature projectiles.
-3. Package, script-animation, and some object paths remain relay or mutation
-   surfaces without a complete actor authority proof. Spell cast, interrupt,
-   AddTarget, and RemoveSpell now bind requests to the current actor
+3. Package and some object paths remain relay or mutation surfaces without a
+   complete actor authority proof. Script animation now resolves through a
+   registered server entity and is limited to nearby NPC/object sources, while
+   dialogue and subtitles require a nearby registered NPC. Their content is
+   still client-reported presentation data. Spell cast, interrupt, AddTarget,
+   and RemoveSpell now bind requests to the current actor
    incarnation. AddTarget preserves both caster-owned and target-owned
    environmental/incoming effects; magic range and effect observation remain
    client-reported and are not proven by the server.

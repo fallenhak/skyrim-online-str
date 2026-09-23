@@ -16,7 +16,8 @@ struct ObjectInteractionPolicy final
         const GridCellCoords& aSenderCoords,
         const GameId& aObjectCell,
         const GameId& aObjectWorldSpace,
-        const GridCellCoords& aObjectCoords) noexcept
+        const GridCellCoords& aObjectCoords,
+        const bool aIsDragon = false) noexcept
     {
         if (!HasValidFormId(aSenderCell) || !HasValidFormId(aObjectCell))
             return false;
@@ -28,7 +29,9 @@ struct ObjectInteractionPolicy final
             !HasUsableCoords(aSenderCoords) || !HasUsableCoords(aObjectCoords))
             return false;
 
-        constexpr int64_t cRange = GridCellCoords::m_gridsToLoad / 2;
+        const int64_t cRange = aIsDragon
+            ? GridCellCoords::m_gridsToLoadIfDragon / 2
+            : GridCellCoords::m_gridsToLoad / 2;
         return IsAxisInRange(aSenderCoords.X, aObjectCoords.X, cRange) && IsAxisInRange(aSenderCoords.Y, aObjectCoords.Y, cRange);
     }
 

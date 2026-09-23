@@ -1,6 +1,7 @@
 #include <Services/ObjectService.h>
 
 #include <World.h>
+#include <Utils.h>
 #include <Events/DisconnectedEvent.h>
 #include <Events/UpdateEvent.h>
 #include <Events/CellChangeEvent.h>
@@ -414,8 +415,20 @@ void ObjectService::OnLockChangeNotify(const NotifyLockChange& acMessage) noexce
 
 void ObjectService::OnScriptAnimationEvent(const ScriptAnimationEvent& acEvent) noexcept
 {
+    const auto view = m_world.view<FormIdComponent>();
+    const auto entityIt = std::find_if(view.begin(), view.end(), [view, formId = acEvent.FormID](const auto entity)
+    {
+        return view.get<FormIdComponent>(entity).Id == formId;
+    });
+    if (entityIt == view.end())
+        return;
+
+    const auto serverId = Utils::GetServerId(*entityIt);
+    if (!serverId)
+        return;
+
     ScriptAnimationRequest request{};
-    request.FormID = acEvent.FormID;
+    request.ServerId = serverId.value();
     request.Animation = acEvent.Animation;
     request.EventName = acEvent.EventName;
 
@@ -424,15 +437,15 @@ void ObjectService::OnScriptAnimationEvent(const ScriptAnimationEvent& acEvent) 
 
 void ObjectService::OnNotifyScriptAnimation(const NotifyScriptAnimation& acMessage) noexcept
 {
-    if (acMessage.FormID == 0)
+    if (!acMessage.FormID)
         return;
 
-    auto* pForm = TESForm::GetById(acMessage.FormID);
-    auto* pObject = Cast<TESObjectREFR>(pForm);
+    const auto formId = m_world.GetModSystem().GetGameId(acMessage.FormID);
+    auto* pObject = Cast<TESObjectREFR>(TESForm::GetById(formId));
 
     if (!pObject)
     {
-        spdlog::error("Failed to fetch notify script animation object, form id: {:X}", acMessage.FormID);
+        spdlog::error("Failed to fetch notify script animation object, form id: {:X}", formId);
         return;
     }
 

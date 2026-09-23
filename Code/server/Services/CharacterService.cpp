@@ -40,12 +40,36 @@
 #include <Messages/NotifyActorTeleport.h>
 #include <Structs/FactionAuthorityPolicy.h>
 #include <Structs/MovementAuthorityPolicy.h>
+#include <Services/ObjectInteractionPolicy.h>
+#include <Services/PresentationAuthorityPolicy.h>
 
 namespace
 {
 constexpr std::uint32_t kHealthActorValue = 24;
 constexpr std::uint32_t kMagickaActorValue = 25;
 constexpr std::uint32_t kStaminaActorValue = 26;
+
+bool CanRelayNpcPresentation(World& aWorld, const Player& acSender, const uint32_t aServerId) noexcept
+{
+    const auto source = static_cast<entt::entity>(aServerId);
+    if (!aWorld.valid(source))
+        return false;
+
+    const auto* pCharacterComponent = aWorld.try_get<CharacterComponent>(source);
+    const auto* pFormIdComponent = aWorld.try_get<FormIdComponent>(source);
+    const auto* pCellComponent = aWorld.try_get<CellIdComponent>(source);
+    const bool isNpcCharacter = pCharacterComponent && !pCharacterComponent->IsPlayer();
+    const bool hasFormId = pFormIdComponent && pFormIdComponent->Id.BaseId != 0;
+    const auto& senderCell = acSender.GetCellComponent();
+    const bool hasCell = pCellComponent && static_cast<bool>(*pCellComponent) && static_cast<bool>(senderCell);
+    const bool isInRange = hasCell && pCharacterComponent && ObjectInteractionPolicy::IsInSenderRange(
+        senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+        pCellComponent->Cell, pCellComponent->WorldSpaceId, pCellComponent->CenterCoords,
+        pCharacterComponent->IsDragon());
+
+    return PresentationAuthorityPolicy::CanRelayNpcPresentation(
+        true, isNpcCharacter, hasFormId, hasCell, isInRange);
+}
 }
 
 CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
@@ -656,7 +680,9 @@ void CharacterService::OnRequestRespawn(const PacketEvent<RequestRespawn>& acMes
 
 void CharacterService::OnDialogueRequest(const PacketEvent<DialogueRequest>& acMessage) const noexcept
 {
-    auto& message = acMessage.Packet;
+    const auto& message = acMessage.Packet;
+    if (!CanRelayNpcPresentation(m_world, *acMessage.pPlayer, message.ServerId))
+        return;
 
     NotifyDialogue notify{};
     notify.ServerId = message.ServerId;
@@ -669,7 +695,9 @@ void CharacterService::OnDialogueRequest(const PacketEvent<DialogueRequest>& acM
 
 void CharacterService::OnSubtitleRequest(const PacketEvent<SubtitleRequest>& acMessage) const noexcept
 {
-    auto& message = acMessage.Packet;
+    const auto& message = acMessage.Packet;
+    if (!CanRelayNpcPresentation(m_world, *acMessage.pPlayer, message.ServerId))
+        return;
 
     NotifySubtitle notify{};
     notify.ServerId = message.ServerId;
