@@ -70,6 +70,15 @@ jobs:
       - name: Build
         run: xmake -y
 
+      - name: Run unit tests
+        run: |
+          set -e
+          for t in TPTests PersistenceTests SessionTests ActorPopulationTests; do
+            echo "::group::$t"
+            xmake run "$t"
+            echo "::endgroup::"
+          done
+
       - name: Stage Linux server
         run: |
           xmake install -o packaged
