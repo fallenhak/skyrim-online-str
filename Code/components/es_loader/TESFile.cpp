@@ -8,6 +8,7 @@
 #include <limits>
 #include <set>
 #include <system_error>
+#include <utility>
 
 namespace ESLoader
 {
@@ -287,7 +288,10 @@ bool TESFile::ReadGroupOrRecord(
             parsedRecord.SetBaseId(resolvedFormIdPrefix);
             actorRecordValid = parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix);
             if (actorRecordValid)
-                aRecordCollection.m_actorReferences[parsedRecord.GetFormId()] = parsedRecord;
+            {
+                const uint32_t resolvedFormId = parsedRecord.GetFormId();
+                aRecordCollection.m_actorReferences.insert_or_assign(resolvedFormId, std::move(parsedRecord));
+            }
             else
                 aRecordCollection.m_actorReferences.erase(resolvedFormIdPrefix + (formId & 0x00FFFFFFu));
             break;
@@ -295,14 +299,16 @@ bool TESFile::ReadGroupOrRecord(
         case FormEnum::REFR:
         {
             REFR parsedRecord = CopyAndParseRecord<REFR>(pRecord, resolvedFormIdPrefix);
-            aRecordCollection.m_objectReferences[parsedRecord.GetFormId()] = parsedRecord;
+            const uint32_t resolvedFormId = parsedRecord.GetFormId();
+            aRecordCollection.m_objectReferences.insert_or_assign(resolvedFormId, std::move(parsedRecord));
             break;
         }
         case FormEnum::CELL: break;
         case FormEnum::CLMT:
         {
             CLMT parsedRecord = CopyAndParseRecord<CLMT>(pRecord, resolvedFormIdPrefix);
-            aRecordCollection.m_climates[parsedRecord.GetFormId()] = parsedRecord;
+            const uint32_t resolvedFormId = parsedRecord.GetFormId();
+            aRecordCollection.m_climates.insert_or_assign(resolvedFormId, std::move(parsedRecord));
             break;
         }
         case FormEnum::NPC_:
@@ -312,7 +318,10 @@ bool TESFile::ReadGroupOrRecord(
             parsedRecord.SetBaseId(resolvedFormIdPrefix);
             actorRecordValid = parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix);
             if (actorRecordValid)
-                aRecordCollection.m_npcs[parsedRecord.GetFormId()] = parsedRecord;
+            {
+                const uint32_t resolvedFormId = parsedRecord.GetFormId();
+                aRecordCollection.m_npcs.insert_or_assign(resolvedFormId, std::move(parsedRecord));
+            }
             else
                 aRecordCollection.m_npcs.erase(resolvedFormIdPrefix + (formId & 0x00FFFFFFu));
             break;
@@ -324,7 +333,10 @@ bool TESFile::ReadGroupOrRecord(
             parsedRecord.SetBaseId(resolvedFormIdPrefix);
             actorRecordValid = parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix);
             if (actorRecordValid)
-                aRecordCollection.m_races[parsedRecord.GetFormId()] = parsedRecord;
+            {
+                const uint32_t resolvedFormId = parsedRecord.GetFormId();
+                aRecordCollection.m_races.insert_or_assign(resolvedFormId, std::move(parsedRecord));
+            }
             else
                 aRecordCollection.m_races.erase(resolvedFormIdPrefix + (formId & 0x00FFFFFFu));
             break;
@@ -332,24 +344,30 @@ bool TESFile::ReadGroupOrRecord(
         case FormEnum::CONT:
         {
             CONT parsedRecord = CopyAndParseRecord<CONT>(pRecord, resolvedFormIdPrefix);
-            aRecordCollection.m_containers[parsedRecord.GetFormId()] = parsedRecord;
+            const uint32_t resolvedFormId = parsedRecord.GetFormId();
+            aRecordCollection.m_containers.insert_or_assign(resolvedFormId, std::move(parsedRecord));
             break;
         }
         case FormEnum::GMST:
         {
             GMST parsedRecord = CopyAndParseRecord<GMST>(pRecord, resolvedFormIdPrefix);
-            aRecordCollection.m_gameSettings[parsedRecord.GetFormId()] = parsedRecord;
+            const uint32_t resolvedFormId = parsedRecord.GetFormId();
+            aRecordCollection.m_gameSettings.insert_or_assign(resolvedFormId, std::move(parsedRecord));
             break;
         }
         case FormEnum::WRLD:
         {
             WRLD parsedRecord = CopyAndParseRecord<WRLD>(pRecord, resolvedFormIdPrefix);
-            aRecordCollection.m_worlds[parsedRecord.GetFormId()] = parsedRecord;
+            const uint32_t resolvedFormId = parsedRecord.GetFormId();
+            aRecordCollection.m_worlds.insert_or_assign(resolvedFormId, std::move(parsedRecord));
+            break;
         }
         case FormEnum::NAVM:
         {
             NAVM parsedRecord = CopyAndParseRecord<NAVM>(pRecord, resolvedFormIdPrefix);
-            aRecordCollection.m_navMeshes[parsedRecord.GetFormId()] = parsedRecord;
+            const uint32_t resolvedFormId = parsedRecord.GetFormId();
+            aRecordCollection.m_navMeshes.insert_or_assign(resolvedFormId, std::move(parsedRecord));
+            break;
         }
         }
 
