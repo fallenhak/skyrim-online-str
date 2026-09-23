@@ -1,5 +1,7 @@
 #pragma once
 
+#include <TiltedCore/Stl.hpp>
+
 #include "Faction.h"
 
 #include <cstddef>
