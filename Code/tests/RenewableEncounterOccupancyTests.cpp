@@ -112,3 +112,39 @@ TEST_CASE("W05: invalid players are rejected and unknown players are harmless", 
     REQUIRE(registry.GetOccupantCount(kCaveUpper) == 0);
     REQUIRE_FALSE(registry.IsOccupied(RenewableEncounterId{0x9999u, 0}));
 }
+
+TEST_CASE("W05: a player in any cell of a multi-cell encounter blocks its reset", "[renewable_encounter]")
+{
+    constexpr std::uint32_t kCaveDepths = 0x0001A2C0u;
+    auto registry = MakeRegistry();
+    REQUIRE(registry.AddEncounterCell(kCaveUpper, kCaveDepths));
+    Clear(registry, kCaveUpper, kUpperSlot, {7, 10});
+
+    REQUIRE(registry.SetPlayerCell(kAlice, kCaveDepths));
+    REQUIRE(registry.IsOccupied(kCaveUpper));
+    REQUIRE(registry.GetResetBlocker(kCaveUpper, 20) == Blocker::Occupied);
+
+    // The extra cell belongs only to the encounter it was added to.
+    REQUIRE_FALSE(registry.IsOccupied(kCaveLower));
+
+    REQUIRE(registry.SetPlayerCell(kAlice, 0));
+    REQUIRE(registry.TryReset(kCaveUpper, 20));
+}
+
+TEST_CASE("W05: encounter cells are server-defined and validated", "[renewable_encounter]")
+{
+    constexpr std::uint32_t kCaveDepths = 0x0001A2C0u;
+    auto registry = MakeRegistry();
+    REQUIRE_FALSE(registry.AddEncounterCell(kCaveUpper, 0));
+    REQUIRE_FALSE(registry.AddEncounterCell(RenewableEncounterId{0x9999u, 0}, kCaveDepths));
+    REQUIRE_FALSE(registry.AddEncounterCell(kCaveUpper, kCaveCell)); // the owning cell is already in scope
+
+    REQUIRE(registry.AddEncounterCell(kCaveUpper, kCaveDepths));
+    REQUIRE_FALSE(registry.AddEncounterCell(kCaveUpper, kCaveDepths));
+    REQUIRE(registry.AddEncounterCell(kCrypt, kCaveDepths)); // a cell may be shared by encounters
+
+    REQUIRE(registry.SetPlayerCell(kAlice, kCaveDepths));
+    REQUIRE(registry.GetOccupantCount(kCaveUpper) == 1);
+    REQUIRE(registry.GetOccupantCount(kCrypt) == 1);
+    REQUIRE(registry.GetOccupantCount(kCaveLower) == 0);
+}

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 
 /**
  * Owns every renewable encounter on the server and keeps two invariants
@@ -17,8 +18,10 @@
  * from the encounters; callers only get const access to an encounter.
  *
  * It also tracks which cell each connected player is in (roadmap W05). An
- * encounter is occupied while any player is in its cell, which covers every
- * group of that cell, and an occupied encounter cannot reset. The caller must
+ * encounter covers a server-defined set of cells: its owning cell plus any
+ * cell added with AddEncounterCell (a dungeon spanning several interiors). It
+ * is occupied while any player is in one of those cells, which covers every
+ * group sharing them, and an occupied encounter cannot reset. The caller must
  * feed SetPlayerCell from the server's own cell tracking, never from a client
  * claim, and call RemovePlayer on disconnect.
  */
@@ -38,7 +41,23 @@ public:
         if (!aId.IsValid())
             return false;
 
-        return m_encounters.emplace(aId, RenewableEncounterState{aId, aPolicy}).second;
+        if (!m_encounters.emplace(aId, RenewableEncounterState{aId, aPolicy}).second)
+            return false;
+
+        m_cellsByEncounter[aId].insert(aId.CellFormId);
+        return true;
+    }
+
+    /**
+     * Extends an encounter's occupancy scope with another cell. Cells come from
+     * server configuration only, never from a client-provided list.
+     */
+    [[nodiscard]] bool AddEncounterCell(const RenewableEncounterId aId, const std::uint32_t aCellFormId)
+    {
+        if (aCellFormId == 0 || !Find(aId))
+            return false;
+
+        return m_cellsByEncounter[aId].insert(aCellFormId).second;
     }
 
     [[nodiscard]] bool AddSlot(const RenewableEncounterId aId, const SpawnSlotId aSlot)
@@ -136,13 +155,14 @@ public:
 
     [[nodiscard]] std::size_t GetOccupantCount(const RenewableEncounterId aId) const noexcept
     {
-        if (!aId.IsValid())
+        const auto cells = m_cellsByEncounter.find(aId);
+        if (cells == m_cellsByEncounter.end())
             return 0;
 
         std::size_t count = 0;
         for (const auto& [playerId, cellFormId] : m_cellByPlayer)
         {
-            if (cellFormId == aId.CellFormId)
+            if (cells->second.count(cellFormId) != 0)
                 ++count;
         }
 
@@ -202,5 +222,6 @@ private:
     std::map<RenewableEncounterId, RenewableEncounterState> m_encounters;
     std::map<SpawnSlotId, RenewableEncounterId> m_encounterBySlot;
     std::map<EncounterIncarnation, RenewableEncounterId> m_encounterByIncarnation;
+    std::map<RenewableEncounterId, std::set<std::uint32_t>> m_cellsByEncounter;
     std::map<std::uint32_t, std::uint32_t> m_cellByPlayer;
 };
