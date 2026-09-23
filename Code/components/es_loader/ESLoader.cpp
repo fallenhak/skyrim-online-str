@@ -39,6 +39,28 @@ String NormalizeLoadOrderLine(String aLine, const bool aFirstLine)
     return String(first, last);
 }
 
+bool IsRegularFileWithinDirectory(const fs::path& acDirectory, const fs::path& acFile)
+{
+    std::error_code error;
+    const fs::path canonicalDirectory = fs::canonical(acDirectory, error);
+    if (error)
+        return false;
+
+    const fs::path canonicalFile = fs::canonical(acFile, error);
+    if (error)
+        return false;
+
+    if (!fs::is_regular_file(canonicalFile, error) || error)
+        return false;
+
+    const fs::path relativeFile = canonicalFile.lexically_relative(canonicalDirectory);
+    if (relativeFile.empty() || relativeFile.is_absolute())
+        return false;
+
+    const auto firstComponent = relativeFile.begin();
+    return firstComponent != relativeFile.end() && *firstComponent != "..";
+}
+
 enum class PluginType : uint8_t
 {
     kInvalid,
@@ -378,7 +400,14 @@ fs::path ESLoader::GetPath(const String& acFilename) const
     // mismatch in the Data directory. A path never comes from the load-order
     // entry, so this scan cannot escape the plugin directory.
     if (!error && status.type() != fs::file_type::not_found)
+    {
+        // A plugin filename is a single safe path component, but a symlink at
+        // that component could still redirect header parsing and record loading
+        // outside the server's Data directory.
+        if (status.type() == fs::file_type::symlink && !IsRegularFileWithinDirectory(m_directory, pluginPath))
+            return {};
         return pluginPath;
+    }
 
     std::error_code directoryError;
     fs::directory_iterator it(m_directory, directoryError);
@@ -393,6 +422,14 @@ fs::path ESLoader::GetPath(const String& acFilename) const
         const String entryFilename = PathToUtf8String(it->path().filename());
         if (GetPluginFilenameKey(entryFilename, entryKey) && entryKey == filenameKey)
         {
+            std::error_code statusError;
+            const auto entryStatus = it->symlink_status(statusError);
+            if (statusError)
+                return {};
+
+            if (entryStatus.type() == fs::file_type::symlink && !IsRegularFileWithinDirectory(m_directory, it->path()))
+                return {};
+
             // Distinct names that compare equal by case are ambiguous. Do not
             // select one based on filesystem iteration order.
             if (!match.empty())

@@ -872,6 +872,44 @@ TEST(ESLoader, SkipsPluginsWithMalformedTES4Headers)
     EXPECT_TRUE(plugins.empty());
 }
 
+TEST(ESLoader, DoesNotReadPluginSymlinksThatEscapeDataDirectory)
+{
+    TemporaryDirectory temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.IsCreated()) << temporaryDirectory.Error().message();
+
+    const auto dataDirectory = temporaryDirectory.Path() / "Data";
+    std::error_code error;
+    ASSERT_TRUE(std::filesystem::create_directory(dataDirectory, error)) << error.message();
+
+    const auto outsidePluginPath = temporaryDirectory.Path() / "OutsideTarget.esp";
+    Bytes outsidePlugin = MakePluginHeader(Record::FLAGS::kESL);
+    AppendRecord(outsidePlugin, FormEnum::NPC_, 0x00000001, MakeNpcData("OutsideNpc", nullptr));
+    {
+        std::ofstream plugin(outsidePluginPath, std::ios::binary);
+        ASSERT_TRUE(plugin.good());
+        plugin.write(reinterpret_cast<const char*>(outsidePlugin.data()), static_cast<std::streamsize>(outsidePlugin.size()));
+        ASSERT_TRUE(plugin.good());
+    }
+
+    const auto pluginLinkPath = dataDirectory / "Alias.esp";
+    std::filesystem::create_symlink(outsidePluginPath, pluginLinkPath, error);
+    if (error)
+        GTEST_SKIP() << "The current platform or environment does not allow creating symlinks: " << error.message();
+
+    {
+        std::ofstream loadOrder(dataDirectory / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Alias.esp\n";
+    }
+
+    ESLoader::ESLoader loader(dataDirectory);
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+    ASSERT_EQ(loader.GetLoadOrder().size(), 1U);
+    EXPECT_FALSE(loader.GetLoadOrder().front().IsLite());
+    EXPECT_FALSE(records->HasAnyRecords());
+}
+
 TEST(ESLoader, ResolvesReferencesToLightMasters)
 {
     TemporaryDirectory dataDirectory;
