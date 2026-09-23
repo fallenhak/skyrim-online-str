@@ -11,10 +11,17 @@ uint32_t ReadFormId(Buffer::Reader& aReader, Map<uint8_t, uint32_t>& aParentToFo
     uint32_t formId = 0;
     aReader.ReadBytes(reinterpret_cast<uint8_t*>(&formId), 4);
 
-    uint32_t realBaseId = ESLoader::TESFile::GetFormIdPrefix(formId, aParentToFormIdPrefix);
+    if (formId == 0)
+        return 0;
+
+    const auto realBaseId = ESLoader::TESFile::GetFormIdPrefix(formId, aParentToFormIdPrefix);
+    // Form ID zero is the null reference used by population lookup. Preserve it
+    // for an unmapped parent prefix instead of manufacturing a slot-zero ID.
+    if (!realBaseId)
+        return 0;
 
     formId &= 0x00FFFFFF;
-    formId += realBaseId;
+    formId += *realBaseId;
 
     return formId;
 }

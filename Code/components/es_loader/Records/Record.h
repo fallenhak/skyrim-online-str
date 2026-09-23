@@ -16,6 +16,10 @@ public:
     enum FLAGS
     {
         kMasterFile = 1,
+        // TES4 header flag 0x00000200 marks a plugin as light/ESL. This is
+        // authoritative for the plugin namespace even when the filename has
+        // an .esp extension.
+        kESL = 0x200,
         kCompressed = 0x40000,
         kIgnored = 0x1000,
         kIsMarker = 0x800000,
@@ -23,11 +27,15 @@ public:
 
     Record() = default;
 
-    void CopyRecordData(Record& aRhs);
+    void CopyRecordData(const void* apRecordData);
     void SetBaseId(uint32_t aBaseId);
 
+    using BoundedChunkCallback = std::function<void(ChunkId, Buffer::Reader&, size_t)>;
+
     void IterateChunks(const std::function<void(ChunkId, Buffer::Reader&)>& aCallback);
-    void DecompressChunkData(const void* apCompressedData, size_t aCompressedSize, void* apDecompressedData, size_t aDecompressedSize);
+    [[nodiscard]] bool IterateChunksBounded(const BoundedChunkCallback& aCallback);
+    [[nodiscard]] bool IterateChunksBounded(const uint8_t* apChunkData, size_t aDataSize, const BoundedChunkCallback& aCallback);
+    [[nodiscard]] bool DecompressChunkData(const void* apCompressedData, size_t aCompressedSize, void* apDecompressedData, size_t aDecompressedSize);
 
     void DiscoverChunks();
 

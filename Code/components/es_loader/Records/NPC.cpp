@@ -2,18 +2,29 @@
 
 #include <ESLoader.h>
 
-void NPC::ParseChunks(NPC& aSourceRecord, Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept
+bool NPC::ParseChunks(const uint8_t* apRecordData, Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept
 {
-    aSourceRecord.IterateChunks(
-        [&](ChunkId aChunkId, Buffer::Reader& aReader)
+    // Population identity uses EDID and RNAM; skip variable VMAD and unrelated NPC
+    // payloads while the shared iterator still validates their chunk boundaries.
+    bool fieldsValid = true;
+    const auto* const pChunkData = apRecordData + sizeof(Record);
+    const bool chunksValid = IterateChunksBounded(pChunkData, GetDataSize(),
+        [&](ChunkId aChunkId, Buffer::Reader& aReader, const size_t aChunkSize)
         {
             switch (aChunkId)
             {
-            case ChunkId::EDID_ID: m_editorId = ESLoader::ReadZString(aReader); break;
-            case ChunkId::RNAM_ID: m_raceId = Chunks::ReadFormId(aReader, aParentToFormIdPrefix); break;
-            case ChunkId::ACBS_ID: m_baseStats = Chunks::ACBS(aReader); break;
-            case ChunkId::DOFT_ID: m_defaultOutfit = Chunks::DOFT(aReader, aParentToFormIdPrefix); break;
-            case ChunkId::VMAD_ID: m_scriptData = Chunks::VMAD(aReader, aParentToFormIdPrefix); break;
+            case ChunkId::EDID_ID:
+                if (!ESLoader::ReadZString(aReader, aChunkSize, m_editorId))
+                    fieldsValid = false;
+                break;
+            case ChunkId::RNAM_ID:
+                if (aChunkSize < sizeof(uint32_t))
+                    fieldsValid = false;
+                else
+                    m_raceId = Chunks::ReadFormId(aReader, aParentToFormIdPrefix);
+                break;
             }
         });
+
+    return chunksValid && fieldsValid;
 }

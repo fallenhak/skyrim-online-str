@@ -26,6 +26,7 @@
 #include <Messages/NotifyCharacterEnteredWorld.h>
 #include <Messages/RequestCharacterList.h>
 #include <Messages/SelectCharacterRequest.h>
+#include <es_loader/PluginFilename.h>
 #include <console/ConsoleRegistry.h>
 #include <resources/ResourceCollection.h>
 
@@ -56,6 +57,11 @@ Console::Setting bAllowUnknownActorAssignments{
     "Population:bAllowUnknownActorAssignments",
     "Allow actor assignments when server population identity is unknown or untrusted",
     true,
+    Console::SettingsFlags::kLocked};
+Console::StringSetting sRaceClassificationOverrides{
+    "Population:sRaceClassificationOverrides",
+    "Comma-separated server race overrides in RaceEditorId=Class form; Class is HumanoidNpc, Creature, or Unknown; blank keeps the ten defaults",
+    "",
     Console::SettingsFlags::kLocked};
 Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
 Console::Setting bEnableDevelopmentIdentityBinding{
@@ -213,8 +219,8 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole)
     spdlog::info("Server {} started on port {}", BUILD_COMMIT, GetPort());
     UpdateTitle();
 
-    m_pWorld = MakeUnique<World>(
-        std::filesystem::path(sPersistenceDatabasePath.value()), bEnableActorRecordLoading, bEnableHumanoidAssignmentGate, bAllowUnknownActorAssignments);
+    m_pWorld = MakeUnique<World>(std::filesystem::path(sPersistenceDatabasePath.value()), bEnableActorRecordLoading, bEnableHumanoidAssignmentGate,
+        bAllowUnknownActorAssignments, sRaceClassificationOverrides.value());
 
     if (bEnableDevelopmentIdentityBinding)
     {
@@ -1097,7 +1103,9 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
             // mods that may exist on the server, but not on the client
             for (const auto& entry : modsComponent.GetServerMods())
             {
-                const auto it = std::find_if(userMods.begin(), userMods.end(), [&](const Mods::Entry& it) { return it.Filename == entry.first; });
+                const auto it = std::find_if(userMods.begin(), userMods.end(), [&](const Mods::Entry& it) {
+                    return ESLoader::ArePluginFilenamesEqual(it.Filename, entry.first);
+                });
 
                 if (it == userMods.end())
                 {

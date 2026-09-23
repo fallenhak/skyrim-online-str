@@ -51,12 +51,22 @@ classification remains `Unknown`. The identity resolver exposes the source and
 trust distinction so a later enforcement milestone can make an explicit policy
 decision without treating client claims as server authority.
 
-Race rules are explicitly configurable with `SetRaceClassification`. The
-default rule set marks only these vanilla editor IDs as `HumanoidNpc`:
+Race rules are explicitly configurable with `SetRaceClassification` and the
+locked, startup-only `Population:sRaceClassificationOverrides` setting. Its
+value is a comma-separated list such as `WolfRace=Creature,CustomRace=HumanoidNpc`;
+accepted values are exactly `HumanoidNpc`, `Creature`, and `Unknown`. Entries
+are applied on top of the defaults below, so an explicit `NordRace=Unknown`
+removes that default rule. Empty values retain the defaults. Invalid entries or
+duplicate editor IDs reject the full override string without changing the
+existing rules (the vanilla defaults at startup).
+
+The default rule set marks only these vanilla editor IDs as `HumanoidNpc`:
 `NordRace`, `BretonRace`, `ImperialRace`, `RedguardRace`, `HighElfRace`,
 `WoodElfRace`, `DarkElfRace`, `OrcRace`, `ArgonianRace`, and `KhajiitRace`.
 Other and edge/modded races remain `Unknown` unless an explicit server-side
-rule is added. Editor ID is currently the policy key, so duplicate editor IDs
+rule is added. The setting only changes server-side classification rules; it
+does not enable full record loading or the humanoid assignment gate. Editor ID
+is currently the policy key, so duplicate editor IDs
 across plugins are not disambiguated by this foundation; plugin identity can be
 added later if the loader exposes it as a required policy key.
 
@@ -105,6 +115,28 @@ With the setting disabled, `World` still loads the load order and gives
 `ActorPopulationPolicy` an empty `RecordCollection`; NPC classification is
 `Unknown` and `GameId(0, 0x14)` is still `Player`. Since the assignment gate is
 also disabled by default, this preserves the existing assignment behavior.
+
+Load-order metadata is kept in the file's declared order. Blank/comment lines,
+UTF-8 BOMs, CR/LF endings, and surrounding whitespace are normalized; duplicate
+or unsupported/unsafe plugin entries (including path-bearing or control-character
+names) are ignored without consuming an ID.
+For a readable plugin file, the server uses the TES4 header ESL flag
+(`0x00000200`) to promote an `.esp` or `.esm` into the light-plugin namespace.
+An `.esl` filename remains light even when the readable header omits that bit;
+the header never downgrades it to a standard namespace. For a malformed or
+unreadable header in an existing plugin file, the server skips that plugin
+instead of publishing a standard or light namespace. Missing plugin files keep
+the filename-derived load-order metadata, without trusting client-reported mod
+kind. During opt-in indexing, a plugin with any master absent from the known
+server master-prefix map is skipped before any of its records are indexed.
+An unresolved `MAST` entry never falls back to prefix zero, which could alias
+an unrelated record in the first load-order slot. Actor-population records with
+an unmapped own-form prefix are skipped; unresolved `RNAM`/`NAME` references
+keep the null form ID and therefore classify as `Unknown` when their target
+cannot be found.
+When full record loading is enabled, absent plugin files are warned about and
+skipped while the parsed metadata remains available.
+
 With it enabled, `World`
 asks ESLoader to parse server plugin files and build references. If the Data
 directory, `loadorder.txt`, or record collection is unavailable, the server

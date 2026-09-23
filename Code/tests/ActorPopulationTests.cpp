@@ -12,16 +12,87 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <limits>
+#include <memory>
+#include <sstream>
+#include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
+
+#include <spdlog/sinks/ostream_sink.h>
 
 namespace
 {
 using Bytes = std::vector<uint8_t>;
+
+class TemporaryDirectory
+{
+public:
+    TemporaryDirectory()
+    {
+        const auto uniqueSuffix = std::chrono::steady_clock::now().time_since_epoch().count();
+        m_path = std::filesystem::temp_directory_path() /
+                 ("skyrim-online-str-load-order-test-" + std::to_string(uniqueSuffix));
+        std::filesystem::create_directory(m_path, m_error);
+    }
+
+    ~TemporaryDirectory()
+    {
+        std::error_code ignored;
+        std::filesystem::remove_all(m_path, ignored);
+    }
+
+    [[nodiscard]] bool IsCreated() const noexcept
+    {
+        std::error_code error;
+        return !m_error && std::filesystem::is_directory(m_path, error) && !error;
+    }
+    [[nodiscard]] const std::error_code& Error() const noexcept { return m_error; }
+    [[nodiscard]] const std::filesystem::path& Path() const noexcept { return m_path; }
+
+private:
+    std::filesystem::path m_path;
+    std::error_code m_error;
+};
+
+class ScopedDefaultLoggerCapture
+{
+public:
+    ScopedDefaultLoggerCapture()
+        : m_previousLogger(spdlog::default_logger())
+        , m_sink(std::make_shared<spdlog::sinks::ostream_sink_mt>(m_output))
+        , m_logger(std::make_shared<spdlog::logger>("actor-population-test-capture", m_sink))
+    {
+        m_logger->set_level(spdlog::level::trace);
+        spdlog::set_default_logger(m_logger);
+    }
+
+    ~ScopedDefaultLoggerCapture()
+    {
+        const std::string loggerName = m_logger->name();
+        spdlog::set_default_logger(std::move(m_previousLogger));
+        spdlog::drop(loggerName);
+    }
+
+    [[nodiscard]] std::string Text()
+    {
+        m_logger->flush();
+        return m_output.str();
+    }
+
+private:
+    std::shared_ptr<spdlog::logger> m_previousLogger;
+    std::ostringstream m_output;
+    std::shared_ptr<spdlog::sinks::ostream_sink_mt> m_sink;
+    std::shared_ptr<spdlog::logger> m_logger;
+};
 
 constexpr uint32_t kMasterPrefix = 0x02000000;
 constexpr uint32_t kNordRaceRawId = 0x01001000;
@@ -121,16 +192,57 @@ Bytes MakeActorReferenceData(const uint32_t aBaseRawId)
     return data;
 }
 
-void AppendRecord(Bytes& aBytes, FormEnum aFormType, uint32_t aFormId, const Bytes& aData)
+void AppendRecord(Bytes& aBytes, FormEnum aFormType, uint32_t aFormId, const Bytes& aData, const uint32_t aFlags = 0)
 {
     AppendValue(aBytes, static_cast<uint32_t>(aFormType));
     AppendValue(aBytes, static_cast<uint32_t>(aData.size()));
-    AppendValue(aBytes, uint32_t{}); // flags
+    AppendValue(aBytes, aFlags);
     AppendValue(aBytes, aFormId);
     AppendValue(aBytes, uint32_t{}); // version control info
     AppendValue(aBytes, uint16_t{}); // form version
     AppendValue(aBytes, uint16_t{}); // version control version
     aBytes.insert(aBytes.end(), aData.begin(), aData.end());
+}
+
+Bytes MakePluginHeader(const uint32_t aFlags)
+{
+    Bytes data;
+    AppendRecord(data, FormEnum::TES4, 0, {}, aFlags);
+    return data;
+}
+
+Bytes MakePluginHeaderWithMasters(std::initializer_list<const char*> acMasterFilenames)
+{
+    Bytes headerData;
+    for (const char* pMasterFilename : acMasterFilenames)
+    {
+        Bytes masterName(pMasterFilename, pMasterFilename + std::char_traits<char>::length(pMasterFilename));
+        masterName.push_back(0);
+        AppendChunk(headerData, ChunkId::MAST_ID, masterName);
+        AppendChunk(headerData, ChunkId::DATA_ID, Bytes(sizeof(uint64_t), 0));
+    }
+
+    Bytes data;
+    AppendRecord(data, FormEnum::TES4, 0, headerData);
+    return data;
+}
+
+Bytes MakePluginHeaderWithMaster(const char* apMasterFilename)
+{
+    return MakePluginHeaderWithMasters({apMasterFilename});
+}
+
+Bytes MakePluginHeaderWithMasterAndFlags(const char* apMasterFilename, const uint32_t aFlags)
+{
+    Bytes headerData;
+    Bytes masterName(apMasterFilename, apMasterFilename + std::char_traits<char>::length(apMasterFilename));
+    masterName.push_back(0);
+    AppendChunk(headerData, ChunkId::MAST_ID, masterName);
+    AppendChunk(headerData, ChunkId::DATA_ID, Bytes(sizeof(uint64_t), 0));
+
+    Bytes data;
+    AppendRecord(data, FormEnum::TES4, 0, headerData, aFlags);
+    return data;
 }
 
 Bytes MakePluginData()
@@ -185,8 +297,8 @@ protected:
         plugin.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
         plugin.close();
 
-        TiltedPhoques::Map<TiltedPhoques::String, uint8_t> masterFiles;
-        masterFiles.emplace("Master.esm", uint8_t{2});
+        TiltedPhoques::Map<TiltedPhoques::String, uint32_t> masterFiles;
+        masterFiles.emplace("Master.esm", uint32_t{0x02000000});
         ESLoader::TESFile tesFile(masterFiles);
         tesFile.Setup(uint8_t{1});
         ASSERT_TRUE(tesFile.LoadFile(m_pluginPath));
@@ -282,6 +394,24 @@ TEST_F(ActorPopulationTests, InstallsConservativeVanillaHumanoidRules)
     EXPECT_EQ(policy.ClassifyNpcBase(kEdgeNpcId).Class, ActorPopulationClass::kUnknown);
 }
 
+TEST_F(ActorPopulationTests, AppliesExplicitRaceRulesAndUnknownOverridesAtomically)
+{
+    ActorPopulationPolicy policy(&m_records);
+
+    ASSERT_TRUE(policy.ApplyRaceClassificationOverrides(" WolfRace = Creature, EdgeRace=HumanoidNpc, NordRace=Unknown "));
+    EXPECT_EQ(policy.ClassifyNpcBase(kWolfNpcId).Class, ActorPopulationClass::kCreature);
+    EXPECT_EQ(policy.ClassifyNpcBase(kEdgeNpcId).Class, ActorPopulationClass::kHumanoidNpc);
+    EXPECT_EQ(policy.ClassifyNpcBase(kNordNpcId).Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(policy.ClassifyNpcBase(kDraugrNpcId).Class, ActorPopulationClass::kUnknown);
+
+    EXPECT_FALSE(policy.ApplyRaceClassificationOverrides("WolfRace=HumanoidNpc,EdgeRace=Dragon"));
+    EXPECT_EQ(policy.ClassifyNpcBase(kWolfNpcId).Class, ActorPopulationClass::kCreature);
+    EXPECT_EQ(policy.ClassifyNpcBase(kEdgeNpcId).Class, ActorPopulationClass::kHumanoidNpc);
+
+    EXPECT_FALSE(policy.ApplyRaceClassificationOverrides("NordRace=Unknown,NordRace=Creature"));
+    EXPECT_EQ(policy.ClassifyNpcBase(kNordNpcId).Class, ActorPopulationClass::kUnknown);
+}
+
 TEST(ActorPopulationPolicy, KeepsNpcUnknownWithoutLoadedRecords)
 {
     ESLoader::RecordCollection records;
@@ -289,6 +419,962 @@ TEST(ActorPopulationPolicy, KeepsNpcUnknownWithoutLoadedRecords)
 
     EXPECT_EQ(policy.ClassifyNpcBase(kNordNpcId).Class, ActorPopulationClass::kUnknown);
     EXPECT_EQ(policy.ClassifyActor(GameId(0, 0x14)).Class, ActorPopulationClass::kPlayer);
+}
+
+TEST(ESLoader, ParsesLoadOrderMetadataSafelyWithoutPluginFiles)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt", std::ios::binary);
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "\xEF\xBB\xBF  Skyrim.esm  \r\n"
+                  << " # comment\r\n"
+                  << "\tUpdate.ESP\t\n"
+                  << " \r\n"
+                  << "Light.ESL\r\n"
+                  << "skyrim.ESM\r\n"
+                  << "../Escape.esp\r\n"
+                  << "Nested/Plugin.esp\r\n"
+                  << "Embedded\rPlugin.esp\r\n"
+                  << "Malformed.xpm\r\n"
+                  << "Not a plugin.txt\r\n";
+    }
+
+    ScopedDefaultLoggerCapture capturedLogs;
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto metadataOnly = loader.BuildRecordCollection();
+    ASSERT_NE(metadataOnly, nullptr);
+
+    const auto& plugins = loader.GetLoadOrder();
+    ASSERT_EQ(plugins.size(), 3U);
+    EXPECT_EQ(plugins[0].m_filename, "Skyrim.esm");
+    EXPECT_FALSE(plugins[0].IsLite());
+    EXPECT_EQ(plugins[0].m_standardId, 0U);
+    EXPECT_EQ(plugins[1].m_filename, "Update.ESP");
+    EXPECT_FALSE(plugins[1].IsLite());
+    EXPECT_EQ(plugins[1].m_standardId, 1U);
+    EXPECT_EQ(plugins[2].m_filename, "Light.ESL");
+    EXPECT_TRUE(plugins[2].IsLite());
+    EXPECT_EQ(plugins[2].m_liteId, 0U);
+    EXPECT_NE(capturedLogs.Text().find("could not resolve 3 plugin file(s)"), std::string::npos);
+    EXPECT_NE(capturedLogs.Text().find("TES4 flags and records are unavailable"), std::string::npos);
+
+    // Metadata remains available even when record loading is explicitly enabled
+    // and every listed plugin file is absent.
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+    EXPECT_FALSE(records->HasAnyRecords());
+}
+
+TEST(ESLoader, ResolvesUtf8PluginPathsAndKeepsFilenameKeysDeterministic)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    const String pluginFilename = "M\xC3\xB3" "d.esp";
+    String pluginFilenameKey;
+    ASSERT_TRUE(ESLoader::GetPluginFilenameKey(pluginFilename, pluginFilenameKey));
+    EXPECT_EQ(pluginFilenameKey, "m\xC3\xB3" "d.esp");
+    EXPECT_FALSE(ESLoader::GetPluginFilenameKey("Bad\xFF.esp", pluginFilenameKey));
+
+    const auto pluginPath = dataDirectory.Path() / ESLoader::PathFromUtf8(pluginFilename);
+    EXPECT_EQ(ESLoader::PathToUtf8String(pluginPath.filename()), pluginFilename);
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt", std::ios::binary);
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << pluginFilename << '\n';
+    }
+
+    {
+        std::ofstream plugin(pluginPath, std::ios::binary);
+        ASSERT_TRUE(plugin.good());
+        const Bytes data = MakePluginHeader(0);
+        plugin.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        ASSERT_TRUE(plugin.good());
+    }
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto metadataOnly = loader.BuildRecordCollection();
+    ASSERT_NE(metadataOnly, nullptr);
+    ASSERT_EQ(loader.GetLoadOrder().size(), 1U);
+    EXPECT_EQ(loader.GetLoadOrder().front().m_filename, pluginFilename);
+    EXPECT_FALSE(metadataOnly->HasAnyRecords());
+}
+
+TEST(ESLoader, MissingDataDirectoryReportsUnavailableLoadOrderMetadata)
+{
+    TemporaryDirectory temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.IsCreated()) << temporaryDirectory.Error().message();
+
+    ScopedDefaultLoggerCapture capturedLogs;
+    ESLoader::ESLoader loader(temporaryDirectory.Path() / "Data");
+
+    EXPECT_EQ(loader.BuildRecordCollection(), nullptr);
+    EXPECT_TRUE(loader.GetLoadOrder().empty());
+    EXPECT_NE(capturedLogs.Text().find("load-order metadata unavailable"), std::string::npos);
+    EXPECT_NE(capturedLogs.Text().find("Data directory"), std::string::npos);
+}
+
+TEST(ESLoader, ResolvesPluginAndMasterNamesAcrossCaseAndLineEndingDifferences)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt", std::ios::binary);
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "MASTER.ESM\r\n"
+                  << "Dependent.ESP\r\n";
+    }
+
+    constexpr uint32_t masterRaceRawId = 0x00001000;
+    Bytes master = MakePluginHeaderWithMasters({});
+    AppendRecord(master, FormEnum::RACE, masterRaceRawId, MakeRaceData("CaseRace"));
+
+    Bytes dependent = MakePluginHeaderWithMaster("master.esm");
+    AppendRecord(dependent, FormEnum::NPC_, 0x01002000, MakeNpcData("CaseNpc", &masterRaceRawId));
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    // The load order has different case from the files on disk, and MAST has
+    // different case from the load-order spelling.
+    ASSERT_TRUE(writePlugin("master.esm", master));
+    ASSERT_TRUE(writePlugin("dependent.esp", dependent));
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+    ASSERT_EQ(loader.GetLoadOrder().size(), 2U);
+    EXPECT_EQ(loader.GetLoadOrder()[0].m_filename, "MASTER.ESM");
+    EXPECT_NE(records->FindNpcById(0x01002000), nullptr);
+}
+
+TEST(ESLoader, UsesTES4ESLFlagForLightPluginNamespace)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Flagged.esp\n"
+                  << "Standard.esp\n"
+                  << "Flagged.esm\n"
+                  << "Standard.esm\n"
+                  << "Flagged.esl\n"
+                  << "Unflagged.esl\n";
+    }
+
+    for (const auto& plugin : {
+             std::pair{"Flagged.esp", static_cast<uint32_t>(Record::FLAGS::kESL)}, std::pair{"Standard.esp", uint32_t{0}},
+             std::pair{"Flagged.esm", static_cast<uint32_t>(Record::FLAGS::kESL)}, std::pair{"Standard.esm", uint32_t{0}},
+             std::pair{"Flagged.esl", static_cast<uint32_t>(Record::FLAGS::kESL)}, std::pair{"Unflagged.esl", uint32_t{0}}})
+    {
+        std::ofstream pluginFile(dataDirectory.Path() / plugin.first, std::ios::binary);
+        ASSERT_TRUE(pluginFile.good());
+        Bytes data = MakePluginHeader(plugin.second);
+        if (std::string(plugin.first) == "Flagged.esp")
+            AppendRecord(data, FormEnum::NPC_, 0x00000001, {});
+        pluginFile.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+    }
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto metadataOnly = loader.BuildRecordCollection();
+    ASSERT_NE(metadataOnly, nullptr);
+    EXPECT_FALSE(metadataOnly->HasAnyRecords());
+
+    const auto& plugins = loader.GetLoadOrder();
+    ASSERT_EQ(plugins.size(), 6U);
+
+    EXPECT_EQ(plugins[0].m_filename, "Flagged.esp");
+    EXPECT_TRUE(plugins[0].IsLite());
+    EXPECT_EQ(plugins[0].m_liteId, 0U);
+
+    EXPECT_EQ(plugins[1].m_filename, "Standard.esp");
+    EXPECT_FALSE(plugins[1].IsLite());
+    EXPECT_EQ(plugins[1].m_standardId, 0U);
+
+    EXPECT_EQ(plugins[2].m_filename, "Flagged.esm");
+    EXPECT_TRUE(plugins[2].IsLite());
+    EXPECT_EQ(plugins[2].m_liteId, 1U);
+
+    EXPECT_EQ(plugins[3].m_filename, "Standard.esm");
+    EXPECT_FALSE(plugins[3].IsLite());
+    EXPECT_EQ(plugins[3].m_standardId, 1U);
+
+    EXPECT_EQ(plugins[4].m_filename, "Flagged.esl");
+    EXPECT_TRUE(plugins[4].IsLite());
+    EXPECT_EQ(plugins[4].m_liteId, 2U);
+
+    EXPECT_EQ(plugins[5].m_filename, "Unflagged.esl");
+    EXPECT_TRUE(plugins[5].IsLite());
+    EXPECT_EQ(plugins[5].m_liteId, 3U);
+
+    const auto loadedRecords = loader.BuildRecordCollection(true);
+    ASSERT_NE(loadedRecords, nullptr);
+    EXPECT_NE(loadedRecords->FindNpcById(0xFE000001), nullptr);
+    EXPECT_EQ(loadedRecords->FindNpcById(0x00000001), nullptr);
+}
+
+TEST(ESLoader, RejectsPluginCountsThatExceedFormIdNamespaces)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    const auto writeLoadOrder = [&](const char* apExtension, const uint32_t aPluginCount) {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt", std::ios::trunc);
+        if (!loadOrder.good())
+            return false;
+
+        for (uint32_t i = 0; i < aPluginCount; ++i)
+            loadOrder << "Plugin" << i << apExtension << '\n';
+
+        return loadOrder.good();
+    };
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+
+    const uint32_t standardPluginCapacity = ESLoader::kMaxStandardPluginId + 1;
+    ASSERT_TRUE(writeLoadOrder(".esp", standardPluginCapacity));
+    ASSERT_NE(loader.BuildRecordCollection(false), nullptr);
+    ASSERT_EQ(loader.GetLoadOrder().size(), standardPluginCapacity);
+    EXPECT_EQ(loader.GetLoadOrder().front().m_standardId, 0U);
+    EXPECT_EQ(loader.GetLoadOrder().back().m_standardId, ESLoader::kMaxStandardPluginId);
+
+    ASSERT_TRUE(writeLoadOrder(".esp", standardPluginCapacity + 1));
+    EXPECT_EQ(loader.BuildRecordCollection(false), nullptr);
+    EXPECT_TRUE(loader.GetLoadOrder().empty());
+
+    const uint32_t litePluginCapacity = ESLoader::kMaxLitePluginId + 1;
+    ASSERT_TRUE(writeLoadOrder(".esl", litePluginCapacity));
+    ASSERT_NE(loader.BuildRecordCollection(false), nullptr);
+    ASSERT_EQ(loader.GetLoadOrder().size(), litePluginCapacity);
+    EXPECT_EQ(loader.GetLoadOrder().front().m_liteId, 0U);
+    EXPECT_EQ(loader.GetLoadOrder().back().m_liteId, ESLoader::kMaxLitePluginId);
+
+    ASSERT_TRUE(writeLoadOrder(".esl", litePluginCapacity + 1));
+    EXPECT_EQ(loader.BuildRecordCollection(false), nullptr);
+    EXPECT_TRUE(loader.GetLoadOrder().empty());
+}
+
+TEST(ESLoader, TESFileSetupRejectsOutOfRangeFormIdPrefixes)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    const auto pluginPath = dataDirectory.Path() / "Empty.esp";
+    const Bytes pluginData = MakePluginHeader(0);
+    {
+        std::ofstream plugin(pluginPath, std::ios::binary);
+        ASSERT_TRUE(plugin.good());
+        plugin.write(reinterpret_cast<const char*>(pluginData.data()), static_cast<std::streamsize>(pluginData.size()));
+        ASSERT_TRUE(plugin.good());
+    }
+
+    TiltedPhoques::Map<TiltedPhoques::String, uint32_t> masterFiles;
+    ESLoader::TESFile standardFile(masterFiles);
+    EXPECT_TRUE(standardFile.Setup(static_cast<uint8_t>(ESLoader::kMaxStandardPluginId)));
+    EXPECT_FALSE(standardFile.Setup(uint8_t{0xFE}));
+    ASSERT_TRUE(standardFile.LoadFile(pluginPath));
+    ESLoader::RecordCollection records;
+    EXPECT_FALSE(standardFile.IndexRecords(records));
+    EXPECT_TRUE(standardFile.Setup(static_cast<uint8_t>(ESLoader::kMaxStandardPluginId)));
+    EXPECT_TRUE(standardFile.IndexRecords(records));
+
+    ESLoader::TESFile liteFile(masterFiles);
+    EXPECT_TRUE(liteFile.Setup(ESLoader::kMaxLitePluginId));
+    EXPECT_FALSE(liteFile.Setup(static_cast<uint16_t>(ESLoader::kMaxLitePluginId + 1)));
+    ASSERT_TRUE(liteFile.LoadFile(pluginPath));
+    EXPECT_FALSE(liteFile.IndexRecords(records));
+    EXPECT_TRUE(liteFile.Setup(ESLoader::kMaxLitePluginId));
+    EXPECT_TRUE(liteFile.IndexRecords(records));
+}
+
+TEST(ESLoader, SkipsMalformedNpcRaceAndActorReferenceChunks)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    Bytes pluginData = MakePluginHeader(0);
+
+    Bytes shortRaceId;
+    AppendValue(shortRaceId, uint16_t{0x1000});
+    Bytes malformedNpc;
+    AppendChunk(malformedNpc, ChunkId::RNAM_ID, shortRaceId);
+    AppendRecord(pluginData, FormEnum::NPC_, 0x00000100, malformedNpc);
+
+    Bytes unterminatedEditorId{'B', 'a', 'd'};
+    Bytes malformedRace;
+    AppendChunk(malformedRace, ChunkId::EDID_ID, unterminatedEditorId);
+    AppendRecord(pluginData, FormEnum::RACE, 0x00000200, malformedRace);
+
+    Bytes shortBaseId;
+    AppendValue(shortBaseId, uint16_t{0x0300});
+    Bytes malformedActorReference;
+    AppendChunk(malformedActorReference, ChunkId::NAME_ID, shortBaseId);
+    AppendRecord(pluginData, FormEnum::ACHR, 0x00000300, malformedActorReference);
+
+    Bytes truncatedChunkPayload;
+    AppendValue(truncatedChunkPayload, static_cast<uint32_t>(ChunkId::RNAM_ID));
+    AppendValue(truncatedChunkPayload, uint16_t{4});
+    truncatedChunkPayload.push_back(0x01);
+    AppendRecord(pluginData, FormEnum::NPC_, 0x00000101, truncatedChunkPayload);
+
+    Bytes partialChunkHeader;
+    AppendValue(partialChunkHeader, static_cast<uint32_t>(ChunkId::RNAM_ID));
+    AppendRecord(pluginData, FormEnum::NPC_, 0x00000104, partialChunkHeader);
+
+    // A compressed record must not allocate based on a hostile uncompressed-size prefix.
+    Bytes oversizedCompressedRecord;
+    AppendValue(oversizedCompressedRecord, std::numeric_limits<uint32_t>::max());
+    oversizedCompressedRecord.push_back(0x78);
+    AppendRecord(pluginData, FormEnum::NPC_, 0x00000102, oversizedCompressedRecord, Record::FLAGS::kCompressed);
+
+    AppendRecord(pluginData, FormEnum::NPC_, 0x00000103, MakeNpcData("SafeNpc", nullptr));
+    AppendRecord(pluginData, FormEnum::RACE, 0x00000203, MakeRaceData("SafeRace"));
+    AppendRecord(pluginData, FormEnum::ACHR, 0x00000303, MakeActorReferenceData(0x00000103));
+
+    const auto pluginPath = dataDirectory.Path() / "Malformed.esp";
+    {
+        std::ofstream plugin(pluginPath, std::ios::binary);
+        ASSERT_TRUE(plugin.good());
+        plugin.write(reinterpret_cast<const char*>(pluginData.data()), static_cast<std::streamsize>(pluginData.size()));
+        ASSERT_TRUE(plugin.good());
+    }
+
+    TiltedPhoques::Map<TiltedPhoques::String, uint32_t> masterFiles;
+    ESLoader::TESFile tesFile(masterFiles);
+    ASSERT_TRUE(tesFile.Setup(uint8_t{0}));
+    ASSERT_TRUE(tesFile.LoadFile(pluginPath));
+
+    ESLoader::RecordCollection records;
+    EXPECT_TRUE(tesFile.IndexRecords(records));
+    EXPECT_EQ(records.FindNpcById(0x00000100), nullptr);
+    EXPECT_EQ(records.FindNpcById(0x00000101), nullptr);
+    EXPECT_EQ(records.FindNpcById(0x00000102), nullptr);
+    EXPECT_EQ(records.FindNpcById(0x00000104), nullptr);
+    EXPECT_EQ(records.FindRaceById(0x00000200), nullptr);
+    EXPECT_EQ(records.FindActorReferenceById(0x00000300), nullptr);
+    ASSERT_NE(records.FindNpcById(0x00000103), nullptr);
+    ASSERT_NE(records.FindRaceById(0x00000203), nullptr);
+    ASSERT_NE(records.FindActorReferenceById(0x00000303), nullptr);
+
+    ActorPopulationPolicy policy(&records);
+    EXPECT_EQ(policy.ClassifyNpcBase(0x00000100).Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(policy.ClassifyNpcBase(0x00000103).Class, ActorPopulationClass::kUnknown);
+}
+
+TEST(ESLoader, RejectsRecordHeadersAndPayloadsThatEscapePluginBounds)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    Bytes oversizedRecord = MakePluginHeader(0);
+    AppendRecord(oversizedRecord, FormEnum::NPC_, 0x00000100, MakeNpcData("TruncatedNpc", nullptr));
+    const uint32_t impossibleDataSize = 0x1000;
+    std::memcpy(oversizedRecord.data() + sizeof(Record) + sizeof(uint32_t), &impossibleDataSize, sizeof(impossibleDataSize));
+
+    Bytes truncatedRecordHeader = MakePluginHeader(0);
+    truncatedRecordHeader.insert(truncatedRecordHeader.end(), {0x4E, 0x50, 0x43});
+
+    Bytes deeplyNestedGroups;
+    for (size_t depth = 0; depth < 70; ++depth)
+    {
+        Bytes outerGroup;
+        AppendValue(outerGroup, static_cast<uint32_t>(FormEnum::GRUP));
+        AppendValue(outerGroup, static_cast<uint32_t>(deeplyNestedGroups.size() + sizeof(Group)));
+        for (size_t field = 0; field < 4; ++field)
+            AppendValue(outerGroup, uint32_t{});
+        outerGroup.insert(outerGroup.end(), deeplyNestedGroups.begin(), deeplyNestedGroups.end());
+        deeplyNestedGroups = std::move(outerGroup);
+    }
+    Bytes excessiveGroupDepth = MakePluginHeader(0);
+    excessiveGroupDepth.insert(excessiveGroupDepth.end(), deeplyNestedGroups.begin(), deeplyNestedGroups.end());
+
+    const auto assertRejected = [&](const char* apFilename, const Bytes& aData) {
+        const auto pluginPath = dataDirectory.Path() / apFilename;
+        {
+            std::ofstream plugin(pluginPath, std::ios::binary);
+            ASSERT_TRUE(plugin.good());
+            plugin.write(reinterpret_cast<const char*>(aData.data()), static_cast<std::streamsize>(aData.size()));
+            ASSERT_TRUE(plugin.good());
+        }
+
+        TiltedPhoques::Map<TiltedPhoques::String, uint32_t> masterFiles;
+        ESLoader::TESFile tesFile(masterFiles);
+        ASSERT_TRUE(tesFile.Setup(uint8_t{0}));
+        ASSERT_TRUE(tesFile.LoadFile(pluginPath));
+        ESLoader::RecordCollection records;
+        EXPECT_FALSE(tesFile.IndexRecords(records));
+        EXPECT_FALSE(records.HasAnyRecords());
+    };
+
+    assertRejected("OversizedRecord.esp", oversizedRecord);
+    assertRejected("TruncatedRecordHeader.esp", truncatedRecordHeader);
+    assertRejected("ExcessiveGroupDepth.esp", excessiveGroupDepth);
+}
+
+TEST(ESLoader, SkipsPluginsWithMalformedTES4Headers)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Truncated.esl\n"
+                  << "WrongType.esp\n"
+                  << "Oversized.esm\n"
+                  << "Directory.esp\n";
+    }
+
+    const auto writeFile = [&](const char* apFilename, const Bytes& aData) {
+        std::ofstream file(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!file.good())
+            return false;
+        file.write(reinterpret_cast<const char*>(aData.data()), static_cast<std::streamsize>(aData.size()));
+        return file.good();
+    };
+
+    const Bytes truncated{0x54, 0x45, 0x53, 0x34};
+    Bytes wrongType;
+    AppendRecord(wrongType, static_cast<FormEnum>(0x12345678U), 0, {});
+    Bytes oversized = MakePluginHeader(0);
+    const uint32_t declaredSize = std::numeric_limits<uint32_t>::max();
+    std::memcpy(oversized.data() + sizeof(uint32_t), &declaredSize, sizeof(declaredSize));
+
+    ASSERT_TRUE(writeFile("Truncated.esl", truncated));
+    ASSERT_TRUE(writeFile("WrongType.esp", wrongType));
+    ASSERT_TRUE(writeFile("Oversized.esm", oversized));
+
+    std::error_code directoryError;
+    ASSERT_TRUE(std::filesystem::create_directory(dataDirectory.Path() / "Directory.esp", directoryError)) << directoryError.message();
+
+    EXPECT_FALSE(ESLoader::TESFile::ReadHeaderFlags(dataDirectory.Path() / "Truncated.esl").has_value());
+    EXPECT_FALSE(ESLoader::TESFile::ReadHeaderFlags(dataDirectory.Path() / "WrongType.esp").has_value());
+    EXPECT_FALSE(ESLoader::TESFile::ReadHeaderFlags(dataDirectory.Path() / "Oversized.esm").has_value());
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto metadataOnly = loader.BuildRecordCollection(false);
+    ASSERT_NE(metadataOnly, nullptr);
+    EXPECT_FALSE(metadataOnly->HasAnyRecords());
+
+    const auto& plugins = loader.GetLoadOrder();
+    EXPECT_TRUE(plugins.empty());
+}
+
+TEST(ESLoader, DoesNotReadPluginSymlinksThatEscapeDataDirectory)
+{
+    TemporaryDirectory temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.IsCreated()) << temporaryDirectory.Error().message();
+
+    const auto dataDirectory = temporaryDirectory.Path() / "Data";
+    std::error_code error;
+    ASSERT_TRUE(std::filesystem::create_directory(dataDirectory, error)) << error.message();
+
+    const auto outsidePluginPath = temporaryDirectory.Path() / "OutsideTarget.esp";
+    Bytes outsidePlugin = MakePluginHeader(Record::FLAGS::kESL);
+    AppendRecord(outsidePlugin, FormEnum::NPC_, 0x00000001, MakeNpcData("OutsideNpc", nullptr));
+    {
+        std::ofstream plugin(outsidePluginPath, std::ios::binary);
+        ASSERT_TRUE(plugin.good());
+        plugin.write(reinterpret_cast<const char*>(outsidePlugin.data()), static_cast<std::streamsize>(outsidePlugin.size()));
+        ASSERT_TRUE(plugin.good());
+    }
+
+    const auto pluginLinkPath = dataDirectory / "Alias.esp";
+    std::filesystem::create_symlink(outsidePluginPath, pluginLinkPath, error);
+    if (error)
+        GTEST_SKIP() << "The current platform or environment does not allow creating symlinks: " << error.message();
+
+    {
+        std::ofstream loadOrder(dataDirectory / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Alias.esp\n";
+    }
+
+    ESLoader::ESLoader loader(dataDirectory);
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+    ASSERT_EQ(loader.GetLoadOrder().size(), 1U);
+    EXPECT_FALSE(loader.GetLoadOrder().front().IsLite());
+    EXPECT_FALSE(records->HasAnyRecords());
+}
+
+TEST(ESLoader, ResolvesReferencesToLightMasters)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "EarlierLight.esl\n"
+                  << "LightMaster.esp\n"
+                  << "NextLight.esl\n"
+                  << "Dependent.esp\n";
+    }
+
+    const Bytes earlierLight = MakePluginHeader(0);
+    {
+        std::ofstream file(dataDirectory.Path() / "EarlierLight.esl", std::ios::binary);
+        ASSERT_TRUE(file.good());
+        file.write(reinterpret_cast<const char*>(earlierLight.data()), static_cast<std::streamsize>(earlierLight.size()));
+    }
+
+    Bytes lightMaster = MakePluginHeader(Record::FLAGS::kESL);
+    constexpr uint32_t lightMasterRaceRawId = 0x00000010;
+    constexpr uint32_t lightMasterNpcRaceRawId = 0x00000010;
+    AppendRecord(lightMaster, FormEnum::RACE, lightMasterRaceRawId, MakeRaceData("LightMasterRace"));
+    AppendRecord(lightMaster, FormEnum::NPC_, 0x00000020, MakeNpcData("LightMasterNpc", &lightMasterNpcRaceRawId));
+    AppendRecord(lightMaster, FormEnum::NPC_, 0x00000FFF, MakeNpcData("MaxLightLocalNpc", &lightMasterNpcRaceRawId));
+    AppendRecord(lightMaster, FormEnum::ACHR, 0x00000030, MakeActorReferenceData(0x00000020));
+    // This malformed light local ID would overflow into NextLight's namespace
+    // if all 24 low bits were added to the light master prefix.
+    AppendRecord(lightMaster, FormEnum::RACE, 0x00001001, MakeRaceData("InvalidAliasedLightRace"));
+    {
+        std::ofstream file(dataDirectory.Path() / "LightMaster.esp", std::ios::binary);
+        ASSERT_TRUE(file.good());
+        file.write(reinterpret_cast<const char*>(lightMaster.data()), static_cast<std::streamsize>(lightMaster.size()));
+    }
+
+    Bytes nextLight = MakePluginHeaderWithMaster("LightMaster.esp");
+    constexpr uint32_t nextLightNpcRaceRawId = 0x00000010;
+    AppendRecord(nextLight, FormEnum::NPC_, 0x01000001, MakeNpcData("NextLightNpc", &nextLightNpcRaceRawId));
+    AppendRecord(nextLight, FormEnum::ACHR, 0x01000031, MakeActorReferenceData(0x00001001));
+    AppendRecord(nextLight, FormEnum::ACHR, 0x01000032, MakeActorReferenceData(0x00000FFF));
+    {
+        std::ofstream file(dataDirectory.Path() / "NextLight.esl", std::ios::binary);
+        ASSERT_TRUE(file.good());
+        file.write(reinterpret_cast<const char*>(nextLight.data()), static_cast<std::streamsize>(nextLight.size()));
+    }
+
+    Bytes dependent = MakePluginHeaderWithMaster("LightMaster.esp");
+    constexpr uint32_t dependentRaceRawId = 0x00000010;
+    AppendRecord(dependent, FormEnum::NPC_, 0x01000021, MakeNpcData("DependentNpc", &dependentRaceRawId));
+    AppendRecord(dependent, FormEnum::ACHR, 0x01000031, MakeActorReferenceData(0x00000020));
+    {
+        std::ofstream file(dataDirectory.Path() / "Dependent.esp", std::ios::binary);
+        ASSERT_TRUE(file.good());
+        file.write(reinterpret_cast<const char*>(dependent.data()), static_cast<std::streamsize>(dependent.size()));
+    }
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+    const auto& plugins = loader.GetLoadOrder();
+    ASSERT_EQ(plugins.size(), 4U);
+    EXPECT_TRUE(plugins[0].IsLite());
+    EXPECT_TRUE(plugins[1].IsLite());
+    EXPECT_EQ(plugins[1].m_liteId, 1U);
+    EXPECT_TRUE(plugins[2].IsLite());
+    EXPECT_EQ(plugins[2].m_liteId, 2U);
+    EXPECT_FALSE(plugins[3].IsLite());
+    const auto* const pLightMasterRace = records->FindRaceById(0xFE001010);
+    ASSERT_NE(pLightMasterRace, nullptr);
+    EXPECT_EQ(pLightMasterRace->m_editorId, "LightMasterRace");
+
+    const auto* const pLightMasterNpc = records->FindNpcById(0xFE001020);
+    ASSERT_NE(pLightMasterNpc, nullptr);
+    EXPECT_EQ(pLightMasterNpc->m_raceId, 0xFE001010);
+
+    const auto* const pMaxLightLocalNpc = records->FindNpcById(0xFE001FFF);
+    ASSERT_NE(pMaxLightLocalNpc, nullptr);
+    EXPECT_EQ(pMaxLightLocalNpc->m_editorId, "MaxLightLocalNpc");
+
+    const auto* const pLightMasterActorReference = records->FindActorReferenceById(0xFE001030);
+    ASSERT_NE(pLightMasterActorReference, nullptr);
+    EXPECT_EQ(pLightMasterActorReference->m_baseObject.m_baseId, 0xFE001020);
+
+    const auto* const pDependentNpc = records->FindNpcById(0x00000021);
+    ASSERT_NE(pDependentNpc, nullptr);
+    EXPECT_EQ(pDependentNpc->m_raceId, 0xFE001010);
+
+    const auto* const pDependentActorReference = records->FindActorReferenceById(0x00000031);
+    ASSERT_NE(pDependentActorReference, nullptr);
+    EXPECT_EQ(pDependentActorReference->m_baseObject.m_baseId, 0xFE001020);
+
+    const auto* const pNextLightNpc = records->FindNpcById(0xFE002001);
+    ASSERT_NE(pNextLightNpc, nullptr);
+    EXPECT_EQ(pNextLightNpc->m_editorId, "NextLightNpc");
+    EXPECT_EQ(records->FindRaceById(0xFE002001), nullptr);
+
+    const auto* const pNextLightActorReference = records->FindActorReferenceById(0xFE002031);
+    ASSERT_NE(pNextLightActorReference, nullptr);
+    EXPECT_EQ(pNextLightActorReference->m_baseObject.m_baseId, 0u);
+    ActorPopulationPolicy policy(records.get());
+    EXPECT_EQ(policy.ClassifyNpcBase(pNextLightActorReference->m_baseObject.m_baseId).Class, ActorPopulationClass::kUnknown);
+
+    const auto* const pMaxLightLocalActorReference = records->FindActorReferenceById(0xFE002032);
+    ASSERT_NE(pMaxLightLocalActorReference, nullptr);
+    EXPECT_EQ(pMaxLightLocalActorReference->m_baseObject.m_baseId, 0xFE001FFF);
+    EXPECT_TRUE(records->HasAnyRecords());
+}
+
+TEST(ESLoader, RejectsMasterListsWithoutDistinctSelfParentSlot)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    TiltedPhoques::Map<String, uint32_t> masterPrefixes;
+    std::vector<String> masterNames;
+    masterNames.reserve(256);
+    for (uint16_t i = 0; i < 256; ++i)
+    {
+        const std::string masterNameValue = "Master" + std::to_string(i) + ".esm";
+        String masterName(masterNameValue.c_str());
+        masterPrefixes.emplace(masterName, static_cast<uint32_t>(i) << 24);
+        masterNames.push_back(std::move(masterName));
+    }
+
+    const auto makePluginWithMasters = [&masterNames](const size_t aMasterCount, const uint32_t aRaceFormId) {
+        Bytes headerData;
+        for (size_t i = 0; i < aMasterCount; ++i)
+        {
+            const String& masterName = masterNames[i];
+            Bytes masterNameData(masterName.begin(), masterName.end());
+            masterNameData.push_back(0);
+            AppendChunk(headerData, ChunkId::MAST_ID, masterNameData);
+            AppendChunk(headerData, ChunkId::DATA_ID, Bytes(sizeof(uint64_t), 0));
+        }
+
+        Bytes pluginData;
+        AppendRecord(pluginData, FormEnum::TES4, 0, headerData);
+        AppendRecord(pluginData, FormEnum::RACE, aRaceFormId, MakeRaceData("ParentSlotBoundaryRace"));
+        return pluginData;
+    };
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    ASSERT_TRUE(writePlugin("MaxMasters.esp", makePluginWithMasters(255, 0xFF000001)));
+    ASSERT_TRUE(writePlugin("TooManyMasters.esp", makePluginWithMasters(256, 0x00000001)));
+
+    ESLoader::TESFile maxMastersFile(masterPrefixes);
+    ASSERT_TRUE(maxMastersFile.Setup(uint8_t{1}));
+    ASSERT_TRUE(maxMastersFile.LoadFile(dataDirectory.Path() / "MaxMasters.esp"));
+    ESLoader::RecordCollection maxMastersRecords;
+    EXPECT_TRUE(maxMastersFile.IndexRecords(maxMastersRecords));
+    const auto* const pBoundaryRace = maxMastersRecords.FindRaceById(0x01000001);
+    ASSERT_NE(pBoundaryRace, nullptr);
+    EXPECT_EQ(pBoundaryRace->m_editorId, "ParentSlotBoundaryRace");
+
+    ESLoader::TESFile tooManyMastersFile(masterPrefixes);
+    ASSERT_TRUE(tooManyMastersFile.Setup(uint8_t{1}));
+    ASSERT_TRUE(tooManyMastersFile.LoadFile(dataDirectory.Path() / "TooManyMasters.esp"));
+    ESLoader::RecordCollection tooManyMastersRecords;
+    EXPECT_FALSE(tooManyMastersFile.IndexRecords(tooManyMastersRecords));
+    EXPECT_FALSE(tooManyMastersRecords.HasAnyRecords());
+}
+
+TEST(ESLoader, RejectsSelfAndForwardMasterReferences)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "SelfRef.esp\n"
+                  << "ForwardRef.esp\n"
+                  << "LaterMaster.esm\n";
+    }
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    Bytes selfReference = MakePluginHeaderWithMasters({"SelfRef.esp"});
+    AppendRecord(selfReference, FormEnum::ACHR, 0x01000001, MakeActorReferenceData(0x00002000));
+
+    Bytes forwardReference = MakePluginHeaderWithMasters({"LaterMaster.esm"});
+    AppendRecord(forwardReference, FormEnum::ACHR, 0x01000002, MakeActorReferenceData(0x00002000));
+
+    Bytes laterMaster = MakePluginHeaderWithMasters({});
+    AppendRecord(laterMaster, FormEnum::NPC_, 0x00002000, MakeNpcData("LaterMasterNpc", nullptr));
+
+    ASSERT_TRUE(writePlugin("SelfRef.esp", selfReference));
+    ASSERT_TRUE(writePlugin("ForwardRef.esp", forwardReference));
+    ASSERT_TRUE(writePlugin("LaterMaster.esm", laterMaster));
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+
+    // Both malformed plugins contain otherwise parseable actor references.
+    // Their records must remain absent when MAST names self or a later plugin.
+    EXPECT_EQ(records->FindActorReferenceById(0x00000001), nullptr);
+    EXPECT_EQ(records->FindActorReferenceById(0x01000002), nullptr);
+
+    const auto* const pLaterMasterNpc = records->FindNpcById(0x02002000);
+    ASSERT_NE(pLaterMasterNpc, nullptr);
+    EXPECT_EQ(pLaterMasterNpc->m_editorId, "LaterMasterNpc");
+}
+
+TEST(ESLoader, ResolvesActorPopulationRecordsAcrossMultipleMastersAndOverrides)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "PriorPlugin.esm\n"
+                  << "MasterA.esm\n"
+                  << "MasterB.esp\n"
+                  << "Dependent.esp\n"
+                  << "Override.esp\n";
+    }
+
+    const auto writePlugin = [&](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    constexpr uint32_t masterARaceId = 0x00001000;
+    constexpr uint32_t masterARawNpcRaceId = 0x00001000;
+    constexpr uint32_t masterBRawRaceId = 0x00001000;
+    Bytes priorPlugin = MakePluginHeaderWithMasters({});
+    AppendRecord(priorPlugin, FormEnum::RACE, 0x00001000, MakeRaceData("NordRace"));
+    AppendRecord(priorPlugin, FormEnum::NPC_, 0x00002000, MakeNpcData("PriorNordNpc", &masterARaceId));
+    AppendRecord(priorPlugin, FormEnum::NPC_, 0, MakeNpcData("NullFormNordNpc", &masterARaceId));
+    AppendRecord(priorPlugin, FormEnum::ACHR, 0x00009004, MakeActorReferenceData(0x00002000));
+    Bytes masterA = MakePluginHeaderWithMasters({});
+    AppendRecord(masterA, FormEnum::RACE, masterARaceId, MakeRaceData("MasterARace"));
+    AppendRecord(masterA, FormEnum::NPC_, 0x00002000, MakeNpcData("MasterANpc", &masterARawNpcRaceId));
+    AppendRecord(masterA, FormEnum::ACHR, 0x00003000, MakeActorReferenceData(0x00002000));
+
+    Bytes masterB = MakePluginHeaderWithMasters({});
+    AppendRecord(masterB, FormEnum::RACE, masterBRawRaceId, MakeRaceData("MasterBRace"));
+    AppendRecord(masterB, FormEnum::NPC_, 0x00002000, MakeNpcData("MasterBNpc", &masterBRawRaceId));
+    AppendRecord(masterB, FormEnum::ACHR, 0x00003000, MakeActorReferenceData(0x00002000));
+
+    Bytes dependent = MakePluginHeaderWithMasters({"MasterA.esm", "MasterB.esp"});
+    constexpr uint32_t dependentRaceRawId = 0x01001000;
+    AppendRecord(dependent, FormEnum::NPC_, 0x02008000, MakeNpcData("DependentNpc", &dependentRaceRawId));
+    constexpr uint32_t dependentMasterARaceRawId = 0x00001000;
+    AppendRecord(dependent, FormEnum::NPC_, 0x02008001, MakeNpcData("DependentMasterANpc", &dependentMasterARaceRawId));
+    AppendRecord(dependent, FormEnum::ACHR, 0x02009000, MakeActorReferenceData(0x01002000));
+    AppendRecord(dependent, FormEnum::ACHR, 0x02009001, MakeActorReferenceData(0x00002000));
+
+    Bytes overridePlugin = MakePluginHeaderWithMasters({"MasterA.esm", "MasterB.esp", "Dependent.esp"});
+    AppendRecord(overridePlugin, FormEnum::NPC_, 0x00002000, MakeNpcData("OverriddenMasterANpc", &dependentRaceRawId));
+    AppendRecord(overridePlugin, FormEnum::RACE, 0x01001000, MakeRaceData("OverriddenMasterBRace"));
+    AppendRecord(overridePlugin, FormEnum::ACHR, 0x00003000, MakeActorReferenceData(0x01002000));
+    AppendRecord(overridePlugin, FormEnum::ACHR, 0x03009002, MakeActorReferenceData(0x02008000));
+    constexpr uint32_t unresolvedRaceRawId = 0x7F001000;
+    constexpr uint32_t unresolvedNpcRawId = 0x7F002000;
+    AppendRecord(overridePlugin, FormEnum::NPC_, 0x03008003, MakeNpcData("UnresolvedRaceNpc", &unresolvedRaceRawId));
+    AppendRecord(overridePlugin, FormEnum::ACHR, 0x03009003, MakeActorReferenceData(unresolvedNpcRawId));
+    AppendRecord(overridePlugin, FormEnum::NPC_, unresolvedNpcRawId, MakeNpcData("UnresolvedPrefixNpc", &masterARaceId));
+    AppendRecord(overridePlugin, FormEnum::ACHR, 0x7F009004, MakeActorReferenceData(0x7F003003));
+    AppendRecord(overridePlugin, FormEnum::RACE, unresolvedRaceRawId, MakeRaceData("UnresolvedPrefixRace"));
+
+    ASSERT_TRUE(writePlugin("PriorPlugin.esm", priorPlugin));
+    ASSERT_TRUE(writePlugin("MasterA.esm", masterA));
+    ASSERT_TRUE(writePlugin("MasterB.esp", masterB));
+    ASSERT_TRUE(writePlugin("Dependent.esp", dependent));
+    ASSERT_TRUE(writePlugin("Override.esp", overridePlugin));
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+
+    const auto* const pMasterARace = records->FindRaceById(0x01001000);
+    ASSERT_NE(pMasterARace, nullptr);
+    EXPECT_EQ(pMasterARace->m_editorId, "MasterARace");
+
+    const auto* const pMasterBRace = records->FindRaceById(0x02001000);
+    ASSERT_NE(pMasterBRace, nullptr);
+    EXPECT_EQ(pMasterBRace->m_editorId, "OverriddenMasterBRace");
+
+    const auto* const pOverriddenNpc = records->FindNpcById(0x01002000);
+    ASSERT_NE(pOverriddenNpc, nullptr);
+    EXPECT_EQ(pOverriddenNpc->m_editorId, "OverriddenMasterANpc");
+    EXPECT_EQ(pOverriddenNpc->m_raceId, 0x02001000);
+
+    const auto* const pMasterBNpc = records->FindNpcById(0x02002000);
+    ASSERT_NE(pMasterBNpc, nullptr);
+    EXPECT_EQ(pMasterBNpc->m_raceId, 0x02001000);
+
+    const auto* const pDependentNpc = records->FindNpcById(0x03008000);
+    ASSERT_NE(pDependentNpc, nullptr);
+    EXPECT_EQ(pDependentNpc->m_raceId, 0x02001000);
+
+    const auto* const pDependentMasterANpc = records->FindNpcById(0x03008001);
+    ASSERT_NE(pDependentMasterANpc, nullptr);
+    EXPECT_EQ(pDependentMasterANpc->m_raceId, 0x01001000);
+
+    const auto* const pOverriddenActorReference = records->FindActorReferenceById(0x01003000);
+    ASSERT_NE(pOverriddenActorReference, nullptr);
+    EXPECT_EQ(pOverriddenActorReference->m_baseObject.m_baseId, 0x02002000);
+
+    const auto* const pMasterBActorReference = records->FindActorReferenceById(0x02003000);
+    ASSERT_NE(pMasterBActorReference, nullptr);
+    EXPECT_EQ(pMasterBActorReference->m_baseObject.m_baseId, 0x02002000);
+
+    const auto* const pDependentActorReference = records->FindActorReferenceById(0x03009000);
+    ASSERT_NE(pDependentActorReference, nullptr);
+    EXPECT_EQ(pDependentActorReference->m_baseObject.m_baseId, 0x02002000);
+
+    const auto* const pDependentMasterAActorReference = records->FindActorReferenceById(0x03009001);
+    ASSERT_NE(pDependentMasterAActorReference, nullptr);
+    EXPECT_EQ(pDependentMasterAActorReference->m_baseObject.m_baseId, 0x01002000);
+
+    const auto* const pOverrideActorReferenceToDependentMaster = records->FindActorReferenceById(0x04009002);
+    ASSERT_NE(pOverrideActorReferenceToDependentMaster, nullptr);
+    EXPECT_EQ(pOverrideActorReferenceToDependentMaster->m_baseObject.m_baseId, 0x03008000);
+
+    const auto* const pPriorNordRace = records->FindRaceById(0x00001000);
+    ASSERT_NE(pPriorNordRace, nullptr);
+    EXPECT_EQ(pPriorNordRace->m_editorId, "NordRace");
+
+    const auto* const pPriorNordNpc = records->FindNpcById(0x00002000);
+    ASSERT_NE(pPriorNordNpc, nullptr);
+    EXPECT_EQ(pPriorNordNpc->m_editorId, "PriorNordNpc");
+
+    const auto* const pPriorActorReference = records->FindActorReferenceById(0x00009004);
+    ASSERT_NE(pPriorActorReference, nullptr);
+    EXPECT_EQ(pPriorActorReference->m_baseObject.m_baseId, 0x00002000u);
+
+    const auto* const pUnresolvedRaceNpc = records->FindNpcById(0x04008003);
+    ASSERT_NE(pUnresolvedRaceNpc, nullptr);
+    EXPECT_EQ(pUnresolvedRaceNpc->m_raceId, 0u);
+    ActorPopulationPolicy policy(records.get());
+    EXPECT_EQ(policy.ClassifyNpcBase(0x04008003).Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(policy.ClassifyNpcBase(0).Class, ActorPopulationClass::kUnknown);
+
+    // Records whose own parent prefix is absent are not assigned a guessed
+    // namespace (especially the standard slot-zero namespace).
+    EXPECT_EQ(records->FindNpcById(unresolvedNpcRawId), nullptr);
+    EXPECT_EQ(records->FindRaceById(unresolvedRaceRawId), nullptr);
+    EXPECT_EQ(records->FindActorReferenceById(0x7F009004), nullptr);
+    EXPECT_EQ(policy.ClassifyNpcBase(unresolvedNpcRawId).Class, ActorPopulationClass::kUnknown);
+
+    const auto* const pUnresolvedBaseActorReference = records->FindActorReferenceById(0x04009003);
+    ASSERT_NE(pUnresolvedBaseActorReference, nullptr);
+    EXPECT_EQ(pUnresolvedBaseActorReference->m_baseObject.m_baseId, 0u);
+
+    ModsComponent mods;
+    ESLoader::PluginData overridePluginData{};
+    overridePluginData.m_filename = "Override.esp";
+    overridePluginData.m_standardId = 4;
+    mods.AddServerMod(overridePluginData);
+    const uint32_t networkModId = mods.AddStandard("Override.esp");
+    ActorPopulationIdentityResolver resolver(mods, records.get(), policy);
+    const auto unresolvedActor = resolver.Resolve(GameId(networkModId, 0x009003));
+    EXPECT_EQ(unresolvedActor.Source, ActorPopulationIdentitySource::kServerPlacedReference);
+    EXPECT_EQ(unresolvedActor.Classification.Class, ActorPopulationClass::kUnknown);
+}
+
+TEST(ESLoader, LaterPluginsOverrideMasterPopulationRecordsInLoadOrder)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Prior.esm\n"
+                  << "PopulationMaster.esm\n"
+                  << "FirstOverride.esp\n"
+                  << "LastOverride.esp\n";
+    }
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    constexpr uint32_t masterNpcRawId = 0x00001000;
+    constexpr uint32_t masterRaceRawId = 0x00003000;
+    constexpr uint32_t masterActorReferenceRawId = 0x00002000;
+
+    Bytes master = MakePluginHeaderWithMasters({});
+    AppendRecord(master, FormEnum::RACE, masterRaceRawId, MakeRaceData("MasterRace"));
+    AppendRecord(master, FormEnum::NPC_, masterNpcRawId, MakeNpcData("MasterNpc", &masterRaceRawId));
+    AppendRecord(master, FormEnum::NPC_, 0x00001001, MakeNpcData("SecondMasterNpc", &masterRaceRawId));
+    AppendRecord(master, FormEnum::ACHR, masterActorReferenceRawId, MakeActorReferenceData(masterNpcRawId));
+
+    Bytes firstOverride = MakePluginHeaderWithMasters({"PopulationMaster.esm"});
+    AppendRecord(firstOverride, FormEnum::RACE, masterRaceRawId, MakeRaceData("FirstOverrideRace"));
+    AppendRecord(firstOverride, FormEnum::NPC_, masterNpcRawId, MakeNpcData("FirstOverrideNpc", &masterRaceRawId));
+    AppendRecord(firstOverride, FormEnum::ACHR, masterActorReferenceRawId, MakeActorReferenceData(0x00001001));
+
+    Bytes lastOverride = MakePluginHeaderWithMasters({"PopulationMaster.esm"});
+    AppendRecord(lastOverride, FormEnum::RACE, masterRaceRawId, MakeRaceData("LastOverrideRace"));
+    AppendRecord(lastOverride, FormEnum::NPC_, masterNpcRawId, MakeNpcData("LastOverrideNpc", &masterRaceRawId));
+    AppendRecord(lastOverride, FormEnum::ACHR, masterActorReferenceRawId, MakeActorReferenceData(masterNpcRawId));
+
+    ASSERT_TRUE(writePlugin("Prior.esm", MakePluginHeaderWithMasters({})));
+    ASSERT_TRUE(writePlugin("PopulationMaster.esm", master));
+    ASSERT_TRUE(writePlugin("FirstOverride.esp", firstOverride));
+    ASSERT_TRUE(writePlugin("LastOverride.esp", lastOverride));
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+
+    const auto* const pRace = records->FindRaceById(0x01003000);
+    ASSERT_NE(pRace, nullptr);
+    EXPECT_EQ(pRace->m_editorId, "LastOverrideRace");
+
+    const auto* const pNpc = records->FindNpcById(0x01001000);
+    ASSERT_NE(pNpc, nullptr);
+    EXPECT_EQ(pNpc->m_editorId, "LastOverrideNpc");
+    EXPECT_EQ(pNpc->m_raceId, 0x01003000);
+
+    const auto* const pActorReference = records->FindActorReferenceById(0x01002000);
+    ASSERT_NE(pActorReference, nullptr);
+    EXPECT_EQ(pActorReference->m_baseObject.m_baseId, 0x01001000);
+}
+
+TEST(ESLoader, MissingLoadOrderClearsPreviouslyLoadedMetadata)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Skyrim.esm\nTest.esp\n";
+    }
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    ASSERT_NE(loader.BuildRecordCollection(false), nullptr);
+    ASSERT_EQ(loader.GetLoadOrder().size(), 2U);
+
+    std::error_code error;
+    ASSERT_TRUE(std::filesystem::remove(dataDirectory.Path() / "loadorder.txt", error));
+    ASSERT_FALSE(error);
+    ScopedDefaultLoggerCapture capturedLogs;
+    EXPECT_EQ(loader.BuildRecordCollection(false), nullptr);
+    EXPECT_TRUE(loader.GetLoadOrder().empty());
+    EXPECT_NE(capturedLogs.Text().find("loadorder.txt is missing"), std::string::npos);
 }
 
 void AddServerPlugin(ModsComponent& aMods, const char* apFilename, const uint16_t aLoadOrderId, const bool aIsLite)
@@ -304,16 +1390,133 @@ void AddServerPlugin(ModsComponent& aMods, const char* apFilename, const uint16_
     aMods.AddServerMod(plugin);
 }
 
+TEST(ESLoader, MissingMasterDoesNotAliasSlotZeroOrClassifyActor)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Skyrim.esm\n"
+                  << "MissingMasterDependent.esp\n";
+    }
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    constexpr uint32_t vanillaRaceRawId = 0x00001000;
+    Bytes vanilla = MakePluginHeaderWithMasters({});
+    AppendRecord(vanilla, FormEnum::RACE, vanillaRaceRawId, MakeRaceData("NordRace"));
+    AppendRecord(vanilla, FormEnum::NPC_, 0x00002000, MakeNpcData("VanillaNord", &vanillaRaceRawId));
+
+    Bytes dependent = MakePluginHeaderWithMaster("Absent.esm");
+    AppendRecord(dependent, FormEnum::NPC_, 0x01002000, MakeNpcData("OverrideNpc", &vanillaRaceRawId));
+    AppendRecord(dependent, FormEnum::ACHR, 0x01003000, MakeActorReferenceData(0x00002000));
+
+    ASSERT_TRUE(writePlugin("Skyrim.esm", vanilla));
+    ASSERT_TRUE(writePlugin("MissingMasterDependent.esp", dependent));
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+
+    // An unresolved MAST entry prevents indexing the dependent plugin. Its
+    // master-slot IDs must not alias vanilla records loaded at slot zero.
+    EXPECT_EQ(records->FindNpcById(0x01002000), nullptr);
+    EXPECT_EQ(records->FindActorReferenceById(0x01003000), nullptr);
+
+    ActorPopulationPolicy policy(records.get());
+    EXPECT_EQ(policy.ClassifyNpcBase(0x00002000).Class, ActorPopulationClass::kHumanoidNpc);
+    EXPECT_EQ(policy.ClassifyNpcBase(0x01002000).Class, ActorPopulationClass::kUnknown);
+
+    ModsComponent mods;
+    AddServerPlugin(mods, "MissingMasterDependent.esp", 1, false);
+    const auto networkModId = mods.AddStandard("MissingMasterDependent.esp");
+    ActorPopulationIdentityResolver resolver(mods, records.get(), policy);
+    const auto actor = resolver.Resolve(GameId(networkModId, 0x00003000));
+    EXPECT_EQ(actor.Source, ActorPopulationIdentitySource::kUnknown);
+    EXPECT_EQ(actor.Classification.Class, ActorPopulationClass::kUnknown);
+}
+
+TEST(ESLoader, DuplicateMastersDoNotResolveRecordsOrOverrideTheirMaster)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt");
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Master.esm\n"
+                  << "DuplicateMasterDependent.esp\n";
+    }
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acPluginData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acPluginData.data()), static_cast<std::streamsize>(acPluginData.size()));
+        return plugin.good();
+    };
+
+    constexpr uint32_t masterRaceRawId = 0x00001000;
+    Bytes master = MakePluginHeaderWithMasters({});
+    AppendRecord(master, FormEnum::RACE, masterRaceRawId, MakeRaceData("MasterRace"));
+    AppendRecord(master, FormEnum::NPC_, 0x00002000, MakeNpcData("MasterNpc", &masterRaceRawId));
+
+    // Master names are case-insensitive. The duplicate header must not be
+    // allowed to add records or override the real master namespace.
+    Bytes duplicateMaster = MakePluginHeaderWithMasters({"Master.esm", "master.ESM"});
+    AppendRecord(duplicateMaster, FormEnum::NPC_, 0x02002000, MakeNpcData("DuplicateOverrideNpc", &masterRaceRawId));
+    AppendRecord(duplicateMaster, FormEnum::ACHR, 0x02003000, MakeActorReferenceData(0x00002000));
+
+    ASSERT_TRUE(writePlugin("Master.esm", master));
+    ASSERT_TRUE(writePlugin("DuplicateMasterDependent.esp", duplicateMaster));
+
+    ESLoader::ESLoader loader(dataDirectory.Path());
+    const auto records = loader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+
+    const auto* const pMasterNpc = records->FindNpcById(0x00002000);
+    ASSERT_NE(pMasterNpc, nullptr);
+    EXPECT_EQ(pMasterNpc->m_editorId, "MasterNpc");
+    EXPECT_EQ(records->FindNpcById(0x01002000), nullptr);
+    EXPECT_EQ(records->FindActorReferenceById(0x01003000), nullptr);
+
+    ActorPopulationPolicy policy(records.get());
+    EXPECT_EQ(policy.ClassifyNpcBase(0x01002000).Class, ActorPopulationClass::kUnknown);
+}
+
 TEST(ActorPopulationIdentityResolver, ResolvesStandardAndLightServerFormIds)
 {
     ModsComponent mods;
     AddServerPlugin(mods, "Test.esp", 2, false);
     AddServerPlugin(mods, "Light.esp", 7, true);
+    AddServerPlugin(mods, "LastStandard.esp", ESLoader::kMaxStandardPluginId, false);
+    AddServerPlugin(mods, "LastLight.esl", ESLoader::kMaxLitePluginId, true);
 
-    const auto standardNetworkId = mods.AddStandard("Test.esp");
+    const auto standardNetworkId = mods.AddStandard("tEsT.ESP\r");
+    EXPECT_EQ(mods.AddStandard("TEST.esp"), standardNetworkId);
+    const auto standardPluginEntry = mods.GetStandardMods().find("tEsT.ESP\r");
+    ASSERT_NE(standardPluginEntry, mods.GetStandardMods().end());
+    EXPECT_EQ(standardPluginEntry->second.refCount, 2u);
+
     const auto lightNetworkId = mods.AddLite("Light.esp");
+    EXPECT_EQ(mods.AddLite("LIGHT.ESP\r"), lightNetworkId);
+    const auto lightPluginEntry = mods.GetLiteMods().find("Light.esp");
+    ASSERT_NE(lightPluginEntry, mods.GetLiteMods().end());
+    EXPECT_EQ(lightPluginEntry->second.refCount, 2u);
+
+    const auto lastStandardNetworkId = mods.AddStandard("LastStandard.esp");
+    const auto lastLightNetworkId = mods.AddLite("LastLight.esl");
     const auto mismatchedNetworkId = mods.AddStandard("Light.esp");
     const auto unknownNetworkId = mods.AddStandard("Unknown.esp");
+    const auto pathNetworkId = mods.AddStandard("mods/Test.esp");
 
     uint32_t resolvedFormId = 0;
     EXPECT_TRUE(mods.ResolveServerFormId(GameId(standardNetworkId, 0xAB123456), resolvedFormId));
@@ -322,8 +1525,32 @@ TEST(ActorPopulationIdentityResolver, ResolvesStandardAndLightServerFormIds)
     EXPECT_TRUE(mods.ResolveServerFormId(GameId(lightNetworkId, 0x12345ABC), resolvedFormId));
     EXPECT_EQ(resolvedFormId, 0xFE007ABCu);
 
+    EXPECT_TRUE(mods.ResolveServerFormId(GameId(lastStandardNetworkId, 0xFFFFFFFF), resolvedFormId));
+    EXPECT_EQ(resolvedFormId, 0xFDFFFFFFu);
+
+    EXPECT_TRUE(mods.ResolveServerFormId(GameId(lastLightNetworkId, 0xFFFFFFFF), resolvedFormId));
+    EXPECT_EQ(resolvedFormId, 0xFEFFFFFFu);
+
     EXPECT_FALSE(mods.ResolveServerFormId(GameId(mismatchedNetworkId, 0x00000ABC), resolvedFormId));
     EXPECT_FALSE(mods.ResolveServerFormId(GameId(unknownNetworkId, 0x00000ABC), resolvedFormId));
+    EXPECT_FALSE(mods.ResolveServerFormId(GameId(pathNetworkId, 0x00000ABC), resolvedFormId));
+    EXPECT_TRUE(mods.IsInstalled("tEsT.ESP\r"));
+    EXPECT_FALSE(mods.IsInstalled("folder/Test.esp"));
+    EXPECT_FALSE(mods.IsInstalled("../Test.esp"));
+}
+
+TEST(ModsComponent, RejectsOutOfRangeServerPluginLoadOrderIds)
+{
+    ModsComponent mods;
+    AddServerPlugin(mods, "InvalidStandard.esp", 0xFE, false);
+    AddServerPlugin(mods, "InvalidLight.esl", ESLoader::kMaxLitePluginId + 1, true);
+
+    const auto standardNetworkId = mods.AddStandard("InvalidStandard.esp");
+    const auto liteNetworkId = mods.AddLite("InvalidLight.esl");
+    uint32_t resolvedFormId = 0;
+
+    EXPECT_FALSE(mods.ResolveServerFormId(GameId(standardNetworkId, 0x00001234), resolvedFormId));
+    EXPECT_FALSE(mods.ResolveServerFormId(GameId(liteNetworkId, 0x00000123), resolvedFormId));
 }
 
 TEST(ActorPopulationAssignmentPolicy, AppliesGateTrustAndUnknownRules)
@@ -367,6 +1594,130 @@ TEST(ActorPopulationAssignmentPolicy, AppliesGateTrustAndUnknownRules)
     EXPECT_EQ(strict.Decide(unknown), ActorPopulationAssignmentDecision::kRejectUnknown);
     EXPECT_EQ(strict.Decide(clientCreatureClaim), ActorPopulationAssignmentDecision::kRejectUnknown);
     EXPECT_EQ(strict.Decide(conflictingClaim), ActorPopulationAssignmentDecision::kRejectHumanoid);
+}
+
+TEST(ActorPopulationAssignmentPolicy, UsesHardenedLoaderMetadataAndKeepsRecordLoadingOptIn)
+{
+    TemporaryDirectory dataDirectory;
+    ASSERT_TRUE(dataDirectory.IsCreated()) << dataDirectory.Error().message();
+
+    {
+        std::ofstream loadOrder(dataDirectory.Path() / "loadorder.txt", std::ios::binary);
+        ASSERT_TRUE(loadOrder.good());
+        loadOrder << "Skyrim.esm\r\n" << "Population.esp\r\n";
+    }
+
+    constexpr uint32_t nordRaceRawId = 0x00001000;
+    constexpr uint32_t wolfRaceRawId = 0x00001001;
+    constexpr uint32_t unknownRaceRawId = 0x00001002;
+    constexpr uint32_t nordNpcRawId = 0x00002000;
+    constexpr uint32_t wolfNpcRawId = 0x00002001;
+    constexpr uint32_t unknownNpcRawId = 0x00002002;
+
+    Bytes master = MakePluginHeaderWithMasters({});
+    AppendRecord(master, FormEnum::RACE, nordRaceRawId, MakeRaceData("NordRace"));
+    AppendRecord(master, FormEnum::RACE, wolfRaceRawId, MakeRaceData("WolfRace"));
+    AppendRecord(master, FormEnum::RACE, unknownRaceRawId, MakeRaceData("UnlistedRace"));
+    AppendRecord(master, FormEnum::NPC_, nordNpcRawId, MakeNpcData("NordNpc", &nordRaceRawId));
+    AppendRecord(master, FormEnum::NPC_, wolfNpcRawId, MakeNpcData("WolfNpc", &wolfRaceRawId));
+    AppendRecord(master, FormEnum::NPC_, unknownNpcRawId, MakeNpcData("UnlistedNpc", &unknownRaceRawId));
+
+    // The .esp extension is promoted into the light namespace by the TES4 ESL
+    // flag. Its placed references use the master prefix for NAME and self slot
+    // 1 for their own form IDs.
+    Bytes lightPopulationPlugin = MakePluginHeaderWithMasterAndFlags("Skyrim.esm", Record::FLAGS::kESL);
+    AppendRecord(lightPopulationPlugin, FormEnum::ACHR, 0x01000300, MakeActorReferenceData(nordNpcRawId));
+    AppendRecord(lightPopulationPlugin, FormEnum::ACHR, 0x01000301, MakeActorReferenceData(wolfNpcRawId));
+    AppendRecord(lightPopulationPlugin, FormEnum::ACHR, 0x01000302, MakeActorReferenceData(unknownNpcRawId));
+
+    const auto writePlugin = [&dataDirectory](const char* apFilename, const Bytes& acData) {
+        std::ofstream plugin(dataDirectory.Path() / apFilename, std::ios::binary);
+        if (!plugin.good())
+            return false;
+        plugin.write(reinterpret_cast<const char*>(acData.data()), static_cast<std::streamsize>(acData.size()));
+        return plugin.good();
+    };
+    ASSERT_TRUE(writePlugin("Skyrim.esm", master));
+    ASSERT_TRUE(writePlugin("Population.esp", lightPopulationPlugin));
+
+    const auto addServerMetadata = [](ModsComponent& aMods, const ESLoader::PluginCollection& acLoadOrder) {
+        for (const auto& plugin : acLoadOrder)
+            aMods.AddServerMod(plugin);
+    };
+
+    // The no-argument loader call is the default production mode: it keeps
+    // hardened load-order metadata while leaving record parsing opt-in.
+    ESLoader::ESLoader metadataOnlyLoader(dataDirectory.Path());
+    const auto metadataOnlyRecords = metadataOnlyLoader.BuildRecordCollection();
+    ASSERT_NE(metadataOnlyRecords, nullptr);
+    EXPECT_FALSE(metadataOnlyRecords->HasAnyRecords());
+    ASSERT_EQ(metadataOnlyLoader.GetLoadOrder().size(), 2U);
+    EXPECT_FALSE(metadataOnlyLoader.GetLoadOrder()[0].IsLite());
+    EXPECT_TRUE(metadataOnlyLoader.GetLoadOrder()[1].IsLite());
+    EXPECT_EQ(metadataOnlyLoader.GetLoadOrder()[1].m_liteId, 0U);
+
+    ModsComponent metadataOnlyMods;
+    addServerMetadata(metadataOnlyMods, metadataOnlyLoader.GetLoadOrder());
+    const uint32_t metadataOnlyPopulationModId = metadataOnlyMods.AddLite("Population.esp");
+    uint32_t resolvedReference = 0;
+    ASSERT_TRUE(metadataOnlyMods.ResolveServerFormId(GameId(metadataOnlyPopulationModId, 0xABCD0300), resolvedReference));
+    EXPECT_EQ(resolvedReference, 0xFE000300u);
+    const uint32_t mismatchedNamespaceModId = metadataOnlyMods.AddStandard("Population.esp");
+    EXPECT_FALSE(metadataOnlyMods.ResolveServerFormId(GameId(mismatchedNamespaceModId, 0x00000300), resolvedReference));
+
+    ActorPopulationPolicy metadataOnlyPolicy(metadataOnlyRecords.get());
+    ActorPopulationIdentityResolver metadataOnlyResolver(metadataOnlyMods, metadataOnlyRecords.get(), metadataOnlyPolicy);
+    const auto metadataOnlyIdentity = metadataOnlyResolver.Resolve(GameId(metadataOnlyPopulationModId, 0xABCD0300));
+    EXPECT_EQ(metadataOnlyIdentity.Source, ActorPopulationIdentitySource::kUnknown);
+    EXPECT_EQ(metadataOnlyIdentity.Classification.Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(ActorPopulationAssignmentPolicy().Decide(metadataOnlyIdentity), ActorPopulationAssignmentDecision::kAllow);
+    EXPECT_EQ(
+        ActorPopulationAssignmentPolicy(true, true).Decide(metadataOnlyIdentity), ActorPopulationAssignmentDecision::kAllow);
+    EXPECT_EQ(
+        ActorPopulationAssignmentPolicy(true, false).Decide(metadataOnlyIdentity), ActorPopulationAssignmentDecision::kRejectUnknown);
+
+    // Full parsing resolves the same light-plugin reference through ACHR,
+    // NPC, RNAM and RACE using the loader's server-owned prefixes.
+    ESLoader::ESLoader fullLoader(dataDirectory.Path());
+    const auto records = fullLoader.BuildRecordCollection(true);
+    ASSERT_NE(records, nullptr);
+    ASSERT_EQ(fullLoader.GetLoadOrder().size(), 2U);
+    EXPECT_TRUE(fullLoader.GetLoadOrder()[1].IsLite());
+
+    ModsComponent mods;
+    addServerMetadata(mods, fullLoader.GetLoadOrder());
+    const uint32_t populationModId = mods.AddLite("Population.esp");
+    const uint32_t clientClaimModId = mods.AddStandard("Skyrim.esm");
+
+    ActorPopulationPolicy policy(records.get());
+    ASSERT_TRUE(policy.ApplyRaceClassificationOverrides("WolfRace=Creature"));
+    ActorPopulationIdentityResolver resolver(mods, records.get(), policy);
+    ActorPopulationAssignmentPolicy gate(true, true);
+    ActorPopulationAssignmentPolicy strictGate(true, false);
+
+    const auto humanoid = resolver.Resolve(GameId(populationModId, 0xABCD0300));
+    EXPECT_EQ(humanoid.Source, ActorPopulationIdentitySource::kServerPlacedReference);
+    EXPECT_EQ(humanoid.ResolvedReferenceFormId, 0xFE000300u);
+    EXPECT_EQ(humanoid.Classification.Class, ActorPopulationClass::kHumanoidNpc);
+    EXPECT_EQ(gate.Decide(humanoid), ActorPopulationAssignmentDecision::kRejectHumanoid);
+
+    // A client claim to a creature cannot replace the humanoid identity found
+    // through the server-resolved ACHR.
+    const auto conflictingClaim = resolver.Resolve(
+        GameId(populationModId, 0x00000300), GameId(clientClaimModId, wolfNpcRawId));
+    EXPECT_TRUE(conflictingClaim.HasClientClaimedIdentity);
+    EXPECT_EQ(conflictingClaim.ClientClaimedClassification.Class, ActorPopulationClass::kCreature);
+    EXPECT_EQ(conflictingClaim.Classification.Class, ActorPopulationClass::kHumanoidNpc);
+    EXPECT_EQ(gate.Decide(conflictingClaim), ActorPopulationAssignmentDecision::kRejectHumanoid);
+
+    const auto configuredCreature = resolver.Resolve(GameId(populationModId, 0x00000301));
+    EXPECT_EQ(configuredCreature.Classification.Class, ActorPopulationClass::kCreature);
+    EXPECT_EQ(gate.Decide(configuredCreature), ActorPopulationAssignmentDecision::kAllow);
+
+    const auto unsupportedRace = resolver.Resolve(GameId(populationModId, 0x00000302));
+    EXPECT_EQ(unsupportedRace.Classification.Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(gate.Decide(unsupportedRace), ActorPopulationAssignmentDecision::kAllow);
+    EXPECT_EQ(strictGate.Decide(unsupportedRace), ActorPopulationAssignmentDecision::kRejectUnknown);
 }
 
 TEST_F(ActorPopulationTests, ResolvesPlacedActorsWithServerAuthorityAndKeepsClaimsUntrusted)
