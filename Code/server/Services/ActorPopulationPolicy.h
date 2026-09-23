@@ -5,6 +5,7 @@
 #include <TiltedCore/Stl.hpp>
 
 #include <cstdint>
+#include <string_view>
 
 namespace ESLoader
 {
@@ -41,6 +42,8 @@ public:
     void SetRecordCollection(const ESLoader::RecordCollection* apRecordCollection) noexcept;
     void InstallVanillaHumanoidRules();
     void SetRaceClassification(TiltedPhoques::String aRaceEditorId, ActorPopulationClass aClassification);
+    // Applies a complete comma-separated list of server-side race editor ID overrides atomically.
+    [[nodiscard]] bool ApplyRaceClassificationOverrides(std::string_view aOverrides);
 
     // Accepts the local/player special case or an already-resolved server form
     // identity. Network GameIds must go through ActorPopulationIdentityResolver.

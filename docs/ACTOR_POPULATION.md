@@ -51,12 +51,22 @@ classification remains `Unknown`. The identity resolver exposes the source and
 trust distinction so a later enforcement milestone can make an explicit policy
 decision without treating client claims as server authority.
 
-Race rules are explicitly configurable with `SetRaceClassification`. The
-default rule set marks only these vanilla editor IDs as `HumanoidNpc`:
+Race rules are explicitly configurable with `SetRaceClassification` and the
+locked, startup-only `Population:sRaceClassificationOverrides` setting. Its
+value is a comma-separated list such as `WolfRace=Creature,CustomRace=HumanoidNpc`;
+accepted values are exactly `HumanoidNpc`, `Creature`, and `Unknown`. Entries
+are applied on top of the defaults below, so an explicit `NordRace=Unknown`
+removes that default rule. Empty values retain the defaults. Invalid entries or
+duplicate editor IDs reject the full override string without changing the
+existing rules (the vanilla defaults at startup).
+
+The default rule set marks only these vanilla editor IDs as `HumanoidNpc`:
 `NordRace`, `BretonRace`, `ImperialRace`, `RedguardRace`, `HighElfRace`,
 `WoodElfRace`, `DarkElfRace`, `OrcRace`, `ArgonianRace`, and `KhajiitRace`.
 Other and edge/modded races remain `Unknown` unless an explicit server-side
-rule is added. Editor ID is currently the policy key, so duplicate editor IDs
+rule is added. The setting only changes server-side classification rules; it
+does not enable full record loading or the humanoid assignment gate. Editor ID
+is currently the policy key, so duplicate editor IDs
 across plugins are not disambiguated by this foundation; plugin identity can be
 added later if the loader exposes it as a required policy key.
 

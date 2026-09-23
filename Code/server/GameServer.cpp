@@ -58,6 +58,11 @@ Console::Setting bAllowUnknownActorAssignments{
     "Allow actor assignments when server population identity is unknown or untrusted",
     true,
     Console::SettingsFlags::kLocked};
+Console::StringSetting sRaceClassificationOverrides{
+    "Population:sRaceClassificationOverrides",
+    "Comma-separated server race overrides in RaceEditorId=Class form; Class is HumanoidNpc, Creature, or Unknown; blank keeps the ten defaults",
+    "",
+    Console::SettingsFlags::kLocked};
 Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
 Console::Setting bEnableDevelopmentIdentityBinding{
     "Identity:bEnableDevelopmentIdentityBinding", "(Development only) Allow server operators to bind a live player to an explicit owner profile", false, Console::SettingsFlags::kLocked};
@@ -214,8 +219,8 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole)
     spdlog::info("Server {} started on port {}", BUILD_COMMIT, GetPort());
     UpdateTitle();
 
-    m_pWorld = MakeUnique<World>(
-        std::filesystem::path(sPersistenceDatabasePath.value()), bEnableActorRecordLoading, bEnableHumanoidAssignmentGate, bAllowUnknownActorAssignments);
+    m_pWorld = MakeUnique<World>(std::filesystem::path(sPersistenceDatabasePath.value()), bEnableActorRecordLoading, bEnableHumanoidAssignmentGate,
+        bAllowUnknownActorAssignments, sRaceClassificationOverrides.value());
 
     if (bEnableDevelopmentIdentityBinding)
     {

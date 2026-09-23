@@ -31,7 +31,7 @@ struct World : entt::registry
 {
     explicit World(
         std::filesystem::path aDatabasePath = PersistenceService::DefaultDatabasePath(), bool aEnableActorRecordLoading = false,
-        bool aEnableHumanoidAssignmentGate = false, bool aAllowUnknownActorAssignments = true);
+        bool aEnableHumanoidAssignmentGate = false, bool aAllowUnknownActorAssignments = true, const char* apRaceClassificationOverrides = "");
     ~World() noexcept;
 
     TP_NOCOPYMOVE(World);

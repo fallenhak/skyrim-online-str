@@ -381,6 +381,24 @@ TEST_F(ActorPopulationTests, InstallsConservativeVanillaHumanoidRules)
     EXPECT_EQ(policy.ClassifyNpcBase(kEdgeNpcId).Class, ActorPopulationClass::kUnknown);
 }
 
+TEST_F(ActorPopulationTests, AppliesExplicitRaceRulesAndUnknownOverridesAtomically)
+{
+    ActorPopulationPolicy policy(&m_records);
+
+    ASSERT_TRUE(policy.ApplyRaceClassificationOverrides(" WolfRace = Creature, EdgeRace=HumanoidNpc, NordRace=Unknown "));
+    EXPECT_EQ(policy.ClassifyNpcBase(kWolfNpcId).Class, ActorPopulationClass::kCreature);
+    EXPECT_EQ(policy.ClassifyNpcBase(kEdgeNpcId).Class, ActorPopulationClass::kHumanoidNpc);
+    EXPECT_EQ(policy.ClassifyNpcBase(kNordNpcId).Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(policy.ClassifyNpcBase(kDraugrNpcId).Class, ActorPopulationClass::kUnknown);
+
+    EXPECT_FALSE(policy.ApplyRaceClassificationOverrides("WolfRace=HumanoidNpc,EdgeRace=Dragon"));
+    EXPECT_EQ(policy.ClassifyNpcBase(kWolfNpcId).Class, ActorPopulationClass::kCreature);
+    EXPECT_EQ(policy.ClassifyNpcBase(kEdgeNpcId).Class, ActorPopulationClass::kHumanoidNpc);
+
+    EXPECT_FALSE(policy.ApplyRaceClassificationOverrides("NordRace=Unknown,NordRace=Creature"));
+    EXPECT_EQ(policy.ClassifyNpcBase(kNordNpcId).Class, ActorPopulationClass::kUnknown);
+}
+
 TEST(ActorPopulationPolicy, KeepsNpcUnknownWithoutLoadedRecords)
 {
     ESLoader::RecordCollection records;
