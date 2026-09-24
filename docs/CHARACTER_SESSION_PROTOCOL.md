@@ -35,7 +35,13 @@ The client caches the snapshot, applies it through `CharacterApplyService`, disp
 
 Authentication/transport connection is not global persistent-world presence. `PlayerJoinEvent` remains a legacy connection-level event, while `PlayerEnterWorldEvent` is the boundary at which `PresenceService` publishes the persisted character's name, level, and cell/worldspace through global presence messages. A client may cache remote presence messages received near world entry, but local world authority stays inactive until `CharacterWorldSyncStartedEvent` confirms the local character is in-world.
 
-The client service exposes request methods and dispatcher events for a future UI. Authentication, character creation/editing/deletion, UI/CEF, inventory persistence, XP producers, and later session features remain outside this milestone.
+## Character-select UX and create-character gap
+
+After authenticated connection, the client opens Character Select and requests a complete character list from the server. The UI renders only the returned `CharacterSummary` values and sends a selection request only for an ID from that list. A list response of `[]` is a valid empty state; it does not trigger local character creation or a fallback to the bootstrap save. Selection success begins the native snapshot and readiness sequence, and the UI remains open until matching `NotifyCharacterEnteredWorld` confirms world entry.
+
+Character creation is not available from the current Character Select screen or session protocol. A player whose server list is empty therefore has no character to select and cannot enter the world through this flow. The UI states that creation is unavailable from this screen and offers no create action. A future creation feature needs a separate server-owned workflow and protocol; local saves, client-supplied character fields, or UI-only records cannot establish character identity or ownership.
+
+The client service exposes the request methods and dispatcher events consumed by the current character-selection UI. Authentication-provider integration, character creation/editing/deletion, inventory persistence, XP producers, and later session features remain outside this milestone.
 
 ## Local development identity binding
 
