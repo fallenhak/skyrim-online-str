@@ -424,3 +424,9 @@ See [verification/final-verification.md](verification/final-verification.md).
 ## VDS final-review-retry deployment - 2026-09-24
 
 The exact source commit, backup, hashes, test and health results, and blocked final re-review attempt are recorded in [the deployment verification](verification/final-review-retry-deployment.md).
+
+For a pending `CURRENT_PHASE_REVIEW` blocked by missing exact-SHA CI evidence,
+`skyrim-dev re-review-current --target <lane> <phase> <SHA> [...]` queues the
+normal exact-state review while global mode is `PAUSED`. It validates each
+lane HEAD and phase, uses the ordinary Sol decision path, and does not admit
+development workers; normal worker scheduling requires a later explicit resume.

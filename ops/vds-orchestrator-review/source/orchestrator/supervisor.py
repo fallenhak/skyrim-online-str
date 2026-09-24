@@ -143,6 +143,7 @@ OPERATOR_MUTATION_COMMANDS = {
     "accept-milestone",
     "sync-control-plane",
     "re-review-v3",
+    "re-review-current",
     "re-review-final",
 }
 OPERATOR_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -505,6 +506,21 @@ def validate_operator_request(
                 return False, request_id, "re-review-final phase is required"
             if not isinstance(target.get("sha"), str) or not re.fullmatch(r"[0-9a-f]{40,64}", target["sha"]):
                 return False, request_id, "re-review-final requires a full Git SHA"
+            seen.add(target["lane"])
+    elif command == "re-review-current":
+        targets = args.get("targets")
+        if set(args) != {"targets"} or not isinstance(targets, list) or not 1 <= len(targets) <= len(LANE_ORDER):
+            return False, request_id, "re-review-current requires one or more exact lane/phase/SHA targets"
+        seen = set()
+        for target in targets:
+            if not isinstance(target, dict) or set(target) != {"lane", "phase", "sha"}:
+                return False, request_id, "re-review-current target schema is invalid"
+            if target.get("lane") not in LANE_ORDER or target.get("lane") in seen:
+                return False, request_id, "re-review-current lane target is unknown or duplicated"
+            if not isinstance(target.get("phase"), str) or not target["phase"].strip():
+                return False, request_id, "re-review-current phase is required"
+            if not isinstance(target.get("sha"), str) or not re.fullmatch(r"[0-9a-f]{40,64}", target["sha"]):
+                return False, request_id, "re-review-current requires a full Git SHA"
             seen.add(target["lane"])
     return True, request_id, ""
 
@@ -2033,6 +2049,8 @@ class Supervisor(ArchitectReviewMixin):
                     result = 0 if self.sync_control_plane(bool(args["force"])) else 1
                 elif command == "re-review-v3":
                     result = self.request_fresh_reviews_v3(list(args["targets"]))
+                elif command == "re-review-current":
+                    result = self.request_current_reviews_recheck(list(args["targets"]))
                 elif command == "re-review-final":
                     result = self.request_final_reviews_recheck(list(args["targets"]))
                 else:  # validate_operator_request should make this unreachable
@@ -5204,6 +5222,85 @@ an actually failing command is not a validation gap.
         self.event("operator authorized retry of current phase", lane_name)
         return 0
 
+    def request_current_reviews_recheck(self, targets: list[Mapping[str, Any]]) -> int:
+        """Queue exact-SHA current-phase reviews while paused without admitting lane work."""
+        if self.state.get("global_mode") != "PAUSED":
+            print("current review recheck requires global PAUSED mode", file=sys.stderr)
+            return 1
+        review_state = self.state.setdefault("architect_review", {})
+        if (self.processes or getattr(self, "review_process", None) is not None
+                or review_state.get("active_review_id") or review_state.get("queue")
+                or review_state.get("read_only_while_paused")
+                or review_state.get("operator_v3_targets")):
+            print("current review recheck requires an idle reviewer queue", file=sys.stderr)
+            return 1
+        if not self._control_plane_valid():
+            print("current review recheck requires a valid control plane", file=sys.stderr)
+            return 1
+
+        normalized: dict[str, tuple[str, str]] = {}
+        for target in targets:
+            lane_name = str(target.get("lane") or "")
+            phase = str(target.get("phase") or "")
+            sha = str(target.get("sha") or "")
+            if lane_name in normalized or lane_name not in LANE_ORDER or not re.fullmatch(r"[0-9a-f]{40,64}", sha):
+                print("current review recheck target is invalid", file=sys.stderr)
+                return 2
+            lane = self.state.get("lanes", {}).get(lane_name)
+            review = lane.get("review", {}) if isinstance(lane, dict) else {}
+            reviewed_phase = review.get("reviewed_phase", {}) if isinstance(review, Mapping) else {}
+            reviewed_phase_id = str(reviewed_phase.get("id") or "") if isinstance(reviewed_phase, Mapping) else ""
+            if (not isinstance(lane, dict)
+                    or lane.get("state") != "NEEDS_SOL_REVIEW"
+                    or lane.get("phase_id") != phase
+                    or review.get("type") != "CURRENT_PHASE_REVIEW"
+                    or reviewed_phase_id != phase
+                    or str(review.get("commit_sha") or "") != sha
+                    or str(lane.get("last_commit") or "") != sha
+                    or self.git_head(str(lane.get("worktree") or "")) != sha
+                    or review.get("decision") is not None
+                    or lane.get("worker_pid")):
+                print(f"current review recheck refused: {lane_name} does not match the pending phase and exact SHA", file=sys.stderr)
+                return 1
+            normalized[lane_name] = (phase, sha)
+
+        if not normalized:
+            print("current review recheck requires at least one target", file=sys.stderr)
+            return 2
+        if any(
+            name not in normalized and isinstance(lane, dict) and lane.get("state") == "NEEDS_SOL_REVIEW"
+            for name, lane in self.state.get("lanes", {}).items()
+        ):
+            print("current review recheck refused while another lane awaits review", file=sys.stderr)
+            return 1
+
+        state_snapshot = deepcopy(self.state)
+        review_state["operator_v3_targets"] = [
+            {"lane": name, "phase": phase, "sha": sha}
+            for name, (phase, sha) in normalized.items()
+        ]
+        review_state["read_only_while_paused"] = True
+        self.queue_sol_reviews()
+
+        queued: dict[str, str] = {}
+        for review_id, item in review_state.get("items", {}).items():
+            if (not isinstance(item, dict) or item.get("status") != "QUEUED"
+                    or not item.get("operator_authorized_recheck")
+                    or item.get("review_type") != "CURRENT_PHASE_REVIEW"):
+                continue
+            name = str(item.get("lane") or "")
+            if name in normalized and (item.get("phase"), item.get("reviewed_sha")) == normalized[name]:
+                queued[name] = str(review_id)
+        if set(queued) != set(normalized):
+            self.state = state_snapshot
+            self.save_state()
+            print("current review recheck refused: exact evidence bundle could not be queued for every target", file=sys.stderr)
+            return 1
+        for name, review_id in queued.items():
+            phase, sha = normalized[name]
+            print(f"CURRENT_REVIEW_QUEUED lane={name} phase={phase} sha={sha} review_id={review_id}")
+        return 0
+
     def request_final_reviews_recheck(self, targets: list[Mapping[str, Any]]) -> int:
         """Queue paused, exact-SHA reviews for FINAL retries previously blocked by the missing handler."""
         if self.state.get("global_mode") != "PAUSED":
@@ -6425,6 +6522,9 @@ def main() -> int:
     re_review_final = sub.add_parser("re-review-final")
     re_review_final.add_argument("--target", action="append", nargs=3, required=True,
                                  metavar=("LANE", "PHASE", "SHA"))
+    re_review_current = sub.add_parser("re-review-current")
+    re_review_current.add_argument("--target", action="append", nargs=3, required=True,
+                                    metavar=("LANE", "PHASE", "SHA"))
     for command_name in ("approve", "retry", "block"):
         command_parser = sub.add_parser(command_name)
         command_parser.add_argument("lane", choices=LANE_ORDER)
@@ -6465,6 +6565,11 @@ def main() -> int:
                 for lane, phase, sha in args.target
             ]}
         elif args.command == "re-review-final":
+            operator_args = {"targets": [
+                {"lane": lane, "phase": phase, "sha": sha}
+                for lane, phase, sha in args.target
+            ]}
+        elif args.command == "re-review-current":
             operator_args = {"targets": [
                 {"lane": lane, "phase": phase, "sha": sha}
                 for lane, phase, sha in args.target

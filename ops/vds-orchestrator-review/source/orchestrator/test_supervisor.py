@@ -464,6 +464,67 @@ class SupervisorLogicTests(unittest.TestCase):
         self.assertFalse(valid)
         self.assertIn("full Git SHA", reason)
 
+    def test_re_review_current_request_requires_unique_full_sha_targets(self) -> None:
+        targets = [
+            {"lane": "authority", "phase": "A12", "sha": "a" * 40},
+            {"lane": "ui", "phase": "U16", "sha": "b" * 40},
+        ]
+        request = operator_payload("current-recheck", "re-review-current", {"targets": targets})
+        valid, _, reason = supervisor.validate_operator_request(request)
+        self.assertTrue(valid, reason)
+
+        targets[1]["sha"] = "b" * 39
+        invalid = operator_payload("bad-current-recheck", "re-review-current", {"targets": targets})
+        valid, _, reason = supervisor.validate_operator_request(invalid)
+        self.assertFalse(valid)
+        self.assertIn("full Git SHA", reason)
+
+    def test_current_review_recheck_queues_exact_pending_targets_read_only(self) -> None:
+        h = Harness()
+        h.state["global_mode"] = "PAUSED"
+        h.state["control_plane"] = {"status": "VALID"}
+        review_state = h.state.setdefault("architect_review", {"items": {}, "queue": []})
+        review_state.update({"items": {}, "queue": []})
+        targets = [
+            {"lane": "authority", "phase": "A12", "sha": "a" * 40},
+            {"lane": "ui", "phase": "U16", "sha": "b" * 40},
+        ]
+        for target in targets:
+            name = target["lane"]
+            h.state["lanes"][name] = {
+                "state": "NEEDS_SOL_REVIEW", "phase_id": target["phase"],
+                "worktree": name, "last_commit": target["sha"], "worker_pid": None,
+                "review": {
+                    "type": "CURRENT_PHASE_REVIEW",
+                    "reviewed_phase": {"id": target["phase"]},
+                    "commit_sha": target["sha"], "decision": None,
+                },
+            }
+        h.git_head = lambda worktree: next(
+            target["sha"] for target in targets if target["lane"] == worktree
+        )
+        h._control_plane_valid = lambda: True
+
+        def queue_exact_reviews():
+            for target in review_state["operator_v3_targets"]:
+                review_id = f"current-{target['lane']}"
+                review_state["items"][review_id] = {
+                    **target, "review_id": review_id,
+                    "reviewed_sha": target["sha"],
+                    "review_type": "CURRENT_PHASE_REVIEW",
+                    "status": "QUEUED", "operator_authorized_recheck": True,
+                }
+                review_state["queue"].append(review_id)
+            return len(review_state["operator_v3_targets"])
+
+        h.queue_sol_reviews = queue_exact_reviews
+        self.assertEqual(h.request_current_reviews_recheck(targets), 0)
+        self.assertTrue(review_state["read_only_while_paused"])
+        self.assertEqual(review_state["operator_v3_targets"], targets)
+        self.assertEqual(review_state["queue"], ["current-authority", "current-ui"])
+        self.assertEqual(h.state["lanes"]["authority"]["state"], "NEEDS_SOL_REVIEW")
+        self.assertEqual(h.state["lanes"]["ui"]["state"], "NEEDS_SOL_REVIEW")
+
     def test_final_review_recheck_requires_paused_exact_blocked_targets(self) -> None:
         h = Harness()
         h.state["global_mode"] = "PAUSED"
@@ -823,6 +884,7 @@ class SupervisorLogicTests(unittest.TestCase):
             ("approve-control-plane", {"sha": "a" * 40}, "approve_control_plane"),
             ("accept-milestone", {"milestone_id": "M01", "evidence": {}}, "accept_milestone"),
             ("sync-control-plane", {"force": True}, "sync_control_plane"),
+            ("re-review-current", {"targets": [{"lane": "authority", "phase": "A12", "sha": "a" * 40}]}, "request_current_reviews_recheck"),
             ("re-review-final", {"targets": [{"lane": "combat", "phase": "C17", "sha": "a" * 40}]}, "request_final_reviews_recheck"),
         ]
         for command, args, method in cases:
@@ -866,6 +928,19 @@ class SupervisorLogicTests(unittest.TestCase):
         submit.assert_called_once_with(
             "re-review-final",
             {"targets": [{"lane": "combat", "phase": "C17", "sha": sha}]},
+            config=supervisor.read_json(supervisor.CONFIG_PATH, {}),
+        )
+
+    def test_cli_parses_exact_current_review_recheck_targets(self) -> None:
+        sha = "a" * 40
+        with patch.object(supervisor, "submit_operator_request", return_value=0) as submit, \
+                patch.object(supervisor, "Supervisor") as constructor, \
+                patch.object(sys, "argv", ["supervisor.py", "re-review-current", "--target", "authority", "A12", sha]):
+            self.assertEqual(supervisor.main(), 0)
+        constructor.assert_not_called()
+        submit.assert_called_once_with(
+            "re-review-current",
+            {"targets": [{"lane": "authority", "phase": "A12", "sha": sha}]},
             config=supervisor.read_json(supervisor.CONFIG_PATH, {}),
         )
 
