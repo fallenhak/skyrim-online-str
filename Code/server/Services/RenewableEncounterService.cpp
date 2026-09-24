@@ -43,7 +43,9 @@ void RenewableEncounterService::LoadConfiguration(const std::filesystem::path& a
     std::ifstream file(acPath);
     if (!file)
     {
-        spdlog::info("[World] no renewable encounter config at {}, none configured", acPath.string());
+        // A launcher that ships the file to the wrong place would otherwise start the
+        // server silently without encounters.
+        spdlog::warn("[World] no renewable encounter config at {}, none configured", acPath.string());
         return;
     }
 
@@ -81,7 +83,7 @@ bool RenewableEncounterService::SaveState()
         return false;
     }
 
-    spdlog::debug("[World] snapshot saved encounters={}", records.size());
+    spdlog::info("[World] snapshot saved encounters={}", records.size());
     return true;
 }
 
@@ -119,6 +121,9 @@ void RenewableEncounterService::RunTick() noexcept
         }
         else if (entry.CooldownRemainingTicks != 0)
             anyCooldown = true;
+        else if (m_tick % kResetBlockedLogIntervalTicks == 0
+                 && m_registry.GetResetBlocker(entry.Id, m_tick) == RenewableEncounterRegistry::ResetBlocker::Occupied)
+            spdlog::info("[World] reset blocked {:x}/{} reason=Occupied tick={}", entry.Id.CellFormId, entry.Id.GroupIndex, m_tick);
     }
 
     if (anyReset)
