@@ -7,7 +7,8 @@
 // Only the owner simulates the actor, so without this a non-owner's hits never
 // reach the canonical health. Until the validated hit protocol exists, the
 // server accepts a bounded damage report from an in-range, in-world player
-// for the current incarnation and forwards it to everyone, owner included.
+// for the current incarnation of a non-player actor and forwards it to
+// everyone, owner included.
 struct ActorNonOwnerDamagePolicy final
 {
     // Upper bound for one reported hit. Vanilla sneak/power attacks stay well
@@ -17,13 +18,15 @@ struct ActorNonOwnerDamagePolicy final
     [[nodiscard]] static bool IsAccepted(
         const bool aEntityExists,
         const bool aIsDead,
+        const bool aTargetIsPlayer,
         const bool aSenderInWorld,
         const bool aSenderInRange,
         const uint32_t aCurrentOwnershipEpoch,
         const uint32_t aReportedOwnershipEpoch,
         const float aDeltaHealth) noexcept
     {
-        if (!aEntityExists || aIsDead || !aSenderInWorld || !aSenderInRange)
+        // Players are never valid targets here: PvP stays with the owner-simulated path.
+        if (!aEntityExists || aIsDead || aTargetIsPlayer || !aSenderInWorld || !aSenderInRange)
             return false;
 
         if (aReportedOwnershipEpoch == 0 || aReportedOwnershipEpoch != aCurrentOwnershipEpoch)

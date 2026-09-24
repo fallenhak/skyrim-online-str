@@ -144,11 +144,17 @@ bool ActorValueService::IsAcceptedNonOwnerDamage(const PacketEvent<RequestHealth
     const auto* pCell = m_world.try_get<CellIdComponent>(entity);
     const bool entityExists = m_world.valid(entity) && pOwner && pCharacter && pCell;
 
+    // Both the character flag and the trusted population identity mark player characters.
+    const auto* pIdentity = m_world.try_get<ActorPopulationIdentityComponent>(entity);
+    const bool targetIsPlayer =
+        entityExists && (pCharacter->IsPlayer() || (pIdentity && pIdentity->Source == ActorPopulationIdentitySource::kPlayer));
+
     const bool senderInWorld = m_world.GetSessionService().CanProcessGameplay(acMessage.pPlayer->GetConnectionId());
     const bool senderInRange = entityExists && acMessage.pPlayer->GetCellComponent().IsInRange(*pCell, pCharacter->IsDragon());
 
     const bool accepted = ActorNonOwnerDamagePolicy::IsAccepted(
-        entityExists, entityExists && pCharacter->IsDead(), senderInWorld, senderInRange,
+        entityExists, entityExists && pCharacter->IsDead(),
+        targetIsPlayer, senderInWorld, senderInRange,
         entityExists ? pOwner->OwnershipEpoch : 0, message.OwnershipEpoch, message.DeltaHealth);
 
     if (!accepted)
