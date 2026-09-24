@@ -8,10 +8,17 @@
 
 struct CellIdComponent
 {
-    CellIdComponent() {}
+    CellIdComponent()
+        : Cell{}
+        , WorldSpaceId{}
+        , CenterCoords{}
+    {
+    }
 
     CellIdComponent(GameId aCellId)
         : Cell(aCellId)
+        , WorldSpaceId{}
+        , CenterCoords{}
     {
     }
 

@@ -28,8 +28,14 @@ architecture; it does not introduce server-simulated Skyrim AI.
    here; this path is not a client classification grant.
 3. **Canonical entity and initial owner** — `CreateCharacter` creates the ECS
    entity and attaches `OwnerComponent` with the assigning player and a
-   non-zero ownership epoch. `CharacterComponent` records creature/player,
-   mount, summon, dragon, and death classification used by later policies.
+   non-zero ownership epoch. It also attaches the server-only
+   `ActorLifecycleComponent`, whose monotonic generation identifies this actor
+   incarnation independently of the EnTT entity value and is never supplied by
+   the client. The canonical entity also carries the
+   `ActorPopulationIdentityComponent`, which stores the trusted population
+   classification and resolved server form IDs. `CharacterComponent` records
+   mount, summon, dragon, and death state; its client-provided base identity is
+   not a combat authority source.
 4. **Spawn publication** — `CharacterSpawnedEvent` serializes the canonical
    state, including server ID and ownership epoch, and sends it to eligible
    clients through the server range filter. A remote client creates or
@@ -53,7 +59,9 @@ architecture; it does not introduce server-simulated Skyrim AI.
 8. **Disconnect, removal, and reappearance** — `GameServer::OnDisconnection`
    saves persistent player state, removes the player character, and queues
    ownership transfer for other owned entities. If no eligible owner remains,
-   `CharacterRemoveEvent` broadcasts removal and destroys the server entity.
+   `CharacterRemoveEvent` broadcasts removal and destroys the server entity,
+   including its lifecycle component. A later actor using a reused EnTT slot
+   receives a new generation.
    Client discovery keeps an independent suppression/assignment registry so a
    temporary disappearance does not silently grant a new authority; a real
    reappearance is reconciled and assigned according to the current session.

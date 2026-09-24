@@ -10,6 +10,11 @@ struct ActorHealthChangePolicy final
 {
     static constexpr uint32_t kHealthActorValue = 24;
 
+    [[nodiscard]] static bool IsCanonicalDecrease(const float aPreviousHealth, const float aCurrentHealth) noexcept
+    {
+        return std::isfinite(aPreviousHealth) && std::isfinite(aCurrentHealth) && aCurrentHealth < aPreviousHealth;
+    }
+
     static constexpr bool IsAuthorized(
         const bool aEntityExists,
         const bool aOwnerExists,

@@ -5,6 +5,9 @@
 #include <Messages/RequestDeathStateChange.h>
 #include <Services/ActorValueService.h>
 #include <Services/ActorHealthChangePolicy.h>
+#include <Services/CanonicalCreatureDeathPolicy.h>
+#include <Events/AcceptedCanonicalHealthDecreaseEvent.h>
+#include <Events/AcceptedCanonicalCreatureDeathEvent.h>
 #include <World.h>
 #include <GameServer.h>
 #include <Messages/NotifyActorValueChanges.h>
@@ -16,8 +19,26 @@
 #include <cmath>
 #include <utility>
 
+namespace
+{
+void EmitCanonicalHealthDecrease(World& aWorld, entt::dispatcher& aDispatcher, const entt::entity aEntity,
+                                 const float aPreviousHealth, const float aCurrentHealth) noexcept
+{
+    if (!ActorHealthChangePolicy::IsCanonicalDecrease(aPreviousHealth, aCurrentHealth))
+        return;
+
+    const auto* const pLifecycle = aWorld.try_get<ActorLifecycleComponent>(aEntity);
+    if (pLifecycle && pLifecycle->IsValid())
+    {
+        aDispatcher.trigger(AcceptedCanonicalHealthDecreaseEvent{
+            World::ToInteger(aEntity), pLifecycle->GetGeneration()});
+    }
+}
+}
+
 ActorValueService::ActorValueService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
     : m_world(aWorld)
+    , m_dispatcher(aDispatcher)
 {
     m_updateHealthConnection = aDispatcher.sink<PacketEvent<RequestActorValueChanges>>().connect<&ActorValueService::OnActorValueChanges>(this);
     m_updateMaxValueConnection = aDispatcher.sink<PacketEvent<RequestActorMaxValueChanges>>().connect<&ActorValueService::OnActorMaxValueChanges>(this);
@@ -37,14 +58,18 @@ void ActorValueService::OnActorValueChanges(const PacketEvent<RequestActorValueC
         return;
 
     auto& actorValuesComponent = actorValuesView.get<ActorValuesComponent>(*it);
+    auto& actorValues = actorValuesComponent.CurrentActorValues.ActorValuesList;
+    const auto healthIt = actorValues.find(ActorHealthChangePolicy::kHealthActorValue);
+    const bool hadCanonicalHealth = healthIt != actorValues.end();
+    const float previousHealth = hadCanonicalHealth ? healthIt.value() : 0.f;
     TiltedPhoques::Map<uint32_t, float> acceptedValues;
     for (const auto& [id, value] : message.Values)
     {
         if (!ActorValueMutationPolicy::IsValidIndexAndValue(id, value, ActorValueMutationPolicy::kActorValueCount))
             continue;
 
-        auto currentValueIt = actorValuesComponent.CurrentActorValues.ActorValuesList.find(id);
-        if (currentValueIt == actorValuesComponent.CurrentActorValues.ActorValuesList.end())
+        auto currentValueIt = actorValues.find(id);
+        if (currentValueIt == actorValues.end())
             continue;
 
         currentValueIt.value() = value;
@@ -53,6 +78,10 @@ void ActorValueService::OnActorValueChanges(const PacketEvent<RequestActorValueC
 
     if (acceptedValues.empty())
         return;
+
+    const auto acceptedHealthIt = acceptedValues.find(ActorHealthChangePolicy::kHealthActorValue);
+    if (hadCanonicalHealth && acceptedHealthIt != acceptedValues.end())
+        EmitCanonicalHealthDecrease(m_world, m_dispatcher, *it, previousHealth, acceptedHealthIt.value());
 
     NotifyActorValueChanges notify;
     notify.OwnershipEpoch = message.OwnershipEpoch;
@@ -116,9 +145,20 @@ void ActorValueService::OnHealthChangeBroadcast(const PacketEvent<RequestHealthC
         return;
 
     auto& actorValuesComponent = actorValuesView.get<ActorValuesComponent>(*it);
-    // DeltaHealth is signed: damage is negative and healing is positive.
-    if (!ActorHealthChangePolicy::TryApplySignedDelta(actorValuesComponent.CurrentActorValues.ActorValuesList, message.DeltaHealth))
+    auto& actorValues = actorValuesComponent.CurrentActorValues.ActorValuesList;
+    const auto healthIt = actorValues.find(ActorHealthChangePolicy::kHealthActorValue);
+    const bool hadCanonicalHealth = healthIt != actorValues.end();
+    const float previousHealth = hadCanonicalHealth ? healthIt.value() : 0.f;
+
+    // DeltaHealth is signed: damage is negative and healing is positive. Only
+    // the resulting canonical value can produce a decrease signal; the
+    // submitted delta is not forwarded as combat evidence.
+    if (!ActorHealthChangePolicy::TryApplySignedDelta(actorValues, message.DeltaHealth))
         return;
+
+    const auto updatedHealthIt = actorValues.find(ActorHealthChangePolicy::kHealthActorValue);
+    if (hadCanonicalHealth && updatedHealthIt != actorValues.end())
+        EmitCanonicalHealthDecrease(m_world, m_dispatcher, *it, previousHealth, updatedHealthIt.value());
 
     NotifyHealthChangeBroadcast notify;
     notify.Id = message.Id;
@@ -142,7 +182,22 @@ void ActorValueService::OnDeathStateChange(const PacketEvent<RequestDeathStateCh
         return;
 
     auto& characterComponent = characterView.get<CharacterComponent>(*it);
+    const bool wasDead = characterComponent.IsDead();
+    if (wasDead == message.IsDead)
+        return;
+
     characterComponent.SetDead(message.IsDead);
+
+    const auto entity = *it;
+    const auto* const pPopulationIdentity = m_world.try_get<ActorPopulationIdentityComponent>(entity);
+    auto* const pLifecycle = m_world.try_get<ActorLifecycleComponent>(entity);
+    if (CanonicalCreatureDeathPolicy::TryAcceptTransition(
+            wasDead, &characterComponent, pPopulationIdentity, pLifecycle))
+    {
+        m_dispatcher.trigger(AcceptedCanonicalCreatureDeathEvent{
+            World::ToInteger(entity), pLifecycle->GetGeneration()});
+    }
+
     spdlog::debug("Updating death state {:x}:{}", message.Id, message.IsDead);
 
     NotifyDeathStateChange notify;

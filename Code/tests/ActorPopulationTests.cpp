@@ -3,6 +3,7 @@
 #include <Services/ActorPopulationAssignmentPolicy.h>
 
 #define TP_INTERNAL_COMPONENTS_GUARD
+#include <Components/ActorPopulationIdentityComponent.h>
 #include <Components/ModsComponent.h>
 #undef TP_INTERNAL_COMPONENTS_GUARD
 #include <ESLoader.h>
@@ -367,6 +368,51 @@ TEST(ActorPopulationAssignmentPolicy, AppliesGateTrustAndUnknownRules)
     EXPECT_EQ(strict.Decide(unknown), ActorPopulationAssignmentDecision::kRejectUnknown);
     EXPECT_EQ(strict.Decide(clientCreatureClaim), ActorPopulationAssignmentDecision::kRejectUnknown);
     EXPECT_EQ(strict.Decide(conflictingClaim), ActorPopulationAssignmentDecision::kRejectHumanoid);
+}
+
+TEST(ActorPopulationIdentityComponent, PersistsOnlyTrustedServerProjection)
+{
+    ActorPopulationIdentity identity;
+    identity.Source = ActorPopulationIdentitySource::kServerPlacedReference;
+    identity.ResolvedReferenceFormId = 0x02003000;
+    identity.ResolvedNpcFormId = 0x02002000;
+    identity.Classification.Class = ActorPopulationClass::kCreature;
+    identity.Classification.RaceFormId = 0x02001000;
+    identity.HasClientClaimedIdentity = true;
+    identity.ClientClaimedNpcFormId = 0x02009999;
+    identity.ClientClaimedClassification.Class = ActorPopulationClass::kHumanoidNpc;
+
+    const ActorPopulationIdentityComponent component(identity);
+
+    EXPECT_EQ(component.Source, ActorPopulationIdentitySource::kServerPlacedReference);
+    EXPECT_EQ(component.Classification, ActorPopulationClass::kCreature);
+    EXPECT_EQ(component.ResolvedReferenceFormId, 0x02003000u);
+    EXPECT_EQ(component.ResolvedNpcFormId, 0x02002000u);
+    EXPECT_EQ(component.ResolvedRaceFormId, 0x02001000u);
+    EXPECT_TRUE(component.IsTrusted());
+    EXPECT_TRUE(component.IsTrustedCreature());
+    EXPECT_FALSE(component.IsTrustedPlayer());
+}
+
+TEST(ActorPopulationIdentityComponent, RejectsClientClaimAsCanonicalIdentity)
+{
+    ActorPopulationIdentity identity;
+    identity.Source = ActorPopulationIdentitySource::kClientClaimedTemporaryBase;
+    identity.ResolvedNpcFormId = 0x02002000;
+    identity.Classification.Class = ActorPopulationClass::kCreature;
+    identity.HasClientClaimedIdentity = true;
+    identity.ClientClaimedNpcFormId = 0x02002000;
+    identity.ClientClaimedClassification.Class = ActorPopulationClass::kCreature;
+
+    const ActorPopulationIdentityComponent component(identity);
+
+    EXPECT_EQ(component.Source, ActorPopulationIdentitySource::kUnknown);
+    EXPECT_EQ(component.Classification, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(component.ResolvedReferenceFormId, 0u);
+    EXPECT_EQ(component.ResolvedNpcFormId, 0u);
+    EXPECT_EQ(component.ResolvedRaceFormId, 0u);
+    EXPECT_FALSE(component.IsTrusted());
+    EXPECT_FALSE(component.IsTrustedCreature());
 }
 
 TEST_F(ActorPopulationTests, ResolvesPlacedActorsWithServerAuthorityAndKeepsClaimsUntrusted)

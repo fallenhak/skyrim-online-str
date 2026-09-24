@@ -18,7 +18,7 @@
 struct CombatContributionTarget final
 {
     std::uint32_t ServerId{};
-    std::uint32_t LifecycleGeneration{};
+    std::uint64_t LifecycleGeneration{};
 
     friend bool operator<(const CombatContributionTarget& acLeft, const CombatContributionTarget& acRight) noexcept
     {
@@ -118,9 +118,34 @@ public:
         return result;
     }
 
+    /**
+     * Return only the persistent character identities resolved into the
+     * ledger, in deterministic CharacterId order, then erase the target.
+     */
+    [[nodiscard]] std::vector<Persistence::CharacterId> ConsumeCharacterIdsForDeath(const Target aTarget, const std::uint64_t aNow)
+    {
+        const auto contributions = ConsumeContributionsForDeath(aTarget, aNow);
+        std::vector<Persistence::CharacterId> characterIds;
+        characterIds.reserve(contributions.size());
+        for (const auto& contribution : contributions)
+            characterIds.push_back(contribution.AttackerCharacterId);
+        return characterIds;
+    }
+
     void ClearTarget(const Target aTarget) noexcept
     {
         m_contributions.erase(aTarget);
+    }
+
+    /** Remove all target contribution records for every lifecycle of an actor. */
+    void ClearEntity(const std::uint32_t aServerId) noexcept
+    {
+        if (aServerId == std::numeric_limits<std::uint32_t>::max())
+            return;
+
+        auto targetIt = m_contributions.lower_bound(Target{aServerId, 0});
+        while (targetIt != m_contributions.end() && targetIt->first.ServerId == aServerId)
+            targetIt = m_contributions.erase(targetIt);
     }
 
     /** Remove a persistent attacker without identifying it by connection. */
@@ -183,7 +208,7 @@ private:
 
     [[nodiscard]] static bool IsValidTarget(const Target aTarget) noexcept
     {
-        return aTarget.ServerId != 0 && aTarget.LifecycleGeneration != 0;
+        return aTarget.ServerId != std::numeric_limits<std::uint32_t>::max() && aTarget.LifecycleGeneration != 0;
     }
 
     std::uint64_t m_expiryTicks;

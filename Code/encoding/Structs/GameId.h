@@ -1,11 +1,15 @@
 #pragma once
 
-using TiltedPhoques::Buffer;
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+
+#include <TiltedCore/Buffer.hpp>
 
 struct GameId
 {
     GameId() = default;
-    GameId(uint32_t aModId, uint32_t aBaseId) noexcept;
+    GameId(std::uint32_t aModId, std::uint32_t aBaseId) noexcept;
     ~GameId() = default;
 
     bool operator==(const GameId& acRhs) const noexcept;
@@ -15,10 +19,10 @@ struct GameId
 
     void Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcept;
     void Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept;
-    inline uint64_t LogFormat() const noexcept { return static_cast<uint64_t>(ModId) << 32 | BaseId; }
+    inline std::uint64_t LogFormat() const noexcept { return static_cast<std::uint64_t>(ModId) << 32 | BaseId; }
 
-    uint32_t BaseId;
-    uint32_t ModId;
+    std::uint32_t BaseId;
+    std::uint32_t ModId;
 };
 
 namespace std
@@ -26,6 +30,9 @@ namespace std
 template <> class hash<GameId>
 {
 public:
-    size_t operator()(const GameId& gameId) const { return hash<uint32_t>()(gameId.BaseId) ^ (hash<uint32_t>()(gameId.ModId) << 1); }
+    std::size_t operator()(const GameId& gameId) const
+    {
+        return hash<std::uint32_t>()(gameId.BaseId) ^ (hash<std::uint32_t>()(gameId.ModId) << 1);
+    }
 };
 } // namespace std
