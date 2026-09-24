@@ -180,7 +180,7 @@
       "FAILED_TITLE": "Could Not Connect",
       "CREATE_TITLE": "New Character",
       "CREATE_INTRO": "Your journey in Skyrim begins with a name.",
-      "NAME_LABEL": "Character Name",
+      "NAME_LABEL": "What is your name?",
       "NAME_PLACEHOLDER": "Enter a name",
       "NAME_RULES": "3–24 letters. Letters, spaces, apostrophes and hyphens are allowed.",
       "CREATE_NOTE": "You will awaken in the Temple of Kynareth in Whiterun, where you will choose your race and appearance.",

@@ -1,112 +1,107 @@
-<div class="entry" [attr.data-entry-view]="view">
-  <div class="entry-backdrop" aria-hidden="true"></div>
-  <div class="entry-vignette" aria-hidden="true"></div>
+<div class="entry" [attr.data-entry-view]="view" [class.has-column]="view === 'create' || view === 'failed' || (view === 'select' && detailOpen)" [attr.lang]="lang$ | async">
+  <div class="entry-smoke" aria-hidden="true">
+    <span
+      *ngFor="let p of puffs"
+      class="puff v{{ p.v }}"
+      [style.left.vw]="p.x"
+      [style.bottom.vh]="p.y"
+      [style.width.vw]="p.w"
+      [style.height.vw]="p.h"
+      [style.--o]="p.o"
+      [style.--r0.deg]="p.r0"
+      [style.--r1.deg]="p.r1"
+      [style.animation-duration]="p.d1 + 's, ' + p.d2 + 's'"
+      [style.animation-delay]="p.dl + 's, ' + p.dl / 3 + 's'"
+    ></span>
+  </div>
 
-  <header class="entry-brand">
-    <span class="entry-brand-title">{{ 'COMPONENT.ENTRY.BRAND' | transloco }}</span>
+  <header class="entry-mark" aria-hidden="true" lang="en">
+    <span class="entry-mark-top">Skyrim</span>
+    <span class="entry-mark-rule"><i></i></span>
+    <span class="entry-mark-sub">Online</span>
   </header>
 
   <ng-container *ngIf="auth$ | async as auth">
     <div class="entry-account" *ngIf="auth.state === 'authenticated' && auth.displayName">
-      <img *ngIf="auth.avatarUrl" [src]="auth.avatarUrl" alt="" />
-      <span>{{ auth.displayName }}</span>
+      {{ auth.displayName }}
     </div>
   </ng-container>
 
   <!-- Loading / connecting / world load -->
-  <section class="entry-loading" *ngIf="view === 'loading'" role="status" aria-live="polite">
-    <ng-container *ngIf="stage$ | async as stage">
-      <div class="entry-sigil" aria-hidden="true">
-        <span></span><span></span><span></span>
-      </div>
-      <p class="entry-stage">{{ stageKey(stage.stage) | transloco }}</p>
-      <div class="entry-progress" *ngIf="stage.progress > 0">
-        <div class="entry-progress-fill" [style.width.%]="progressPercent$ | async"></div>
-      </div>
-    </ng-container>
-  </section>
+  <ng-container *ngIf="view === 'loading'">
+    <section class="entry-loading" role="status" aria-live="polite">
+      <ng-container *ngIf="stage$ | async as stage">
+        <p class="entry-stage">{{ stageKey(stage.stage) | transloco }}</p>
+        <div class="entry-progress">
+          <div class="entry-progress-fill" [style.width.%]="progressPercent$ | async"></div>
+        </div>
+      </ng-container>
+    </section>
+    <p class="entry-tip">{{ tipKey | transloco }}</p>
+  </ng-container>
 
-  <p class="entry-tip" *ngIf="view === 'loading'">
-    <span class="entry-tip-label">{{ 'COMPONENT.ENTRY.TIP_LABEL' | transloco }}</span>
-    {{ tipKey | transloco }}
-  </p>
+  <!-- Right-hand menu (select, create and failure share it, like the main menu) -->
+  <nav
+    class="entry-menu"
+    *ngIf="view === 'select' || view === 'create'"
+    role="listbox"
+    [class.is-muted]="view === 'create'"
+    [attr.aria-label]="'COMPONENT.ENTRY.SELECT_TITLE' | transloco"
+  >
+    <button
+      *ngFor="let slot of slots; trackBy: trackBySlot"
+      class="entry-menu-item"
+      role="option"
+      [class.is-focused]="slot.index === focusedSlot"
+      [class.is-locked]="slot.locked && !slot.character"
+      [attr.aria-selected]="slot.index === focusedSlot"
+      [attr.aria-disabled]="slot.locked && !slot.character"
+      [disabled]="busy || view === 'create'"
+      (mouseenter)="focus(slot)"
+      (focus)="focus(slot)"
+      (click)="openDetail(slot)"
+    >
+      <ng-container *ngIf="slot.character as character; else noCharacter">{{ character.name }}</ng-container>
+      <ng-template #noCharacter>
+        {{ (slot.locked ? 'COMPONENT.ENTRY.LOCKED_SLOT' : 'COMPONENT.ENTRY.EMPTY_SLOT') | transloco }}
+      </ng-template>
+    </button>
+    <button class="entry-menu-item entry-menu-quit" [disabled]="view === 'create'" (click)="quit()">
+      {{ 'COMPONENT.ENTRY.QUIT' | transloco }}
+    </button>
+  </nav>
 
-  <!-- Connection / auth failure -->
-  <section class="entry-panel entry-failed" *ngIf="view === 'failed'" role="alert">
-    <ng-container *ngIf="auth$ | async as auth">
-      <h2>{{ 'COMPONENT.ENTRY.FAILED_TITLE' | transloco }}</h2>
-      <p>{{ (auth.errorKey || 'COMPONENT.ENTRY.ERROR.CONNECTION') | transloco }}</p>
-    </ng-container>
-    <div class="entry-actions">
-      <button class="entry-button entry-button-primary" (click)="retry()">
-        {{ 'COMPONENT.ENTRY.RETRY' | transloco }}
-      </button>
-      <button class="entry-button" (click)="quit()">
-        {{ 'COMPONENT.ENTRY.QUIT' | transloco }}
-      </button>
+  <!-- Detail column for the focused slot -->
+  <section class="entry-column" *ngIf="view === 'select' && detailOpen && focusedSlotData as slot">
+    <div class="entry-column-body">
+      <ng-container *ngIf="slot.character as character; else emptyDetail">
+        <h2 class="entry-column-title">{{ character.name }}</h2>
+        <p class="entry-column-line">{{ raceKey(character) | transloco }} · {{ sexKey(character) | transloco }}</p>
+        <p class="entry-column-line">{{ 'COMPONENT.ENTRY.LEVEL' | transloco: { level: character.level } }}</p>
+      </ng-container>
+      <ng-template #emptyDetail>
+        <h2 class="entry-column-title">
+          {{ (slot.locked ? 'COMPONENT.ENTRY.LOCKED_SLOT' : 'COMPONENT.ENTRY.CREATE_TITLE') | transloco }}
+        </h2>
+        <p class="entry-column-line">
+          {{ (slot.locked ? 'COMPONENT.ENTRY.LOCKED_HINT' : 'COMPONENT.ENTRY.CREATE_INTRO') | transloco }}
+        </p>
+      </ng-template>
     </div>
-  </section>
-
-  <!-- Character select -->
-  <section class="entry-select" *ngIf="view === 'select'">
-    <h1 class="entry-title">{{ 'COMPONENT.ENTRY.SELECT_TITLE' | transloco }}</h1>
-    <div class="entry-slots" role="listbox" [attr.aria-label]="'COMPONENT.ENTRY.SELECT_TITLE' | transloco">
-      <button
-        *ngFor="let slot of slots; trackBy: trackBySlot"
-        class="entry-slot"
-        role="option"
-        [class.is-focused]="slot.index === focusedSlot"
-        [class.is-locked]="slot.locked && !slot.character"
-        [class.is-empty]="!slot.character && !slot.locked"
-        [attr.aria-selected]="slot.index === focusedSlot"
-        [attr.aria-disabled]="slot.locked && !slot.character"
-        [disabled]="busy"
-        (mouseenter)="focus(slot)"
-        (focus)="focus(slot)"
-        (click)="activate(slot)"
-      >
-        <span class="entry-slot-frame" aria-hidden="true"></span>
-
-        <ng-container *ngIf="slot.character as character; else noCharacter">
-          <span class="entry-slot-crest" aria-hidden="true"><i>{{ character.name.charAt(0) }}</i></span>
-          <span class="entry-slot-name">{{ character.name }}</span>
-          <span class="entry-slot-meta">
-            {{ raceKey(character) | transloco }} · {{ sexKey(character) | transloco }}
-          </span>
-          <span class="entry-slot-level">
-            {{ 'COMPONENT.ENTRY.LEVEL' | transloco: { level: character.level } }}
-          </span>
-          <span class="entry-slot-cta">{{ 'COMPONENT.ENTRY.PLAY' | transloco }}</span>
-        </ng-container>
-
-        <ng-template #noCharacter>
-          <ng-container *ngIf="!slot.locked; else lockedSlot">
-            <span class="entry-slot-plus" aria-hidden="true">+</span>
-            <span class="entry-slot-name">{{ 'COMPONENT.ENTRY.EMPTY_SLOT' | transloco }}</span>
-            <span class="entry-slot-cta">{{ 'COMPONENT.ENTRY.CREATE' | transloco }}</span>
-          </ng-container>
-        </ng-template>
-
-        <ng-template #lockedSlot>
-          <span class="entry-slot-lock" aria-hidden="true"></span>
-          <span class="entry-slot-name">{{ 'COMPONENT.ENTRY.LOCKED_SLOT' | transloco }}</span>
-          <span class="entry-slot-meta">{{ 'COMPONENT.ENTRY.LOCKED_HINT' | transloco }}</span>
-        </ng-template>
+    <footer class="entry-keys">
+      <button class="entry-key" *ngIf="!slot.locked || slot.character" (click)="activate(slot)" [disabled]="busy">
+        <kbd>Enter</kbd>{{ (slot.character ? 'COMPONENT.ENTRY.PLAY' : 'COMPONENT.ENTRY.CREATE') | transloco }}
       </button>
-    </div>
-    <footer class="entry-hints">
-      <span><kbd>←</kbd><kbd>→</kbd> {{ 'COMPONENT.ENTRY.HINT_MOVE' | transloco }}</span>
-      <span><kbd>Enter</kbd> {{ 'COMPONENT.ENTRY.HINT_CONFIRM' | transloco }}</span>
-      <button class="entry-link" (click)="quit()">{{ 'COMPONENT.ENTRY.QUIT' | transloco }}</button>
+      <button class="entry-key" (click)="closeDetail()" [disabled]="busy">
+        <kbd>Tab</kbd>{{ 'COMPONENT.ENTRY.CANCEL' | transloco }}
+      </button>
     </footer>
   </section>
 
   <!-- Character create -->
-  <section class="entry-panel entry-create" *ngIf="view === 'create'">
-    <h2>{{ 'COMPONENT.ENTRY.CREATE_TITLE' | transloco }}</h2>
-    <p class="entry-create-intro">{{ 'COMPONENT.ENTRY.CREATE_INTRO' | transloco }}</p>
-    <form (ngSubmit)="submitCreate()" autocomplete="off">
-      <label for="entry-name">{{ 'COMPONENT.ENTRY.NAME_LABEL' | transloco }}</label>
+  <section class="entry-column entry-create" *ngIf="view === 'create'">
+    <form class="entry-column-body" (ngSubmit)="submitCreate()" autocomplete="off">
+      <label class="entry-column-question" for="entry-name">{{ 'COMPONENT.ENTRY.NAME_LABEL' | transloco }}</label>
       <input
         #nameInput
         id="entry-name"
@@ -116,20 +111,33 @@
         [(ngModel)]="name"
         [disabled]="busy"
         [attr.aria-invalid]="!!nameErrorKey"
-        [placeholder]="'COMPONENT.ENTRY.NAME_PLACEHOLDER' | transloco"
       />
       <p class="entry-field-hint" [class.is-error]="!!nameErrorKey" role="alert">
         {{ (nameErrorKey || 'COMPONENT.ENTRY.NAME_RULES') | transloco }}
       </p>
-      <p class="entry-create-note">{{ 'COMPONENT.ENTRY.CREATE_NOTE' | transloco }}</p>
-      <div class="entry-actions">
-        <button type="submit" class="entry-button entry-button-primary" [disabled]="busy">
-          {{ (busy ? 'COMPONENT.ENTRY.CREATING' : 'COMPONENT.ENTRY.CREATE_CONFIRM') | transloco }}
-        </button>
-        <button type="button" class="entry-button" [disabled]="busy" (click)="cancelCreate()">
-          {{ 'COMPONENT.ENTRY.CANCEL' | transloco }}
-        </button>
-      </div>
+      <p class="entry-column-note">{{ 'COMPONENT.ENTRY.CREATE_NOTE' | transloco }}</p>
     </form>
+    <footer class="entry-keys">
+      <button class="entry-key" (click)="submitCreate()" [disabled]="busy">
+        <kbd>Enter</kbd>{{ (busy ? 'COMPONENT.ENTRY.CREATING' : 'COMPONENT.ENTRY.CREATE') | transloco }}
+      </button>
+      <button class="entry-key" (click)="cancelCreate()" [disabled]="busy">
+        <kbd>Tab</kbd>{{ 'COMPONENT.ENTRY.CANCEL' | transloco }}
+      </button>
+    </footer>
+  </section>
+
+  <!-- Connection / auth failure -->
+  <section class="entry-column entry-failed" *ngIf="view === 'failed'" role="alert">
+    <ng-container *ngIf="auth$ | async as auth">
+      <div class="entry-column-body">
+        <h2 class="entry-column-title">{{ 'COMPONENT.ENTRY.FAILED_TITLE' | transloco }}</h2>
+        <p class="entry-column-line">{{ (auth.errorKey || 'COMPONENT.ENTRY.ERROR.CONNECTION') | transloco }}</p>
+      </div>
+    </ng-container>
+    <footer class="entry-keys">
+      <button class="entry-key" (click)="retry()"><kbd>Enter</kbd>{{ 'COMPONENT.ENTRY.RETRY' | transloco }}</button>
+      <button class="entry-key" (click)="quit()"><kbd>Tab</kbd>{{ 'COMPONENT.ENTRY.QUIT' | transloco }}</button>
+    </footer>
   </section>
 </div>

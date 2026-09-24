@@ -1,3 +1,4 @@
+import { TranslocoService } from '@ngneat/transloco';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -40,6 +41,8 @@ const CREATE_ERRORS: Record<number, string> = {
 
 const TIP_COUNT = 6;
 
+const SMOKE_PUFFS = [{"v": 0, "x": -14.0, "y": -10.1, "w": 51.8, "h": 32.1, "o": 0.49, "r0": 13, "r1": -19, "d1": 67, "d2": 12, "dl": -41}, {"v": 1, "x": -9.7, "y": -18.6, "w": 37.8, "h": 23.4, "o": 0.47, "r0": 4, "r1": 14, "d1": 44, "d2": 12, "dl": 0}, {"v": 2, "x": 4.5, "y": -22.4, "w": 43.8, "h": 27.2, "o": 0.47, "r0": 4, "r1": -10, "d1": 42, "d2": 11, "dl": -39}, {"v": 0, "x": 12.5, "y": -26.0, "w": 37.0, "h": 23.0, "o": 0.47, "r0": -7, "r1": -7, "d1": 48, "d2": 11, "dl": -18}, {"v": 1, "x": 18.9, "y": -8.5, "w": 38.8, "h": 24.0, "o": 0.42, "r0": -9, "r1": -8, "d1": 62, "d2": 13, "dl": -1}, {"v": 2, "x": 28.1, "y": -23.1, "w": 38.0, "h": 23.5, "o": 0.29, "r0": -1, "r1": 18, "d1": 38, "d2": 14, "dl": -4}, {"v": 0, "x": 36.6, "y": -16.4, "w": 53.6, "h": 33.3, "o": 0.35, "r0": 10, "r1": 10, "d1": 49, "d2": 9, "dl": -16}, {"v": 1, "x": 50.7, "y": -11.0, "w": 34.5, "h": 21.4, "o": 0.47, "r0": -19, "r1": 15, "d1": 64, "d2": 14, "dl": -24}, {"v": 2, "x": 56.4, "y": -25.1, "w": 34.2, "h": 21.2, "o": 0.32, "r0": -8, "r1": -13, "d1": 53, "d2": 16, "dl": -22}, {"v": 0, "x": 64.7, "y": -21.0, "w": 55.4, "h": 34.4, "o": 0.38, "r0": 17, "r1": 3, "d1": 56, "d2": 9, "dl": -27}, {"v": 1, "x": 77.0, "y": -19.2, "w": 36.2, "h": 22.4, "o": 0.41, "r0": -11, "r1": 1, "d1": 55, "d2": 17, "dl": -5}, {"v": 2, "x": 80.8, "y": -22.5, "w": 41.6, "h": 25.8, "o": 0.3, "r0": -11, "r1": -1, "d1": 68, "d2": 11, "dl": -46}, {"v": 0, "x": 87.5, "y": -15.3, "w": 57.7, "h": 35.8, "o": 0.37, "r0": -5, "r1": 18, "d1": 60, "d2": 13, "dl": -29}, {"v": 1, "x": 101.2, "y": -6.4, "w": 37.5, "h": 23.2, "o": 0.42, "r0": 11, "r1": 1, "d1": 51, "d2": 11, "dl": -46}, {"v": 0, "x": 3.3, "y": 16.8, "w": 37.9, "h": 18.9, "o": 0.16, "r0": -10, "r1": -2, "d1": 61, "d2": 14, "dl": -3}, {"v": 1, "x": 19.5, "y": 11.4, "w": 41.8, "h": 20.9, "o": 0.22, "r0": 12, "r1": -10, "d1": 66, "d2": 19, "dl": -31}, {"v": 2, "x": 21.8, "y": 9.3, "w": 39.6, "h": 19.8, "o": 0.17, "r0": 13, "r1": -11, "d1": 53, "d2": 18, "dl": -52}, {"v": 0, "x": 86.0, "y": 13.5, "w": 43.8, "h": 21.9, "o": 0.17, "r0": -5, "r1": -10, "d1": 52, "d2": 19, "dl": -17}, {"v": 1, "x": 44.8, "y": 12.0, "w": 37.2, "h": 18.6, "o": 0.13, "r0": 10, "r1": 9, "d1": 61, "d2": 12, "dl": -48}, {"v": 2, "x": 45.9, "y": 14.0, "w": 34.3, "h": 17.1, "o": 0.2, "r0": -7, "r1": 9, "d1": 72, "d2": 16, "dl": -60}] as const;
+
 @Component({
   selector: 'app-entry',
   templateUrl: './entry.component.html',
@@ -67,7 +70,10 @@ export class EntryComponent implements OnInit, OnDestroy {
   private readonly subscriptions: Subscription[] = [];
   private tipTimer: ReturnType<typeof setInterval> | null = null;
 
+  public readonly lang$ = this.transloco.langChanges$;
+
   public constructor(
+    private readonly transloco: TranslocoService,
     private readonly entry: EntryService,
     private readonly sound: SoundService,
   ) {}
@@ -120,6 +126,33 @@ export class EntryComponent implements OnInit, OnDestroy {
     return character.sex === 1 ? 'COMPONENT.ENTRY.SEX.FEMALE' : 'COMPONENT.ENTRY.SEX.MALE';
   }
 
+  /** Detail column is closed until the player picks a slot (like the vanilla confirm column). */
+  public detailOpen = false;
+
+  public readonly puffs = SMOKE_PUFFS;
+
+  public openDetail(slot: CharacterSlot): void {
+    if (this.busy) {
+      return;
+    }
+    this.focus(slot);
+    if (!this.detailOpen) {
+      this.sound.play(Sound.Ok);
+    }
+    this.detailOpen = true;
+  }
+
+  public closeDetail(): void {
+    if (this.detailOpen && !this.busy) {
+      this.detailOpen = false;
+      this.sound.play(Sound.Cancel);
+    }
+  }
+
+  public get focusedSlotData(): CharacterSlot | undefined {
+    return this.slots[this.focusedSlot];
+  }
+
   public focus(slot: CharacterSlot): void {
     if (this.focusedSlot !== slot.index) {
       this.focusedSlot = slot.index;
@@ -170,6 +203,7 @@ export class EntryComponent implements OnInit, OnDestroy {
     }
     this.sound.play(Sound.Cancel);
     this.createSlot = null;
+    this.detailOpen = false;
     this.view = 'select';
   }
 
@@ -185,8 +219,18 @@ export class EntryComponent implements OnInit, OnDestroy {
   @HostListener('document:keydown', ['$event'])
   public onKey(event: KeyboardEvent): void {
     if (this.view === 'create') {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' || event.key === 'Tab') {
+        event.preventDefault();
         this.cancelCreate();
+      }
+      return;
+    }
+    if (this.view === 'failed') {
+      if (event.key === 'Enter') {
+        this.retry();
+      } else if (event.key === 'Tab' || event.key === 'Escape') {
+        event.preventDefault();
+        this.quit();
       }
       return;
     }
@@ -198,7 +242,14 @@ export class EntryComponent implements OnInit, OnDestroy {
       event.preventDefault();
       this.focus(this.slots[(this.focusedSlot + step + this.slots.length) % this.slots.length]);
     } else if (event.key === 'Enter') {
-      this.activate(this.slots[this.focusedSlot]);
+      if (this.detailOpen) {
+        this.activate(this.slots[this.focusedSlot]);
+      } else {
+        this.openDetail(this.slots[this.focusedSlot]);
+      }
+    } else if (event.key === 'Tab' || event.key === 'Escape') {
+      event.preventDefault();
+      this.closeDetail();
     }
   }
 
