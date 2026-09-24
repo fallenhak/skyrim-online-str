@@ -1,0 +1,14 @@
+# Renewable encounter configuration (roadmap W12).
+# Copy to Data/renewable_encounters.txt next to the server executable.
+# Form ids are hexadecimal load-order form ids; group and cooldown are decimal.
+#
+#   encounter <cell> <group> [cooldown=<seconds>]   default cooldown: 1800 s
+#   cell      <cell> <group> <extra cell>           another interior of the same dungeon
+#   slot      <cell> <group> <placed ref>           one spawn point (placed actor reference)
+#
+# The ids below are placeholders; replace them with ids from the server's load order.
+
+encounter 0001A2B3 0 cooldown=60
+cell      0001A2B3 0 0001A2B4
+slot      0001A2B3 0 0010F00D
+slot      0001A2B3 0 0010F00E

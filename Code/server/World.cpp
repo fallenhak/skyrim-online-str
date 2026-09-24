@@ -73,9 +73,9 @@ World::World(
     ctx().emplace<ActorPopulationIdentityResolver>(modsComponent, m_recordCollection.get(), ctx().at<ActorPopulationPolicy>());
     ctx().emplace<ActorPopulationAssignmentPolicy>(aEnableHumanoidAssignmentGate, aAllowUnknownActorAssignments);
 
-    // Needs the server load order above to resolve cell ids. Encounters are added by the
-    // encounter configuration, which then calls RestorePersistedState() once.
-    ctx().emplace<RenewableEncounterService>(*this, m_dispatcher, ctx().at<PersistenceService>().GetRenewableEncounterRepository());
+    // Needs the server load order above to resolve cell ids.
+    ctx().emplace<RenewableEncounterService>(*this, m_dispatcher, ctx().at<PersistenceService>().GetRenewableEncounterRepository())
+        .LoadConfiguration(RenewableEncounterService::DefaultConfigPath());
 
     // late initialize the ScriptService to ensure all components are valid
     m_pScriptService = TiltedPhoques::MakeUnique<ScriptService>(*this, m_dispatcher);

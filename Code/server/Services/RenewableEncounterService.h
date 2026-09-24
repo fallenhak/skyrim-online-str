@@ -3,6 +3,7 @@
 #include <Services/RenewableEncounterRegistry.h>
 
 #include <cstdint>
+#include <filesystem>
 
 struct World;
 struct UpdateEvent;
@@ -45,6 +46,15 @@ struct RenewableEncounterService
     [[nodiscard]] RenewableEncounterRegistry& GetRegistry() noexcept { return m_registry; }
     [[nodiscard]] const RenewableEncounterRegistry& GetRegistry() const noexcept { return m_registry; }
     [[nodiscard]] std::uint64_t GetTick() const noexcept { return m_tick; }
+
+    [[nodiscard]] static std::filesystem::path DefaultConfigPath();
+
+    /**
+     * Loads the encounter configuration, then the persisted state for it. Call
+     * once at startup, before any player connects. A missing file means no
+     * renewable encounters; bad lines are logged and skipped.
+     */
+    void LoadConfiguration(const std::filesystem::path& acPath);
 
     /**
      * Applies the persisted state to the configured encounters. Call once,

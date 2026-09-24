@@ -10,7 +10,10 @@
 #include <Events/PlayerLeaveEvent.h>
 #include <Events/UpdateEvent.h>
 
+#include <fstream>
+
 #include <Persistence/RenewableEncounterRepository.h>
+#include <Services/RenewableEncounterConfig.h>
 #include <Services/RenewableEncounterDeathPort.h>
 #include <Services/RenewableEncounterSnapshotMapping.h>
 
@@ -23,6 +26,28 @@ RenewableEncounterService::RenewableEncounterService(World& aWorld, entt::dispat
     , m_exteriorCellChangeConnection(aDispatcher.sink<CharacterExteriorCellChangeEvent>().connect<&RenewableEncounterService::OnExteriorCellChange>(this))
     , m_creatureDeathConnection(aDispatcher.sink<AcceptedCanonicalCreatureDeathEvent>().connect<&RenewableEncounterService::OnCreatureDeath>(this))
 {
+}
+
+std::filesystem::path RenewableEncounterService::DefaultConfigPath()
+{
+    return std::filesystem::current_path() / "Data" / "renewable_encounters.txt";
+}
+
+void RenewableEncounterService::LoadConfiguration(const std::filesystem::path& acPath)
+{
+    std::ifstream file(acPath);
+    if (!file)
+    {
+        spdlog::info("[World] no renewable encounter config at {}, none configured", acPath.string());
+        return;
+    }
+
+    const auto result = LoadRenewableEncounterConfig(file, m_registry);
+    for (const auto& error : result.Errors)
+        spdlog::error("[World] {}: {}", acPath.filename().string(), error);
+
+    spdlog::info("[World] renewable encounters loaded encounters={} cells={} slots={} errors={}", result.Encounters, result.Cells, result.Slots, result.Errors.size());
+    RestorePersistedState();
 }
 
 bool RenewableEncounterService::RestorePersistedState()
