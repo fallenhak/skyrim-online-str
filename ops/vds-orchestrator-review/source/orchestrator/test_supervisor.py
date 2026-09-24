@@ -625,16 +625,21 @@ class SupervisorLogicTests(unittest.TestCase):
             "review": {"type": "FINAL_MILESTONE_OR_QUEUE_REVIEW", "reviewed_phase": {"id": "C17"},
                        "commit_sha": "a" * 40, "next_phase": None},
         }
-        with patch.object(supervisor, "REVIEW_ROOT", Path("review-output")), \
-                patch.object(Path, "write_text", autospec=True) as write_text, \
-                patch.object(supervisor.os, "chmod"):
-            packet = h.make_review_packet("combat", ["final queue review"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.object(supervisor, "REVIEW_ROOT", Path(tmpdir)), \
+                    patch.object(supervisor.os, "chmod"):
+                packet = h.make_review_packet("combat", ["final queue review"])
+                first_text = packet.read_text(encoding="utf-8")
+                with patch.object(supervisor, "utc_now", return_value="2099-12-31T23:59:59Z"):
+                    repeated_packet = h.make_review_packet("combat", ["final queue review"])
+                repeated_text = repeated_packet.read_text(encoding="utf-8")
         self.assertEqual(packet.name, "combat-FINAL.md")
-        text = write_text.call_args.args[1]
-        self.assertIn("FINAL_MILESTONE_OR_QUEUE_REVIEW", text)
-        self.assertIn("APPROVE (close the empty engineering queue)", text)
-        self.assertIn("RETRY (reopen the last completed phase for bounded repair)", text)
-        self.assertIn("Runtime and milestone acceptance remain human decisions", text)
+        self.assertEqual(first_text, repeated_text)
+        self.assertNotIn("Generated:", first_text)
+        self.assertIn("FINAL_MILESTONE_OR_QUEUE_REVIEW", first_text)
+        self.assertIn("APPROVE (close the empty engineering queue)", first_text)
+        self.assertIn("RETRY (reopen the last completed phase for bounded repair)", first_text)
+        self.assertIn("Runtime and milestone acceptance remain human decisions", first_text)
 
     def test_daemon_owned_approve_applies_to_current_memory_and_emits_receipt(self) -> None:
         h = Harness()
@@ -1308,6 +1313,41 @@ class SupervisorLogicTests(unittest.TestCase):
         )
         self.assertEqual(evidence_error["status"], "RESOLVED")
         self.assertEqual(h.state["architect_review"]["queue"], ["exact-sha-review"])
+
+    def test_pending_review_refresh_keeps_timestamp_for_unchanged_exact_ci(self) -> None:
+        h = Harness()
+        h.runtime_owner = False
+        h._control_plane_valid = lambda: True
+        head = "a" * 40
+        runs = [
+            {"workflowName": "Build windows", "headSha": head, "status": "completed", "conclusion": "success", "databaseId": 2},
+            {"workflowName": "Build linux", "headSha": head, "status": "completed", "conclusion": "success", "databaseId": 1},
+        ]
+        aggregate = supervisor.aggregate_required_workflows(
+            runs, h.config["required_workflows"], head
+        )
+        observed_at = "2000-01-01T00:00:00+00:00"
+        h.state["lanes"]["combat"] = {
+            "state": "NEEDS_SOL_REVIEW", "phase_id": "A12", "last_commit": head,
+            "ci": {
+                "status": aggregate["status"], "conclusion": "success", "sha": head,
+                "run_id": None, "url": None,
+                "required_workflows": aggregate["required"],
+                "missing_workflows": aggregate["missing"],
+                "running_workflows": aggregate["running"],
+                "failure_workflows": aggregate["failures"],
+                "observed_at": observed_at,
+            },
+            "review": {
+                "type": "CURRENT_PHASE_REVIEW", "commit_sha": head,
+                "reviewed_phase": {"id": "A12"},
+            },
+        }
+        h.state["architect_review"] = {"evidence_errors": {}}
+        h.ci_run_list = lambda _sha: (0, runs, "")
+
+        self.assertFalse(h._refresh_pending_review_ci())
+        self.assertEqual(h.state["lanes"]["combat"]["ci"]["observed_at"], observed_at)
 
     def test_required_workflows_partial_completion_waits(self) -> None:
         for running_name in ("Build linux", "Build windows"):

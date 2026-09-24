@@ -4759,7 +4759,7 @@ an actually failing command is not a validation gap.
                 continue
 
             aggregate = aggregate_required_workflows(runs, required, sha)
-            lane["ci"] = {
+            refreshed_ci = {
                 "status": aggregate["status"],
                 "conclusion": "success" if aggregate["status"] == "PASS" else None,
                 "sha": sha,
@@ -4771,7 +4771,15 @@ an actually failing command is not a validation gap.
                 "failure_workflows": aggregate["failures"],
                 "observed_at": utc_now(),
             }
-            changed = True
+            stable_ci_fields = (
+                "status", "conclusion", "sha", "required_workflows",
+                "missing_workflows", "running_workflows", "failure_workflows",
+            )
+            if all(ci.get(field) == refreshed_ci.get(field) for field in stable_ci_fields):
+                refreshed_ci["observed_at"] = ci.get("observed_at") or refreshed_ci["observed_at"]
+            if ci != refreshed_ci:
+                lane["ci"] = refreshed_ci
+                changed = True
 
             evidence_complete = (
                 not aggregate["missing"]
@@ -5666,7 +5674,6 @@ invalidates the approval before any worker can start.
         unresolved = "\n".join(f"- {item}" for item in reasons)
         body = f"""# Skyrim lane review packet: {lane_name} / {phase}
 
-Generated: {utc_now()}
 Branch: {lane['branch']}
 Worktree: {lane['worktree']}
 Issue: #{lane['issue']}
