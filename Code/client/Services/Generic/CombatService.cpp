@@ -47,12 +47,16 @@ void CombatService::OnProjectileLaunchedEvent(const ProjectileLaunchedEvent& acE
     auto view = m_world.view<FormIdComponent, LocalComponent>();
     const auto shooterEntityIt = std::find_if(std::begin(view), std::end(view), [shooterFormId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == shooterFormId; });
 
+    // Remote shooters are launched from the owner's broadcast; only locally owned ones are sent.
     if (shooterEntityIt == std::end(view))
         return;
 
     LocalComponent& localComponent = view.get<LocalComponent>(*shooterEntityIt);
     if (localComponent.OwnershipEpoch == 0)
+    {
+        spdlog::warn("[Projectile] not sent: local shooter {:X} has no ownership epoch", shooterFormId);
         return;
+    }
 
     ProjectileLaunchRequest request{};
 
@@ -89,7 +93,9 @@ void CombatService::OnProjectileLaunchedEvent(const ProjectileLaunchedEvent& acE
     request.UnkBool1 = acEvent.UnkBool1;
     request.UnkBool2 = acEvent.UnkBool2;
 
-    m_transport.Send(request);
+    const bool sent = m_transport.Send(request);
+    spdlog::info("[Projectile] launch {} shooter {:X} (server {:X}, epoch {}), base {:X}, weapon {:X}, ammo {:X}, spell {:X}",
+        sent ? "sent" : "NOT sent", shooterFormId, request.ShooterID, request.OwnershipEpoch, acEvent.ProjectileBaseID, acEvent.WeaponID, acEvent.AmmoID, acEvent.SpellID);
 }
 
 void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMessage) const noexcept
@@ -98,7 +104,10 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
         !std::isfinite(acMessage.OriginX) || !std::isfinite(acMessage.OriginY) || !std::isfinite(acMessage.OriginZ) ||
         !std::isfinite(acMessage.ZAngle) || !std::isfinite(acMessage.XAngle) || !std::isfinite(acMessage.YAngle) ||
         !std::isfinite(acMessage.Power) || !std::isfinite(acMessage.Scale))
+    {
+        spdlog::warn("[Projectile] ignored notify for shooter {:X}: invalid epoch, casting source or parameters", acMessage.ShooterID);
         return;
+    }
 
     ModSystem& modSystem = World::Get().GetModSystem();
 
@@ -111,7 +120,7 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
 
     if (remoteIt == std::end(remoteView))
     {
-        spdlog::warn("Shooter with remote id {:X} not found.", acMessage.ShooterID);
+        spdlog::warn("[Projectile] shooter with remote id {:X} (epoch {}) not found", acMessage.ShooterID, acMessage.OwnershipEpoch);
         return;
     }
 
@@ -126,13 +135,16 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
 
     if (!launchData.pParentCell)
     {
-        spdlog::warn("Cannot launch projectile, invalid parent cell: {:X}", cParentCellId);
+        spdlog::warn("[Projectile] cannot launch for shooter {:X}, invalid parent cell: {:X}", acMessage.ShooterID, cParentCellId);
         return;
     }
 
     launchData.pShooter = Cast<TESObjectREFR>(TESForm::GetById(formIdComponent.Id));
     if (!launchData.pShooter)
+    {
+        spdlog::warn("[Projectile] cannot launch, shooter reference {:X} is not loaded", formIdComponent.Id);
         return;
+    }
 
     launchData.Origin.x = acMessage.OriginX;
     launchData.Origin.y = acMessage.OriginY;
@@ -175,6 +187,9 @@ void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMes
     BSPointerHandle<Projectile> result;
 
     Projectile::Launch(&result, launchData);
+
+    spdlog::info("[Projectile] launched remote shooter {:X} (server {:X}), base {:X}, weapon {:X}, ammo {:X}, projectile base resolved: {}",
+        formIdComponent.Id, acMessage.ShooterID, cProjectileBaseId, cFromWeaponId, cFromAmmoId, launchData.pProjectileBase != nullptr);
 }
 
 void CombatService::OnHitEvent(const HitEvent& acEvent) const noexcept

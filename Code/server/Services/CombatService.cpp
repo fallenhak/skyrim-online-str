@@ -273,14 +273,19 @@ void CombatService::OnProjectileLaunchRequest(const PacketEvent<ProjectileLaunch
     const bool shooterExists = shooterIt != characterView.end();
     const bool isCurrentOwner = shooterExists && characterView.get<OwnerComponent>(*shooterIt).IsCurrentOwner(acMessage.pPlayer, packet.OwnershipEpoch);
     if (!ProjectileLaunchAuthorityPolicy::IsAuthorized(shooterExists, shooterExists, isCurrentOwner, packet.OwnershipEpoch))
+    {
+        spdlog::warn("[Projectile] rejected launch from player {:X}: shooter {:X} exists {}, current owner {}, epoch {}",
+            acMessage.pPlayer->GetId(), packet.ShooterID, shooterExists, isCurrentOwner, packet.OwnershipEpoch);
         return;
+    }
 
     if (!ProjectileLaunchAuthorityPolicy::HasFiniteParameters(
-            packet.OriginX, packet.OriginY, packet.OriginZ, packet.ZAngle, packet.XAngle, packet.YAngle, packet.Power, packet.Scale))
+            packet.OriginX, packet.OriginY, packet.OriginZ, packet.ZAngle, packet.XAngle, packet.YAngle, packet.Power, packet.Scale) ||
+        packet.CastingSource < 0 || packet.CastingSource >= 4)
+    {
+        spdlog::warn("[Projectile] rejected launch from player {:X} for shooter {:X}: invalid parameters", acMessage.pPlayer->GetId(), packet.ShooterID);
         return;
-
-    if (packet.CastingSource < 0 || packet.CastingSource >= 4)
-        return;
+    }
 
     NotifyProjectileLaunch notify{};
 
