@@ -1,3 +1,9 @@
+// Message headers expect TiltedCore to be included first (the server gets it from its pch).
+#include <TiltedCore/Stl.hpp>
+#include <TiltedCore/Allocator.hpp>
+#include <TiltedCore/Buffer.hpp>
+#include <TiltedCore/Serialization.hpp>
+
 #include <Services/CharacterRemoval.h>
 
 #include <catch2/catch.hpp>
