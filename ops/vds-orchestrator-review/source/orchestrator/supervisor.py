@@ -4694,6 +4694,102 @@ an actually failing command is not a validation gap.
         except json.JSONDecodeError:
             return 1, [], "GitHub CLI returned invalid JSON"
 
+    def _refresh_pending_review_ci(self) -> bool:
+        """Refresh exact-SHA Actions evidence before assembling a pending lane review."""
+        required = [
+            str(item) for item in self.config.get("required_workflows", [])
+            if str(item).strip()
+        ]
+        if not required:
+            return False
+
+        changed = False
+        now = time.time()
+        refresh_interval = max(10, int(self.config.get("review_ci_refresh_interval_seconds", 60)))
+        review_state = self.state.setdefault("architect_review", {})
+        evidence_errors = review_state.setdefault("evidence_errors", {})
+        for lane_name in LANE_ORDER:
+            lane = self.state.get("lanes", {}).get(lane_name, {})
+            if not isinstance(lane, dict):
+                continue
+            review = lane.get("review", {})
+            if (lane.get("state") != "NEEDS_SOL_REVIEW"
+                    or review.get("type") not in {"CURRENT_PHASE_REVIEW", "POST_PHASE_CHECKPOINT"}):
+                continue
+            sha = str(review.get("commit_sha") or lane.get("last_commit") or "")
+            if not re.fullmatch(r"[0-9a-f]{40,64}", sha):
+                continue
+
+            ci = lane.get("ci", {})
+            if not isinstance(ci, dict):
+                ci = {}
+            observed_at = parse_time(str(ci.get("observed_at") or ""))
+            if ci.get("sha") == sha and observed_at and now - observed_at < refresh_interval:
+                continue
+
+            code, runs, error = self.ci_run_list(sha)
+            if code != 0:
+                refreshed = dict(ci)
+                refreshed.update({
+                    "sha": sha,
+                    "observed_at": utc_now(),
+                    "refresh_error": redact(error or "GitHub Actions query failed")[:1200],
+                })
+                lane["ci"] = refreshed
+                changed = True
+                self.log(f"pending-review CI refresh failed: {refreshed['refresh_error']}", lane_name)
+                continue
+
+            aggregate = aggregate_required_workflows(runs, required, sha)
+            lane["ci"] = {
+                "status": aggregate["status"],
+                "conclusion": "success" if aggregate["status"] == "PASS" else None,
+                "sha": sha,
+                "run_id": None,
+                "url": None,
+                "required_workflows": aggregate["required"],
+                "missing_workflows": aggregate["missing"],
+                "running_workflows": aggregate["running"],
+                "failure_workflows": aggregate["failures"],
+                "observed_at": utc_now(),
+            }
+            changed = True
+
+            evidence_complete = (
+                not aggregate["missing"]
+                and len(aggregate["required"]) == len(required)
+                and all(
+                    row.get("sha") == sha
+                    and row.get("status")
+                    and (str(row.get("status")).lower() != "completed" or row.get("conclusion"))
+                    for row in aggregate["required"]
+                )
+            )
+            if evidence_complete:
+                reviewed_phase = review.get("reviewed_phase")
+                phase_id = str(
+                    (reviewed_phase.get("id") if isinstance(reviewed_phase, Mapping) else None)
+                    or lane.get("phase_id") or ""
+                )
+                for item in evidence_errors.values():
+                    if (not isinstance(item, dict)
+                            or item.get("lane") != lane_name
+                            or item.get("phase") != phase_id
+                            or item.get("reviewed_sha") != sha
+                            or item.get("status") != "REQUIRES_INFRA_REVIEW"
+                            or item.get("error_code") not in {
+                                "EXACT_SHA_CI_MISSING", "EXACT_SHA_CI_WORKFLOW_MISSING",
+                            }):
+                        continue
+                    item.update({
+                        "status": "EVIDENCE_ERROR",
+                        "next_retry_at": 0,
+                        "reason": "exact-SHA workflow evidence was refreshed from GitHub Actions",
+                        "last_seen_at": utc_now(),
+                    })
+                    changed = True
+        return changed
+
     def fetch_ci_failure(self, run_id: int) -> str:
         code, out, err = self.command([
             "gh", "run", "view", str(run_id), "--repo", self.config["repo"],
@@ -5368,7 +5464,11 @@ an actually failing command is not a validation gap.
         return counter
 
     def queue_sol_reviews(self) -> int:
-        return super().queue_sol_reviews()
+        refreshed = self._refresh_pending_review_ci()
+        queued = super().queue_sol_reviews()
+        if refreshed:
+            self.save_state()
+        return queued
 
     def make_task_review_packet(self, task: ScheduledTask, reason: str) -> Path:
         """Write bounded metadata for a roadmap-native pre-task Sol gate."""

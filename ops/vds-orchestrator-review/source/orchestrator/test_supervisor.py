@@ -1186,6 +1186,54 @@ class SupervisorLogicTests(unittest.TestCase):
         result = supervisor.aggregate_required_workflows(runs, ["Build linux", "Build windows"], "abc")
         self.assertEqual(result["status"], "PASS")
 
+    def test_pending_review_refreshes_exact_sha_ci_and_reopens_missing_evidence(self) -> None:
+        h = Harness()
+        h.runtime_owner = False
+        h._control_plane_valid = lambda: True
+        head = "a" * 40
+        phase = "A12"
+        h.state["control_plane"] = {"applied_sha": "control-plane-sha"}
+        h.state["lanes"]["combat"] = {
+            "state": "NEEDS_SOL_REVIEW", "phase_id": phase, "last_commit": head,
+            "worker_attempt": 0, "ci": {"status": "NOT_RUN", "sha": head},
+            "review": {
+                "type": "CURRENT_PHASE_REVIEW", "commit_sha": head,
+                "reviewed_phase": {"id": phase}, "review_tier": "normal",
+                "selected_model": "gpt-6-luna", "selected_reasoning_effort": "max",
+            },
+        }
+        evidence_error = {
+            "lane": "combat", "phase": phase, "reviewed_sha": head,
+            "review_type": "CURRENT_PHASE_REVIEW", "status": "REQUIRES_INFRA_REVIEW",
+            "error_code": "EXACT_SHA_CI_WORKFLOW_MISSING", "attempts": 3,
+        }
+        h.state["architect_review"] = {
+            "enabled": True, "active_review_id": None, "queue": [], "items": {},
+            "evidence_errors": {"ci-error": evidence_error}, "bundle_failures": {},
+        }
+        h.ci_run_list = lambda sha: (0, [
+            {"workflowName": "Build windows", "headSha": sha, "status": "completed", "conclusion": "success", "databaseId": 2},
+            {"workflowName": "Build linux", "headSha": sha, "status": "completed", "conclusion": "success", "databaseId": 1},
+            {"workflowName": "Build linux", "headSha": "b" * 40, "status": "completed", "conclusion": "success", "databaseId": 3},
+        ], "")
+        review_bundle = {
+            "review_id": "exact-sha-review", "review_state_sha256": "c" * 64,
+            "evidence_version": 3, "bundle_schema_version": 3,
+            "phase": phase, "reviewed_sha": head, "review_type": "CURRENT_PHASE_REVIEW",
+            "worker_attempt": 0, "bundle_dir": "/tmp/bundles/exact-sha-review",
+            "bundle_path": "/tmp/bundles/exact-sha-review/bundle.json",
+        }
+        h.build_review_bundle = lambda _lane: review_bundle
+
+        self.assertEqual(h.queue_sol_reviews(), 1)
+        self.assertEqual(h.state["lanes"]["combat"]["ci"]["status"], "PASS")
+        self.assertEqual(
+            [row["workflow"] for row in h.state["lanes"]["combat"]["ci"]["required_workflows"]],
+            ["Build linux", "Build windows"],
+        )
+        self.assertEqual(evidence_error["status"], "RESOLVED")
+        self.assertEqual(h.state["architect_review"]["queue"], ["exact-sha-review"])
+
     def test_required_workflows_partial_completion_waits(self) -> None:
         for running_name in ("Build linux", "Build windows"):
             other = "Build windows" if running_name == "Build linux" else "Build linux"
