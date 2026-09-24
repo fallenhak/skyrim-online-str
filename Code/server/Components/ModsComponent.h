@@ -42,7 +42,7 @@ struct ModsComponent
 private:
     struct NetworkModIdentity
     {
-        String FilenameKey;
+        TiltedPhoques::String FilenameKey;
         bool IsLite{};
     };
 
