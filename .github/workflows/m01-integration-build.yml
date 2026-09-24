@@ -4,7 +4,14 @@ on:
   push:
     branches:
       - integration/m01-test
+      - fix/launcher-connect
+  pull_request:
   workflow_dispatch:
+
+# A new push to the same PR/branch cancels the run it replaces.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   windows:
@@ -30,6 +37,15 @@ jobs:
         run: |
           git submodule sync --recursive
           git submodule update --init --force --recursive --depth=1
+
+      - name: Cache xmake dependencies
+        uses: actions/cache@v6
+        with:
+          path: ~/.xmake/packages
+          key: tests-ubuntu-24.04-xmake-${{ hashFiles('**/xmake.lua') }}
+          restore-keys: |
+            tests-ubuntu-24.04-xmake-
+            ubuntu-24.04-xmake-
 
       - name: Setup xmake
         uses: xmake-io/github-action-setup-xmake@v1
