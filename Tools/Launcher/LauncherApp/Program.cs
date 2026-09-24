@@ -61,7 +61,7 @@ internal sealed class FirstRunInstallForm : Form
         LauncherVisualTheme.StyleButton(browse);
         browse.Click += (_, _) => { using var dialog = new FolderBrowserDialog { SelectedPath = _path.Text, Description = "Launcher kurulum klas\u00f6r\u00fcn\u00fc se\u00e7in." }; if (dialog.ShowDialog(this) == DialogResult.OK) { _path.Text = Path.Combine(dialog.SelectedPath, "SkyrimOnlineSTR"); UpdateSpace(); } };
         row.Controls.Add(browse); layout.Controls.Add(row, 0, 2);
-        layout.Controls.Add(new Label { Text = "Stock Game i\u00e7in yakla\u015f\u0131k 15 GB bo\u015f alan gerekir. Kurulum klas\u00f6r\u00fc Steam kitapl\u0131\u011f\u0131n\u0131n i\u00e7inde olamaz.", AutoSize = true, ForeColor = Color.FromArgb(138, 138, 138), Margin = new Padding(0, 12, 0, 8) }, 0, 3);
+        layout.Controls.Add(new Label { Text = "Stock Game i\u00e7in yakla\u015f\u0131k 15 GB bo\u015f alan gerekir. Kurulum klas\u00f6r\u00fc Steam'in steamapps klas\u00f6r\u00fcn\u00fcn i\u00e7inde olamaz.", AutoSize = true, ForeColor = Color.FromArgb(138, 138, 138), Margin = new Padding(0, 12, 0, 8) }, 0, 3);
         layout.Controls.Add(_space, 0, 4);
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
         var install = new Button { Text = "Kur", Width = 120, Height = 38 };
@@ -93,7 +93,7 @@ internal sealed class FirstRunInstallForm : Form
         {
             var full = Path.GetFullPath(_path.Text);
             if (IsInSteamLibrary(full))
-                throw new InvalidOperationException("Kurulum klas\u00f6r\u00fc Steam kitapl\u0131\u011f\u0131n\u0131n i\u00e7inde olamaz. \u00d6rne\u011fin C:\\Games\\SkyrimOnlineSTR se\u00e7in.");
+                throw new InvalidOperationException("Kurulum klas\u00f6r\u00fc Steam'in steamapps klasörünün içinde olamaz. Başka bir klasör seçin.");
             var root = Path.GetPathRoot(full)!;
             if (new DriveInfo(root).AvailableFreeSpace < 15L * 1024 * 1024 * 1024)
                 return MessageBox.Show(this, "Bu s\u00fcr\u00fcc\u00fcde Stock Game i\u00e7in yakla\u015f\u0131k 15 GB bo\u015f alan yok. Yine de kuruluma devam edilsin mi?", "Bo\u015f alan az", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
@@ -106,7 +106,8 @@ internal sealed class FirstRunInstallForm : Form
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
         foreach (var gameDirectory in SteamLocator.FindGameDirectories())
         {
-            var library = Path.GetFullPath(Path.Combine(gameDirectory, "..", "..", ".."));
+            // Only the Steam-managed steamapps folder is off limits; other folders in a library root are fine.
+            var library = Path.GetFullPath(Path.Combine(gameDirectory, "..", ".."));
             if (string.Equals(full, library, StringComparison.OrdinalIgnoreCase) ||
                 full.StartsWith(Path.TrimEndingDirectorySeparator(library) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return true;
         }
