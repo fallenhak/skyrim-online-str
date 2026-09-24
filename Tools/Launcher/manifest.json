@@ -68,6 +68,17 @@
       "target": "data",
       "order": 40,
       "stripPrefix": "Data"
+    },
+    {
+      "id": "crash-logger",
+      "name": "Crash Logger SSE AE VR (PDB support)",
+      "version": "1.24.0",
+      "url": "http://87.76.146.253:8088/skyrim-online-str/assets/crash-logger.zip",
+      "sha256": "e2742b7461c9ac4145be675d70756c6e6fb75b57bf44c25fa66649bc94ace5cf",
+      "size": 10883241,
+      "target": "data",
+      "order": 50,
+      "stripPrefix": "Data"
     }
   ]
 }

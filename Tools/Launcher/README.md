@@ -62,7 +62,7 @@ Envanter `Default` profilinden 24 Eylül 2026 14:40 (İstanbul) anlık görünt�
 
 | Profil bileşeni | `meta.ini` sürümü | Kaynak / Nexus mod/file kimliği | Launcher |
 |---|---|---|---|
-| Crash Logger SSE AE VR | 1.25.0 | Nexus 59818 / 792670 | Uyumluluk 1.7.104 için belirtilmediği için dışarıda |
+| Crash Logger SSE AE VR (PDB support) | 1.24.0 | Nexus 59818 | Dağıtımda; Burak'ın 1.7.104 kurulumunda çalıştı ve JContainers çökmesini teşhis etti |
 | JContainers STR 1.7.104 (devre dışı) | Özel v4.2.13.2-rwf build | `modID=0`; uyumluluk görevi derlemesi | Etkinleştirilene kadar dışarıda |
 | EngineFixes 1.7.104 (STR build) | Özel 7.0.21 build | `modID=0`; kaynak commit `b289e3d` | Dahil |
 | Address Library for SKSE Plugins | 13.0.0 | Nexus 32444 / 795954 | Dahil |
@@ -70,12 +70,12 @@ Envanter `Default` profilinden 24 Eylül 2026 14:40 (İstanbul) anlık görünt�
 | SSE Engine Fixes preloader (`Root`) | 7.0.0 | Nexus 17230 / 725261 | Dahil |
 | Skyrim Script Extender (SKSE64) | 2.3.1.0 | Nexus 30379 / 795992 | Dahil |
 
-En yeni Nexus JContainers 4.3.2 (16495 / file 800245) 1.7.104 desteğini bildiriyor ve STR düzeltmesi upstream'e birleşmiş durumda. Ancak bu Nexus DLL'i 1.7.104'te çalıştırılmadı. Burak'ın ayrı v4.2.13.2-rwf derlemesi Papyrus fonksiyon kaydı sırasında çöktüğünden özel build dağıtılmıyor. Bu MO2 anlık görüntüsünde JContainers klasörü de devre dışı; manifestte JContainers yok. Crash Logger 1.25.0 Nexus sayfası hedef runtime'ı belirtmediğinden 1.7.104 uyumu doğrulanmadı ve dağıtıma alınmadı. Skyrim Souls RE etkin profilde yoktur ve resmi 3.1.2 DLL'i hedef runtime'ı desteklemez.
+En yeni Nexus JContainers 4.3.2 (16495 / file 800245) 1.7.104 desteğini bildiriyor ve STR düzeltmesi upstream'e birleşmiş durumda. Ancak bu Nexus DLL'i 1.7.104'te çalıştırılmadı. Burak'ın ayrı v4.2.13.2-rwf derlemesi Papyrus fonksiyon kaydı sırasında çöktüğünden özel build dağıtılmıyor. Bu MO2 anlık görüntüsünde JContainers klasörü de devre dışı; manifestte JContainers yok. Crash Logger'ın Nexus sayfası 1.7.104'ü belirtmiyor, ancak MO2 profilindeki 1.24.0 sürümü 1.7.104'te oyunda çalıştı (2026-09-24 crash raporu) ve test build'de çökme teşhisi için dağıtılıyor. Skyrim Souls RE etkin profilde yoktur ve resmi 3.1.2 DLL'i hedef runtime'ı desteklemez.
 
 | `downloads` arşivi | Bayt | Not |
 |---|---:|---|
 | Address Library All-in-One v13 | 6,640,552 | Nexus 32444 / 795954 |
-| CrashLogger 1.25.0 | 7,201,578 | Nexus 59818 / 792670; dağıtıma alınmadı |
+| crash-logger.zip (1.24.0, PDB destekli) | 10,883,241 | Nexus 59818; dağıtımda |
 | Engine Fixes SKSE64 Preloader | 25,080 | Nexus 17230 / 725261; Root Builder kök dosyası |
 | Mod Organizer 2.5.2 | 149,660,212 | Kurulum arşivi; dağıtıma alınmadı |
 | Root Builder 5.1.1 | 957,191 | Nexus 31720 / 707262; MO2 eklentisi |
