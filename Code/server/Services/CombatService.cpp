@@ -22,6 +22,7 @@ CombatService::CombatService(World& aWorld, entt::dispatcher& aDispatcher) noexc
     m_projectileLaunchConnection = aDispatcher.sink<PacketEvent<ProjectileLaunchRequest>>().connect<&CombatService::OnProjectileLaunchRequest>(this);
     m_hitObservationConnection = aDispatcher.sink<PacketEvent<CombatHitObservationRequest>>().connect<&CombatService::OnHitObservationRequest>(this);
     m_healthDecreaseConnection = aDispatcher.sink<AcceptedCanonicalHealthDecreaseEvent>().connect<&CombatService::OnCanonicalHealthDecrease>(this);
+    m_correlatedObservationConnection = aDispatcher.sink<CorrelatedCombatObservationEvent>().connect<&CombatService::OnCorrelatedCombatObservation>(this);
 }
 
 void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservationRequest>& acMessage) noexcept
@@ -110,6 +111,57 @@ void CombatService::OnCanonicalHealthDecrease(const AcceptedCanonicalHealthDecre
     // In particular, no submitted health delta or damage magnitude crosses
     // this boundary.
     m_dispatcher.trigger(CorrelatedCombatObservationEvent{*observation});
+}
+
+void CombatService::OnCorrelatedCombatObservation(const CorrelatedCombatObservationEvent& acEvent) noexcept
+{
+    const auto observation = acEvent.ToObservation();
+    if (!observation.IsWellFormed() || observation.ObservedTick == 0 ||
+        observation.AttackerServerId == observation.TargetServerId)
+        return;
+
+    const auto targetEntity = static_cast<entt::entity>(observation.TargetServerId);
+    if (!m_world.valid(targetEntity))
+        return;
+
+    const auto* const pTargetLifecycle = m_world.try_get<ActorLifecycleComponent>(targetEntity);
+    if (!pTargetLifecycle || !pTargetLifecycle->IsValid() ||
+        pTargetLifecycle->GetGeneration() != observation.TargetLifecycleGeneration)
+        return;
+
+    const auto attackerEntity = static_cast<entt::entity>(observation.AttackerServerId);
+    const auto attackerView = m_world.view<CharacterComponent, OwnerComponent, PersistentCharacterComponent>();
+    const auto attackerIt = attackerView.find(attackerEntity);
+    if (attackerIt == attackerView.end())
+        return;
+
+    const auto& character = attackerView.get<CharacterComponent>(*attackerIt);
+    const auto& owner = attackerView.get<OwnerComponent>(*attackerIt);
+    const auto& persistentCharacter = attackerView.get<PersistentCharacterComponent>(*attackerIt);
+    Player* const pCurrentOwner = owner.GetOwner();
+    const auto* const pSession = pCurrentOwner ? m_world.GetSessionService().Get(pCurrentOwner->GetConnectionId()) : nullptr;
+
+    CombatAttackerAuthorizationInput attackerInput{};
+    attackerInput.SessionIsInWorld = pSession && pSession->State == SessionState::kInWorld;
+    if (pSession)
+        attackerInput.SessionCharacterId = pSession->SelectedCharacterId;
+    attackerInput.AttackerServerId = observation.AttackerServerId;
+    attackerInput.AttackerEntityExists = true;
+    attackerInput.AttackerIsPlayerCharacter = character.IsPlayer();
+    attackerInput.OwnerExists = pCurrentOwner != nullptr;
+    attackerInput.SenderIsCurrentOwner = owner.IsCurrentOwner(pCurrentOwner, observation.AttackerOwnershipEpoch);
+    attackerInput.RequestedOwnershipEpoch = observation.AttackerOwnershipEpoch;
+    attackerInput.CurrentOwnershipEpoch = owner.OwnershipEpoch;
+    attackerInput.ServerResolvedPersistentCharacterId = persistentCharacter.CharacterId;
+
+    const auto attackerCharacterId = CombatAttackerAuthorizationPolicy::ResolveAuthorizedCharacterId(attackerInput);
+    if (!attackerCharacterId)
+        return;
+
+    const CombatContributionLedger::Target target{
+        observation.TargetServerId,
+        observation.TargetLifecycleGeneration};
+    (void)m_contributionLedger.RecordValidatedContribution(target, *attackerCharacterId, observation.ObservedTick);
 }
 
 void CombatService::OnProjectileLaunchRequest(const PacketEvent<ProjectileLaunchRequest>& acMessage) const noexcept
