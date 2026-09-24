@@ -17,6 +17,7 @@
 #include <Messages/NotifyLockChange.h>
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
+#include <Messages/NotifyObjectHarvested.h>
 
 #include <PlayerCharacter.h>
 #include <Forms/TESObjectCELL.h>
@@ -40,6 +41,7 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Trans
     m_assignObjectConnection = aDispatcher.sink<AssignObjectsResponse>().connect<&ObjectService::OnAssignObjectsResponse>(this);
     m_scriptAnimationConnection = aDispatcher.sink<ScriptAnimationEvent>().connect<&ObjectService::OnScriptAnimationEvent>(this);
     m_scriptAnimationNotifyConnection = aDispatcher.sink<NotifyScriptAnimation>().connect<&ObjectService::OnNotifyScriptAnimation>(this);
+    m_objectHarvestedConnection = aDispatcher.sink<NotifyObjectHarvested>().connect<&ObjectService::OnObjectHarvestedNotify>(this);
 
     EventDispatcherManager::Get()->activateEvent.RegisterSink(this);
 }
@@ -109,6 +111,42 @@ bool ShouldSyncObject(const TESObjectREFR* apObject, const Set<const TESObjectRE
     }
 }
 
+// Flora and ingredients placed in the plugin (eggs, mushrooms). Dropped items are
+// temporaries with machine-local ids and cannot be matched across clients.
+bool IsHarvestableObject(const TESObjectREFR* apObject) noexcept
+{
+    if (!apObject || !apObject->baseForm || apObject->IsTemporary())
+        return false;
+
+    const FormType cType = apObject->baseForm->formType;
+    return cType == FormType::Flora || cType == FormType::Ingredient;
+}
+
+// Refs this service disabled, so a server reset re-enables only those and
+// never a ref a quest or script disabled.
+Set<uint32_t> s_harvestDisabledRefs{};
+
+// Another player took it: hide it here too. Only the harvester receives the item.
+void ApplyHarvested(TESObjectREFR* apObject) noexcept
+{
+    if (!IsHarvestableObject(apObject) || apObject->IsDisabled())
+        return;
+
+    spdlog::info("Object {:X} harvested remotely, disabling", apObject->formID);
+    apObject->Disable();
+    s_harvestDisabledRefs.insert(apObject->formID);
+}
+
+// The server lost or reset the harvest state (cell emptied, respawn).
+void RestoreHarvested(TESObjectREFR* apObject) noexcept
+{
+    if (!apObject || !s_harvestDisabledRefs.erase(apObject->formID))
+        return;
+
+    spdlog::info("Object {:X} no longer harvested, enabling", apObject->formID);
+    apObject->Enable();
+}
+
 void ObjectService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
     // TODO(cosideci): clear object components
@@ -144,7 +182,7 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
         }
     }
 
-    Vector<FormType> formTypes = {FormType::Container, FormType::Door};
+    Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient};
     // Door seemed to be at the wrong form id (29, now 32), verify this.
     Vector<TESObjectREFR*> objects = pCell->GetRefsByFormTypes(formTypes);
 
@@ -154,6 +192,10 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
 
     for (TESObjectREFR* pObject : objects)
     {
+        const bool cIsHarvestType = pObject->baseForm->formType == FormType::Flora || pObject->baseForm->formType == FormType::Ingredient;
+        if (cIsHarvestType && !IsHarvestableObject(pObject))
+            continue;
+
         if (!ShouldSyncObject(pObject, playerStashContainers))
         {
             spdlog::warn("Excluding sync for {:X}", pObject->formID);
@@ -180,6 +222,8 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
         if (pObject->baseForm->formType == FormType::Container)
             objectData.CurrentInventory = pObject->GetInventory();
 
+        objectData.IsHarvestable = cIsHarvestType;
+
         request.Objects.push_back(objectData);
     }
 
@@ -199,6 +243,12 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
         }
 
         CreateObjectEntity(pObject->formID, objectData.ServerId);
+
+        // Late join / re-entry: someone harvested it before we arrived.
+        if (objectData.IsHarvestable && objectData.IsHarvested)
+            ApplyHarvested(pObject);
+        else if (objectData.IsHarvestable)
+            RestoreHarvested(pObject);
 
         if (objectData.IsStateUntrusted)
             continue;
@@ -338,6 +388,22 @@ void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
     // unsure if these flags are the best, but these are passed with the papyrus Activate fn
     // might be an idea to have the client send the flags through NotifyActivate
     pObject->Activate(pActor, 0, nullptr, 1, 0);
+}
+
+void ObjectService::OnObjectHarvestedNotify(const NotifyObjectHarvested& acMessage) noexcept
+{
+    const uint32_t cObjectId = World::Get().GetModSystem().GetGameId(acMessage.Id);
+    TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(cObjectId));
+    if (!pObject)
+    {
+        spdlog::error("{}: object not found for form id {:X}", __FUNCTION__, cObjectId);
+        return;
+    }
+
+    if (acMessage.IsHarvested)
+        ApplyHarvested(pObject);
+    else
+        RestoreHarvested(pObject);
 }
 
 void ObjectService::OnLockChange(const LockChangeEvent& acEvent) noexcept

@@ -10,6 +10,7 @@ enum class FormType : uint8_t
     Container = 28,
     Door = 29,
     Ingredient = 30,
+    Flora = 39,
     Weapon = 41,
     Ammo = 42,
     Npc = 43,

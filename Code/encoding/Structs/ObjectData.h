@@ -24,4 +24,7 @@ struct ObjectData
     LockData CurrentLockData{};
     Inventory CurrentInventory{};
     bool IsStateUntrusted{};
+    // Flora or a placed ingredient: activation flips server-owned harvest state.
+    bool IsHarvestable{};
+    bool IsHarvested{};
 };

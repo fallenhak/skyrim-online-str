@@ -89,6 +89,42 @@ struct ObjectInteractionPolicy final
                 aObjectCell, aObjectWorldSpace, aObjectCoords);
     }
 
+    // Harvest state is owned by the server, not reported by the client: the
+    // first authorized in-range activation flips it, later ones are rejected.
+    // It therefore does not need the trusted-state baseline CanActivate needs.
+    template <typename TOnHarvest>
+    [[nodiscard]] static bool TryHarvest(
+        const bool aIsHarvestable,
+        bool& aHarvested,
+        const bool aActorExists,
+        const bool aOwnedBySender,
+        const GameId& aRequestedCell,
+        const GameId& aSenderCell,
+        const GameId& aSenderWorldSpace,
+        const GridCellCoords& aSenderCoords,
+        const GameId& aActivatorCell,
+        const GameId& aActivatorWorldSpace,
+        const GridCellCoords& aActivatorCoords,
+        const GameId& aObjectCell,
+        const GameId& aObjectWorldSpace,
+        const GridCellCoords& aObjectCoords,
+        TOnHarvest&& aOnHarvest)
+    {
+        if (!aIsHarvestable || aHarvested)
+            return false;
+
+        if (!CanActivate(
+                true, aActorExists, aOwnedBySender,
+                aRequestedCell, aSenderCell, aSenderWorldSpace, aSenderCoords,
+                aActivatorCell, aActivatorWorldSpace, aActivatorCoords,
+                aObjectCell, aObjectWorldSpace, aObjectCoords))
+            return false;
+
+        aHarvested = true;
+        std::forward<TOnHarvest>(aOnHarvest)();
+        return true;
+    }
+
     [[nodiscard]] static constexpr bool IsValidOpenState(const uint8_t aOpenState) noexcept
     {
         // TESObjectREFR::OpenState defines kNone, kOpen, and kOpening.

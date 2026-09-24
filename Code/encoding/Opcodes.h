@@ -127,5 +127,6 @@ enum ServerOpcode : unsigned char
     kNotifyCharacterAssignmentRejected,
     kNotifyCharacterSlots,
     kNotifyCharacterCreateResult,
+    kNotifyObjectHarvested,
     kServerOpcodeMax
 };
