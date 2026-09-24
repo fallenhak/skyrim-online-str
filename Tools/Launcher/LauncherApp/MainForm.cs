@@ -293,7 +293,11 @@ internal sealed class MainForm : Form
             }
             SetStatus("Modlar yerleştiriliyor…");
             _isInstalled = false;
-            await new ModDeploymentService().ApplyAsync(_stockGame, _stateDirectory, manifest.Mods, archives, _operation.Token);
+            // Developer escape hatch: keep locally copied client binaries instead of re-extracting packages.
+            if (File.Exists(Path.Combine(AppContext.BaseDirectory, "dev-skip-update.flag")))
+                AppendLog("dev-skip-update.flag bulundu: paketler yeniden yerleştirilmedi.");
+            else
+                await new ModDeploymentService().ApplyAsync(_stockGame, _stateDirectory, manifest.Mods, archives, _operation.Token);
             if (!stockGame.IsLockedCopyValid(_stockGame, RequiredGameVersion))
                 throw new InvalidDataException("Mod kurulumu SkyrimSE.exe sürüm kilidini değiştirdi. Stock Game kurulumu doğrulanamadı.");
             _progress.Value = 100;

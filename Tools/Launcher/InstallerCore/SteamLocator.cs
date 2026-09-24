@@ -48,7 +48,7 @@ public static partial class SteamLocator
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Path.GetFullPath(steamRoot) };
         var depth = 0;
-        foreach (var line in vdf.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        foreach (var line in vdf.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
         {
             var oldFormat = depth == 1 ? OldLibraryPathPattern().Match(line) : Match.Empty;
             var newFormat = depth >= 2 ? NewLibraryPathPattern().Match(line) : Match.Empty;
