@@ -1,5 +1,5 @@
 a96657e9e904aa6257483bf7c5a6946722c99e7e0d600d44d1beecac44128180  ./CHANGELOG.md
-a0960567144c1c11a796a730c2b0c0848d4a0a22e543ba8b1f0d5c38dcca7d7b  ./README.md
+5127f2095115cf1d27d4dc02cf4946ec7d455db16278da88071fc4ac48de5e31  ./README.md
 e32f963a331649ad4105be2c587be4831faa1af17c508812cfc52d1a705cf408  ./source/config/supervisor.json
 e55a1ec373a8ef3792b269c287c55ae29cbec86def41c27acb6dba7e7925cd0d  ./source/logrotate/skyrim-dev
 abe98313d0f5e857d18258ec234bd3f9ae8f9967148fb79080112754e2b2a6ef  ./source/management/skyrim-dev
@@ -34,7 +34,7 @@ c5245031efced8f62815df5c0ffcd62321aa8859c9e0c946df53080a09d4cc60  ./verification
 1c590c305ae18006647ce7634b0ea1ee9d408b072982b77ca7639ac0be549a0f  ./verification/evidence-v3-20260923/final-state-redacted.json
 8aee91604e76f7228ecbb1bf26d40966b6671e4858179c7b794811c6a61a8fee  ./verification/evidence-v3-20260923/live-follow-up-state-20260923T1236Z-redacted.json
 9a4c12c2570d2b3042442c74d08b1acce9b9858db98198fad407e1bea48fc13b  ./verification/evidence-v3-20260923/live-follow-up-state-redacted.json
-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ./verification/evidence-v3-20260923/preflight-state-redacted.json
+a22febac9f92430463d57b8fc0256d281dee9cc785199384315f0efcbdafe41d  ./verification/evidence-v3-20260923/preflight-state-redacted.json
 74c516c89e9fce44a6e90c6a5b5c2b230943fe20570a245c28fa8a27b9b87920  ./verification/file-origins.md
 9af13f4f217214a3ad7fa1014cdebdab1bdc85156eb01eaf9f02b6214308efcd  ./verification/final-review-retry-deployment.md
 b6268778deb02d2000ca034b428967f73d7489b251351cff9543d3aa967708b7  ./verification/final-verification.md
