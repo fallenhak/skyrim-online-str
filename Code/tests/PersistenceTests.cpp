@@ -241,7 +241,7 @@ TEST(PersistenceCharacterRepository, EnforcesOwnerScopedSlotAndCaseInsensitiveNa
     first.NeedsRaceMenu = true;
     const auto firstResult = repository.CreateCharacterInSlot(first);
     ASSERT_EQ(firstResult.Status, Persistence::CharacterRepositoryCreateStatus::kCreated);
-    ASSERT_GT(firstResult.CharacterId, 0);
+    ASSERT_GT(firstResult.Id, 0);
 
     auto occupiedSlot = first;
     occupiedSlot.Name = "Different Name";
