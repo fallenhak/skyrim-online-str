@@ -39,7 +39,8 @@ struct CombatTargetAuthorizationPolicy final
 {
     [[nodiscard]] static bool IsAuthorized(const CombatTargetAuthorizationInput& acInput) noexcept
     {
-        if (acInput.TargetServerId == std::numeric_limits<ServerId>::max() || !acInput.TargetEntityExists || acInput.ObservedTargetLifecycleGeneration == 0 ||
+        if (acInput.TargetServerId == std::numeric_limits<CombatTargetAuthorizationInput::ServerId>::max() || !acInput.TargetEntityExists ||
+            acInput.ObservedTargetLifecycleGeneration == 0 ||
             acInput.pCurrentTargetLifecycle == nullptr || !acInput.pCurrentTargetLifecycle->IsValid() ||
             acInput.pCurrentTargetLifecycle->GetGeneration() != acInput.ObservedTargetLifecycleGeneration ||
             acInput.pTargetPopulationIdentity == nullptr ||
