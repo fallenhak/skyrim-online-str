@@ -420,3 +420,7 @@ The final verification record contains the exact control-plane SHA, service and
 worker state, lane HEAD/CI status, reviewer queue, test results, and deployed
 source hashes. M01 runtime acceptance remains human-gated.
 See [verification/final-verification.md](verification/final-verification.md).
+
+## VDS final-review-retry deployment - 2026-09-24
+
+The exact source commit, backup, hashes, test and health results, and blocked final re-review attempt are recorded in [the deployment verification](verification/final-review-retry-deployment.md).
