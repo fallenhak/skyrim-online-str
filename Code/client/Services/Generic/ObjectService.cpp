@@ -1,4 +1,5 @@
 #include <Services/ObjectService.h>
+#include <Services/LocalOnlyActivators.h>
 
 #include <World.h>
 #include <Utils.h>
@@ -158,10 +159,12 @@ bool IsSyncedDoor(TESObjectREFR* apObject) noexcept
 }
 
 // Plugin-placed activators (levers, chains, buttons, puzzle pillars). Their
-// script runs on every client when the server relays the activation.
+// script runs on every client when the server relays the activation. Ore veins,
+// shrines, crafting triggers and critters stay local (LocalOnlyActivators).
 bool IsSyncedActivator(const TESObjectREFR* apObject) noexcept
 {
-    return apObject && apObject->baseForm && !apObject->IsTemporary() && apObject->baseForm->formType == FormType::Activator;
+    return apObject && apObject->baseForm && !apObject->IsTemporary() && apObject->baseForm->formType == FormType::Activator &&
+        !LocalOnlyActivators::Contains(apObject->baseForm->formID);
 }
 
 void ObjectService::OnDisconnected(const DisconnectedEvent&) noexcept
