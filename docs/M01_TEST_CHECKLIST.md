@@ -22,7 +22,7 @@ Bu build, `integration/m01-test` dalındaki lane çalışmalarını birlikte den
 
 ## Bleak Falls Barrow encounter denemesi
 
-- [ ] Başlangıç logunda `renewable encounters loaded encounters=1 cells=2` ve `errors=0` olduğunu doğrula.
+- [ ] Başlangıç logunda `renewable encounters loaded encounters=1 cells=1 slots=38` ve `errors=0` olduğunu doğrula.
 - [ ] A ve B, `BleakFallsBarrow01` hücresine girsin; sonra ikinci bölüme (`BleakFallsBarrow02`) geçsin.
 - [ ] Örnek listedeki encounter slotlarında bulunan draugr ve skeever'ları öldürün. Encounter ancak tanımlı slotların hepsi öldüğünde temizlenmiş sayılır.
 - [ ] Son slot öldüğünde `[World] encounter cleared` satırının bir kez yazıldığını kontrol et.
