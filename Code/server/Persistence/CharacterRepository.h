@@ -20,7 +20,7 @@ enum class CharacterRepositoryCreateStatus : std::uint8_t
 struct CharacterRepositoryCreateResult final
 {
     CharacterRepositoryCreateStatus Status{CharacterRepositoryCreateStatus::kSlotOccupied};
-    CharacterId CharacterId{};
+    CharacterId Id{};
 };
 
 struct CharacterRepository final

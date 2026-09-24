@@ -200,12 +200,12 @@ CharacterCreateResult SessionService::CreateCharacter(const ConnectionId_t aConn
             return {CharacterCreateStatus::kSlotOccupied, 0};
         if (result.Status == Persistence::CharacterRepositoryCreateStatus::kNameTaken)
             return {CharacterCreateStatus::kNameTaken, 0};
-        if (result.CharacterId <= 0)
+        if (result.Id <= 0)
             return {CharacterCreateStatus::kError, 0};
 
-        pSession->SelectedCharacterId = result.CharacterId;
+        pSession->SelectedCharacterId = result.Id;
         pSession->State = SessionState::kCharacterSelected;
-        return {CharacterCreateStatus::kSuccess, static_cast<std::uint64_t>(result.CharacterId)};
+        return {CharacterCreateStatus::kSuccess, static_cast<std::uint64_t>(result.Id)};
     }
     catch (const std::exception& exception)
     {
