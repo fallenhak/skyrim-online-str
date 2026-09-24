@@ -142,6 +142,9 @@ void CharacterService::ReconcileActorData(
 
     apActor->SetActorValues(acActorData.InitialActorValues);
 
+    if (aApplyInventory && m_pendingLeveledConforms.find(apActor->formID) != m_pendingLeveledConforms.end())
+        m_conformInventories.insert_or_assign(apActor->formID, acActorData.InitialInventory);
+
     if (aApplyInventory)
     {
         const Inventory currentInventory = apActor->GetActorInventory();
@@ -255,6 +258,7 @@ void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
         pActor->GetExtension()->Reconciliation = ActorExtension::ReconciliationStage::None;
 
     m_pendingLeveledConforms.erase(acEvent.FormId);
+    m_conformInventories.erase(acEvent.FormId);
 
     auto view = m_world.view<FormIdComponent>();
     const auto entityIt = std::find_if(view.begin(), view.end(), [view, formId = acEvent.FormId](auto aEntity) { return view.get<FormIdComponent>(aEntity).Id == formId; });
@@ -338,6 +342,7 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
     }
 
     m_pendingLeveledConforms.clear();
+    m_conformInventories.clear();
 
     for (const auto formId : disabledForms)
         RestoreOwnedPopulationDisable(formId);
@@ -1862,6 +1867,7 @@ void CharacterService::ProcessLeveledConforms() noexcept
             if (pActor)
                 pActor->GetExtension()->Reconciliation = ReconciliationStage::None;
 
+            m_conformInventories.erase(it->first);
             it = m_pendingLeveledConforms.erase(it);
             continue;
         }
@@ -1875,6 +1881,7 @@ void CharacterService::ProcessLeveledConforms() noexcept
                 spdlog::info("Abandoning leveled NPC reconciliation for actor {:X} because its cell is not attached, pick: {:X}, cell state: {}, disabled: {}",
                     it->first, cPickFormId, pCell ? static_cast<int>(pCell->cellState) : -1, pActor->IsDisabled());
                 stage = ReconciliationStage::None;
+                m_conformInventories.erase(it->first);
                 it = m_pendingLeveledConforms.erase(it);
                 continue;
             }
@@ -1889,6 +1896,13 @@ void CharacterService::ProcessLeveledConforms() noexcept
             {
                 spdlog::info("Completed leveled NPC reconciliation for actor {:X}, base: {:X}, pick: {:X}", it->first, pActor->baseForm->formID, cPickFormId);
                 stage = ReconciliationStage::None;
+                if (const auto inventoryIt = m_conformInventories.find(it->first); inventoryIt != m_conformInventories.end())
+                {
+                    if (pActor->GetExtension()->IsRemote())
+                        pActor->SetActorInventory(inventoryIt->second);
+
+                    m_conformInventories.erase(inventoryIt);
+                }
                 it = m_pendingLeveledConforms.erase(it);
                 continue;
             }
@@ -1912,6 +1926,7 @@ void CharacterService::ProcessLeveledConforms() noexcept
                 spdlog::warn("Could not rebuild leveled actor {:X} from its original base and pick {:X}, keeping local base", it->first, cPickFormId);
             pActor->EnableImpl();
                 stage = ReconciliationStage::None;
+                m_conformInventories.erase(it->first);
                 it = m_pendingLeveledConforms.erase(it);
                 continue;
             }
@@ -1938,6 +1953,10 @@ void CharacterService::ProcessLeveledConforms() noexcept
 
         // DisableImpl() is asynchronous: it only queues a request to disable this actor.
         // Wait for the disabled flag and old 3D removal before changing the base.
+        // A restarted rebuild keeps the first snapshot; the current equipment may already be the reset one.
+        if (pActor->GetExtension()->IsRemote())
+            m_conformInventories.try_emplace(it->first, pActor->GetActorInventory());
+
         pActor->DisableImpl();
         stage = ReconciliationStage::WaitingForDisable;
         ++it;

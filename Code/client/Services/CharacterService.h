@@ -137,6 +137,9 @@ private:
     // Actor form ID -> pick form ID. The active stage lives in ActorExtension.
     // Written from const message handlers, drained by ProcessLeveledConforms.
     mutable Map<uint32_t, uint32_t> m_pendingLeveledConforms{};
+    // Owner inventory of remote actors under reconciliation. Swapping the base resets the
+    // equipment, so it is reapplied once the rebuilt 3D is ready.
+    mutable Map<uint32_t, Inventory> m_conformInventories{};
     mutable PopulationDisableTracker m_populationDisableTracker{};
 
     entt::scoped_connection m_referenceAddedConnection;
