@@ -30,4 +30,6 @@ struct ObjectComponent
     // Set by the discovering client; receivers re-check the local base form type.
     bool IsDoor{};
     DoorState Door{};
+    bool IsActivator{};
+    ActivatorState Activator{};
 };

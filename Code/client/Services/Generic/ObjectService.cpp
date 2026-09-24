@@ -157,6 +157,13 @@ bool IsSyncedDoor(TESObjectREFR* apObject) noexcept
     return !pExtraData || !pExtraData->Contains(ExtraDataType::Teleport);
 }
 
+// Plugin-placed activators (levers, chains, buttons, puzzle pillars). Their
+// script runs on every client when the server relays the activation.
+bool IsSyncedActivator(const TESObjectREFR* apObject) noexcept
+{
+    return apObject && apObject->baseForm && !apObject->IsTemporary() && apObject->baseForm->formType == FormType::Activator;
+}
+
 void ObjectService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
     // TODO(cosideci): clear object components
@@ -192,7 +199,7 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
         }
     }
 
-    Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient};
+    Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient, FormType::Activator};
     // Door seemed to be at the wrong form id (29, now 32), verify this.
     Vector<TESObjectREFR*> objects = pCell->GetRefsByFormTypes(formTypes);
 
@@ -204,6 +211,9 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
     {
         const bool cIsHarvestType = pObject->baseForm->formType == FormType::Flora || pObject->baseForm->formType == FormType::Ingredient;
         if (cIsHarvestType && !IsHarvestableObject(pObject))
+            continue;
+
+        if (pObject->baseForm->formType == FormType::Activator && !IsSyncedActivator(pObject))
             continue;
 
         if (!ShouldSyncObject(pObject, playerStashContainers))
@@ -235,6 +245,7 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
         objectData.IsHarvestable = cIsHarvestType;
         objectData.IsHarvestItem = pObject->baseForm->formType == FormType::Ingredient;
         objectData.IsDoor = IsSyncedDoor(pObject);
+        objectData.IsActivator = IsSyncedActivator(pObject);
 
         request.Objects.push_back(objectData);
     }
@@ -273,6 +284,10 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
                 pObject->SetOpen(objectData.IsDoorOpen);
             }
         }
+
+        // Script state behind an activator cannot be replayed; a late joiner only learns it was used.
+        if (objectData.IsActivator && objectData.ActivationCount > 0)
+            spdlog::info("Activator {:X} was activated {} time(s) before we arrived", pObject->formID, objectData.ActivationCount);
 
         if (objectData.IsStateUntrusted)
             continue;

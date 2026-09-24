@@ -595,3 +595,26 @@ TEST_CASE("StringCache", "[encoding.string_cache]")
         REQUIRE(update == recvUpdate);
     }
 }
+
+TEST_CASE("AssignObjectsResponse carries activator state", "[encoding.object_authority][activator]")
+{
+    AssignObjectsResponse sent;
+    ObjectData object{};
+    object.ServerId = 11;
+    object.Id = GameId{1, 0x500};
+    object.IsActivator = true;
+    object.ActivationCount = 300;
+    sent.Objects.push_back(object);
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<AssignObjectsResponse>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(received->Objects.size() == 1);
+    REQUIRE(received->Objects.front().ActivationCount == 300);
+    REQUIRE(received->Objects.front() == object);
+}

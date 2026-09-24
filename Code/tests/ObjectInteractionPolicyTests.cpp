@@ -302,3 +302,64 @@ TEST_CASE("Door toggle keeps the activation checks", "[object_authority][door]")
         REQUIRE(pDoor->Relays == 0);
     }
 }
+
+namespace
+{
+struct ActivatorFixture
+{
+    GameId Cell{0, 2};
+    GameId WorldSpace{0, 0x3C};
+    GridCellCoords Coords{10, -10};
+    ActivatorState State{};
+    std::size_t Relays{};
+
+    bool Activate(const std::uint64_t aTick, const bool aIsActivator = true, const bool aOwned = true, const GridCellCoords aActorCoords = {10, -10})
+    {
+        return ObjectInteractionPolicy::TryRelayActivator(
+            aIsActivator, State, aTick, true, aOwned, Cell, Cell, WorldSpace, Coords,
+            Cell, WorldSpace, aActorCoords, Cell, WorldSpace, Coords, [&] { ++Relays; });
+    }
+};
+} // namespace
+
+TEST_CASE("Each accepted activator activation is counted and relayed", "[object_authority][activator]")
+{
+    ActivatorFixture lever;
+    REQUIRE(lever.Activate(5));
+    REQUIRE(lever.Activate(6));
+    REQUIRE(lever.Activate(40));
+    REQUIRE(lever.State.ActivationCount == 3);
+    REQUIRE(lever.State.LastActivationTick == 40);
+    REQUIRE(lever.Relays == 3);
+}
+
+TEST_CASE("A second activation in the same server second is rejected", "[object_authority][activator]")
+{
+    ActivatorFixture lever;
+    REQUIRE(lever.Activate(5));
+    REQUIRE_FALSE(lever.Activate(5)); // another player pulled it in the same tick
+    REQUIRE(lever.State.ActivationCount == 1);
+    REQUIRE(lever.Relays == 1);
+
+    // The very first activation is never blocked by the cooldown, even at tick 0.
+    ActivatorFixture fresh;
+    REQUIRE(fresh.Activate(0));
+}
+
+TEST_CASE("Activator relay keeps the activation checks", "[object_authority][activator]")
+{
+    ActivatorFixture notActivator;
+    REQUIRE_FALSE(notActivator.Activate(1, false));
+
+    ActivatorFixture foreign;
+    REQUIRE_FALSE(foreign.Activate(1, true, false));
+
+    ActivatorFixture far;
+    REQUIRE_FALSE(far.Activate(1, true, true, GridCellCoords{40, 40}));
+
+    for (const auto* pFixture : {&notActivator, &foreign, &far})
+    {
+        REQUIRE(pFixture->State.ActivationCount == 0);
+        REQUIRE(pFixture->Relays == 0);
+    }
+}
