@@ -2,6 +2,13 @@
 
 Bu build, `integration/m01-test` dalındaki lane çalışmalarını birlikte dener. Batuhan'ın Bleak Falls Barrow örnek encounter'ı ve PR #42'deki encounter modeli temel alınmıştır.
 
+## İstemci kurulumu
+
+- [ ] Skyrim Special Edition **1.7.104** (Steam) kurulu olsun.
+- [ ] Modları elle kurma. Launcher şunları kurar: SKSE 2.3.1, Address Library, Engine Fixes, Display Tweaks, Crash Logger.
+- [ ] Launcher Steam kurulumuna dokunmaz. Ayrı bir Stock Game kopyası üzerinde çalışır ve CC dosyalarını o kopyadan temizler.
+- [ ] Çökme olursa `Documents/My Games/Skyrim Special Edition/SKSE/crash-*.log` dosyasını ya da launcher'ın hata raporu ZIP'ini #40'a ekle.
+
 ## Sunucuyu hazırlama
 
 - [ ] Aynı build'den iki Windows istemcisi ve Linux sunucusu kullan.
@@ -9,16 +16,21 @@ Bu build, `integration/m01-test` dalındaki lane çalışmalarını birlikte den
 - [ ] `config/STServer.ini` içinde `[Identity]` bölümüne `bDevTestMode=true` ekle. Ayar normalde kapalıdır; üretim sunucusunda açma.
 - [ ] Sunucu portunu `10578` yap ve VDS güvenlik duvarında UDP 10578'e izin ver.
 - [ ] İsteğe bağlı: `[GameServer]` bölümünde `sPassword` belirle. İki oyuncu da aynı parolayı kullanır.
-- [ ] Sunucuyu başlat. Logda bir encounter, iki hücre ve hatasız slot yüklemesini doğrula.
+- [ ] Sunucuyu başlat, sonra açılışı doğrula:
+  `python3 Tools/Scripts/server_startup_check.py --root /var/lib/sos-server`
+  Port 10578, `Data/renewable_encounters.txt` ve `errors=0` kontrol edilir. Hepsi geçerse çıkış kodu 0, bir kontrol düşerse 1 olur. Diğer lane'lerin kabul satırları `--require '<regex>'` ile eklenebilir.
 
-## İki oyuncuyla bağlanma
+## Giriş ve karakter oluşturma
 
-- [ ] İki oyuncu da aynı Windows paketini ve desteklenen Skyrim sürümünü kullansın.
-- [ ] Her istemcide **Connect** ekranına sunucu IP'sini ve `10578` portunu gir. Parola ayarlıysa parolayı da gir.
-- [ ] Bağlantı kabul edilince **Character Select** ekranında mevcut save karakterini seç.
-- [ ] İlk bağlantıda liste boşsa test modu karakteri save'den kaydeder; Character Select listesini yeniden iste.
-- [ ] İki oyuncu da dünyaya girdikten sonra Bleak Falls Barrow'a birlikte git.
-- [ ] Bir oyuncu çıkıp yeniden bağlanınca kayıtlı karakterin adı, ırkı, cinsiyeti, seviyesi ve konumu korunduğunu kontrol et.
+Ayrıntılı elle kontrol listesi: `docs/CHARACTER_ENTRY_NO_SAVE.md`.
+
+- [ ] Launcher'dan **Discord ile giriş** yap, sonra **Oyna**'ya bas. Oyun açılınca sunucuya otomatik bağlanır, IP/port girilmez.
+- [ ] Karakter ekranında 3 slot görünmeli: slot 0 açık, slot 1 ve 2 kilitli.
+- [ ] Yeni karakter oluştur (ad). Helgen sahnesi / `MQ101` başlamadan karakter **Whiterun, Kynareth Mabedi**'nde doğmalı. Merdiven, duvar ya da zemin altında olmamalı.
+- [ ] RaceMenu açılmalı. Kapatınca dünyaya geçilmeli, seçilen ırk ve cinsiyet karakter listesinde kalmalı.
+- [ ] Save yüklenmez: oyun klasöründe yeni `.ess` oluşmamalı.
+- [ ] İki oyuncu da dünyaya girdikten sonra birbirini görmeli, sonra Bleak Falls Barrow'a birlikte gitmeli.
+- [ ] Bir oyuncu çıkıp yeniden girince RaceMenu açılmamalı. Karakter kayıtlı son konumda başlamalı; adı, ırkı, cinsiyeti ve seviyesi korunmalı.
 
 ## Bleak Falls Barrow encounter denemesi
 
@@ -29,6 +41,12 @@ Bu build, `integration/m01-test` dalındaki lane çalışmalarını birlikte den
 - [ ] 60 saniyelik bekleme sırasında oyunculardan biri iki encounter hücresinden birinde kalsın. Encounter sıfırlanmamalı.
 - [ ] İki oyuncu da dungeon dışına çıkınca `[World] encounter reset ... epoch=0->1` satırını kontrol et.
 - [ ] Eski epoch'a ait bir test paketi sunulursa yeni epoch'taki actor durumunu değiştirmemeli. Bu paketi üretmek için özel test istemcisi gerekir.
+
+## Test sonrası
+
+- [ ] Sunucu log'unu encounter bazında özetle:
+  `python3 Tools/Scripts/encounter_log_report.py /var/lib/sos-server/logs/STServerOut.log`
+  Her encounter için cleared / blocked / reset sırasını, spawn ve snapshot satırlarını listeler. Sorun bulunmazsa çıkış kodu 0, bulunursa 1 olur. Çıktıyı #40'a ekle.
 
 ## Bilinen sınırlar
 
