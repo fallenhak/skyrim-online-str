@@ -194,3 +194,40 @@ TEST_CASE("Harvest rejects non-harvestable, foreign or out-of-range activations"
     assertRejected(true, true, true, GameId{0, 9}, coords); // forged cell
     assertRejected(true, true, true, objectCell, farCoords); // activator too far from the object
 }
+
+TEST_CASE("Harvested objects respawn after the configured delay", "[object_authority][harvest]")
+{
+    constexpr std::uint64_t cHarvestTick = 100;
+    const std::uint64_t respawnAt = ObjectInteractionPolicy::HarvestRespawnTick(cHarvestTick, false);
+    REQUIRE(respawnAt == cHarvestTick + 30 * 60);
+    REQUIRE(ObjectInteractionPolicy::HarvestRespawnTick(cHarvestTick, true) == cHarvestTick + 60 * 60);
+
+    REQUIRE_FALSE(ObjectInteractionPolicy::IsHarvestRespawnDue(true, respawnAt, respawnAt - 1));
+    REQUIRE(ObjectInteractionPolicy::IsHarvestRespawnDue(true, respawnAt, respawnAt));
+    REQUIRE(ObjectInteractionPolicy::IsHarvestRespawnDue(true, respawnAt, respawnAt + 50));
+
+    // Nothing to respawn when the object was never harvested.
+    REQUIRE_FALSE(ObjectInteractionPolicy::IsHarvestRespawnDue(false, respawnAt, respawnAt + 50));
+}
+
+TEST_CASE("A respawned object can be harvested again", "[object_authority][harvest]")
+{
+    const GameId cell{0, 2};
+    const GameId worldSpace{0, 0x3C};
+    const GridCellCoords coords{10, -10};
+    const auto harvest = [&](bool& harvested)
+    {
+        return ObjectInteractionPolicy::TryHarvest(
+            true, harvested, true, true, cell, cell, worldSpace, coords,
+            cell, worldSpace, coords, cell, worldSpace, coords, [] {});
+    };
+
+    bool harvested = false;
+    REQUIRE(harvest(harvested));
+    const std::uint64_t respawnAt = ObjectInteractionPolicy::HarvestRespawnTick(0, false);
+    REQUIRE_FALSE(harvest(harvested));
+
+    REQUIRE(ObjectInteractionPolicy::IsHarvestRespawnDue(harvested, respawnAt, respawnAt));
+    harvested = false;
+    REQUIRE(harvest(harvested));
+}

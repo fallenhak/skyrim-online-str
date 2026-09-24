@@ -223,6 +223,7 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
             objectData.CurrentInventory = pObject->GetInventory();
 
         objectData.IsHarvestable = cIsHarvestType;
+        objectData.IsHarvestItem = pObject->baseForm->formType == FormType::Ingredient;
 
         request.Objects.push_back(objectData);
     }

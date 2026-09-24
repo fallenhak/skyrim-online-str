@@ -99,6 +99,7 @@ TEST_CASE("AssignObjectsResponse carries harvest state", "[encoding.object_autho
     object.IsStateUntrusted = true;
     object.IsHarvestable = true;
     object.IsHarvested = true;
+    object.IsHarvestItem = true;
     sent.Objects.push_back(object);
 
     Buffer buffer(1000);
@@ -112,6 +113,7 @@ TEST_CASE("AssignObjectsResponse carries harvest state", "[encoding.object_autho
     REQUIRE(received->Objects.size() == 1);
     REQUIRE(received->Objects.front().IsHarvestable);
     REQUIRE(received->Objects.front().IsHarvested);
+    REQUIRE(received->Objects.front().IsHarvestItem);
     REQUIRE(received->Objects.front() == object);
 }
 

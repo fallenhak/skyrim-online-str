@@ -7,6 +7,7 @@
 #include <Services/PresentationAuthorityPolicy.h>
 
 #include <Events/PlayerLeaveCellEvent.h>
+#include <Events/UpdateEvent.h>
 
 #include <Messages/ActivateRequest.h>
 #include <Messages/NotifyActivate.h>
@@ -26,6 +27,7 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher)
     m_activateConnection = aDispatcher.sink<PacketEvent<ActivateRequest>>().connect<&ObjectService::OnActivate>(this);
     m_lockChangeConnection = aDispatcher.sink<PacketEvent<LockChangeRequest>>().connect<&ObjectService::OnLockChange>(this);
     m_scriptAnimationConnection = aDispatcher.sink<PacketEvent<ScriptAnimationRequest>>().connect<&ObjectService::OnScriptAnimationRequest>(this);
+    m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&ObjectService::OnUpdate>(this);
 }
 
 // TODO(cosideci): the cell handling of objects need to be revamped.
@@ -97,6 +99,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             auto& objectComponent = view.get<ObjectComponent>(*iter);
             objectData.IsStateUntrusted = !objectComponent.HasTrustedState;
             objectData.IsHarvestable = objectComponent.IsHarvestable;
+            objectData.IsHarvestItem = objectComponent.IsHarvestItem;
             objectData.IsHarvested = objectComponent.IsHarvested;
             if (objectComponent.HasTrustedState)
             {
@@ -119,6 +122,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
 
             auto& objectComponent = m_world.emplace<ObjectComponent>(cEntity, acMessage.pPlayer);
             objectComponent.IsHarvestable = object.IsHarvestable;
+            objectComponent.IsHarvestItem = object.IsHarvestable && object.IsHarvestItem;
 
             m_world.emplace<CellIdComponent>(cEntity, object.CellId, object.WorldSpaceId, object.CurrentCoords);
             m_world.emplace<InventoryComponent>(cEntity);
@@ -128,6 +132,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.ServerId = World::ToInteger(cEntity);
             objectData.IsStateUntrusted = true;
             objectData.IsHarvestable = object.IsHarvestable;
+            objectData.IsHarvestItem = objectComponent.IsHarvestItem;
 
             response.Objects.push_back(objectData);
         }
@@ -186,7 +191,9 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
                         pPlayer->Send(notifyHarvested);
                 }
             });
-        if (!harvested)
+        if (harvested)
+            objectComponent.HarvestRespawnAtTick = ObjectInteractionPolicy::HarvestRespawnTick(m_tick, objectComponent.IsHarvestItem);
+        else
             spdlog::info("Harvest of {:X}:{:X} rejected (already harvested or out of range)", packet.Id.ModId, packet.Id.BaseId);
         return;
     }
@@ -209,6 +216,47 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
         {
             pPlayer->Send(notifyActivate);
         }
+    }
+}
+
+void ObjectService::OnUpdate(const UpdateEvent& acEvent) noexcept
+{
+    if (acEvent.Delta <= 0.f)
+        return;
+
+    m_tickAccumulator += acEvent.Delta;
+    while (m_tickAccumulator >= 1.0)
+    {
+        m_tickAccumulator -= 1.0;
+        ++m_tick;
+        RespawnHarvestedObjects();
+    }
+}
+
+void ObjectService::RespawnHarvestedObjects() noexcept
+{
+    auto view = m_world.view<FormIdComponent, ObjectComponent, CellIdComponent>();
+    for (auto entity : view)
+    {
+        auto& objectComponent = view.get<ObjectComponent>(entity);
+        if (!ObjectInteractionPolicy::IsHarvestRespawnDue(objectComponent.IsHarvested, objectComponent.HarvestRespawnAtTick, m_tick))
+            continue;
+
+        objectComponent.IsHarvested = false;
+        objectComponent.HarvestRespawnAtTick = 0;
+
+        NotifyObjectHarvested notifyRespawned;
+        notifyRespawned.Id = view.get<FormIdComponent>(entity).Id;
+        notifyRespawned.IsHarvested = false;
+
+        const auto& cell = view.get<CellIdComponent>(entity).Cell;
+        for (Player* pPlayer : m_world.GetPlayerManager())
+        {
+            if (pPlayer->GetCellComponent().Cell == cell)
+                pPlayer->Send(notifyRespawned);
+        }
+
+        spdlog::info("[World] harvest respawn {:X}:{:X} tick={}", notifyRespawned.Id.ModId, notifyRespawned.Id.BaseId, m_tick);
     }
 }
 
