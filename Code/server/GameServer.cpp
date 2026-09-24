@@ -7,6 +7,7 @@
 #include <Events/OwnershipTransferEvent.h>
 #include <Events/PacketEvent.h>
 #include <Events/PlayerJoinEvent.h>
+#include <Services/AuthTokenVerifier.h>
 #include <Events/PlayerLeaveCellEvent.h>
 #include <Events/PlayerLeaveEvent.h>
 #include <Events/UpdateEvent.h>
@@ -37,6 +38,7 @@
 #include <resources/ResourceCollection.h>
 
 #include <limits>
+#include <cstdlib>
 #include <string>
 
 constexpr size_t kMaxServerNameLength = 128u;
@@ -1112,6 +1114,22 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
     }
 #endif
 
+    Auth::SessionClaims signedIdentity{};
+    const bool hasSignedIdentityToken = !acRequest->AuthToken.empty();
+    if (hasSignedIdentityToken)
+    {
+        const char* const hmacSecret = std::getenv("SOS_AUTH_HMAC_SECRET");
+        std::string errorKey;
+        const bool valid = hmacSecret && Auth::VerifySessionToken(acRequest->AuthToken.c_str(), hmacSecret, signedIdentity, errorKey);
+        if (!valid)
+        {
+            serverResponse.AuthErrorKey = errorKey.empty() ? (hmacSecret ? "auth.token_invalid" : "auth.server_misconfigured") : errorKey;
+            spdlog::warn("Rejecting connection {:x}: Discord session token failed server validation ({})", aConnectionId, serverResponse.AuthErrorKey.c_str());
+            sendKick(RT::kInvalidAuthToken);
+            return;
+        }
+    }
+
     if (m_pWorld->GetPlayerManager().Count() >= uMaxPlayerCount.value_as<uint32_t>())
     {
         sendKick(RT::kServerFull);
@@ -1140,7 +1158,7 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
     bool adminPasswordUsed = acRequest->Token == sAdminPassword.value() && !sAdminPassword.empty();
 
     // check if the proper server password was supplied.
-    if (acRequest->Token == sPassword.value() || adminPasswordUsed)
+    if (hasSignedIdentityToken || acRequest->Token == sPassword.value() || adminPasswordUsed)
     {
         if (adminPasswordUsed)
         {
@@ -1223,8 +1241,19 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
 
         Player* pPlayer = m_pWorld->GetPlayerManager().Create(aConnectionId);
         pPlayer->SetEndpoint(remoteAddress);
-        pPlayer->SetDiscordId(acRequest->DiscordId);
-        pPlayer->SetUsername(std::move(acRequest->Username));
+        if (hasSignedIdentityToken)
+        {
+            pPlayer->SetDiscordId(signedIdentity.DiscordId);
+            const TiltedPhoques::String displayName(signedIdentity.DisplayName.c_str());
+            pPlayer->SetUsername(displayName);
+            serverResponse.DisplayName = displayName;
+            serverResponse.AvatarUrl = TiltedPhoques::String(signedIdentity.AvatarUrl.c_str());
+        }
+        else
+        {
+            pPlayer->SetDiscordId(acRequest->DiscordId);
+            pPlayer->SetUsername(std::move(acRequest->Username));
+        }
         pPlayer->SetMods(playerMods);
         pPlayer->SetModIds(playerModsIds);
         pPlayer->SetLevel(acRequest->Level);
@@ -1240,8 +1269,30 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
             return;
         }
 
-        if (!m_pWorld->GetSessionService().MarkAuthenticated(aConnectionId))
+        const bool sessionMarkedAuthenticated = m_pWorld->GetSessionService().MarkAuthenticated(aConnectionId);
+        if (!sessionMarkedAuthenticated)
+        {
             spdlog::warn("Unable to transition session {:x} to identity binding state", aConnectionId);
+            if (hasSignedIdentityToken)
+            {
+                Kick(aConnectionId);
+                m_pWorld->GetSessionService().Remove(aConnectionId);
+                m_pWorld->GetPlayerManager().Remove(pPlayer);
+                return;
+            }
+        }
+        else if (hasSignedIdentityToken)
+        {
+            const std::string ownerProfileId = "discord:" + std::to_string(signedIdentity.DiscordId);
+            if (!m_pWorld->GetSessionService().BindIdentity(aConnectionId, ownerProfileId))
+            {
+                spdlog::warn("Unable to bind signed Discord identity for connection {:x}", aConnectionId);
+                Kick(aConnectionId);
+                m_pWorld->GetSessionService().Remove(aConnectionId);
+                m_pWorld->GetPlayerManager().Remove(pPlayer);
+                return;
+            }
+        }
 
         if (bDevTestMode)
         {

@@ -18,6 +18,8 @@ void ProcessHandler::OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<C
     m_pCoreObject->SetValue("requestCharacterList", CefV8Value::CreateFunction("requestCharacterList", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
     m_pCoreObject->SetValue("selectCharacter", CefV8Value::CreateFunction("selectCharacter", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
     m_pCoreObject->SetValue("createCharacter", CefV8Value::CreateFunction("createCharacter", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
+    m_pCoreObject->SetValue("retryConnect", CefV8Value::CreateFunction("retryConnect", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
+    m_pCoreObject->SetValue("quitGame", CefV8Value::CreateFunction("quitGame", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
     m_pCoreObject->SetValue("revealPlayers", CefV8Value::CreateFunction("revealPlayers", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
     m_pCoreObject->SetValue("sendMessage", CefV8Value::CreateFunction("sendMessage", m_pOverlayHandler), V8_PROPERTY_ATTRIBUTE_NONE);
     m_pCoreObject->SetValue("setTime", CefV8Value::CreateFunction("setTime", m_pOverlayHandler),V8_PROPERTY_ATTRIBUTE_NONE);

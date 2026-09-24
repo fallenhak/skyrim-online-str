@@ -1,0 +1,30 @@
+[Unit]
+Description=Skyrim Online STR Discord authentication service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sosauth
+Group=sosauth
+WorkingDirectory=/opt/sos-auth
+EnvironmentFile=-/etc/sos-auth.env
+Environment=SOS_AUTH_PORT=8091
+ExecStart=/usr/bin/python3 /opt/sos-auth/auth_service.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

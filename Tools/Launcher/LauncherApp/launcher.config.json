@@ -1,0 +1,9 @@
+{
+  "manifestUrl": "https://87-76-146-253.sslip.io/skyrim-online-str/manifest.json",
+  "strLauncherPath": "SkyrimTogether.exe",
+  "errorReportEndpoint": "https://reports.example.invalid/skyrim-online-str",
+  "errorReportToken": "",
+  "authBaseUrl": "https://87-76-146-253.sslip.io",
+  "serverAddress": "87.76.146.253",
+  "serverPort": 10578
+}

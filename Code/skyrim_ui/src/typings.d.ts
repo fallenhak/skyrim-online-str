@@ -170,6 +170,14 @@ declare namespace SkyrimTogetherTypes {
   ) => void;
 
   type CharacterSessionStateCallback = (state: CharacterSessionState) => void;
+
+  type AuthState = 'connecting' | 'authenticating' | 'authenticated' | 'failed';
+  type AuthStateCallback = (
+    state: AuthState,
+    displayName: string,
+    avatarUrl: string,
+    errorKey: string,
+  ) => void;
 }
 
 /** Global Skyrim: Together object. */
@@ -239,6 +247,9 @@ interface SkyrimTogether {
     event: 'characterSessionState',
     callback: SkyrimTogetherTypes.CharacterSessionStateCallback,
   ): void;
+
+  /** Receive launcher-authentication state and the signed Discord profile. */
+  on(event: 'authState', callback: SkyrimTogetherTypes.AuthStateCallback): void;
 
   /** Add listener to when the player disconnects from a server. */
   on(
@@ -391,6 +402,8 @@ interface SkyrimTogether {
     callback?: SkyrimTogetherTypes.CharacterSessionStateCallback,
   ): void;
 
+  off(event: 'authState', callback?: SkyrimTogetherTypes.AuthStateCallback): void;
+
   /** Remove listener from when the player disconnects from a server. */
   off(
     event: 'disconnect',
@@ -510,6 +523,12 @@ interface SkyrimTogether {
 
   /** Create a server-owned character in an unlocked slot. */
   createCharacter(slotIndex: number, name: string): void;
+
+  /** Retry the launcher-configured server connection. */
+  retryConnect(): void;
+
+  /** Close the game. */
+  quitGame(): void;
 
   /**
    * Reveal other players in the immediate area.

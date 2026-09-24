@@ -66,7 +66,7 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
             ProcessDisconnectMessage();
         else if (eventName == "requestCharacterList")
         {
-            World::Get().GetDispatcher().trigger(LoadingStageEvent{LoadingStage::kFetchingCharacters, 0.24f});
+            World::Get().GetDispatcher().trigger(LoadingStageEvent{LoadingStage::kFetchingCharacters, 0.35f});
             World::Get().GetRunner().Queue([]() {
                 if (!World::Get().GetCharacterSessionService().RequestCharacterList())
                     spdlog::debug("Character list request was rejected by the current client session state.");
@@ -76,6 +76,10 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
             ProcessSelectCharacterMessage(eventArgs);
         else if (eventName == "createCharacter")
             ProcessCreateCharacterMessage(eventArgs);
+        else if (eventName == "retryConnect")
+            ProcessRetryConnectMessage();
+        else if (eventName == "quitGame")
+            ProcessQuitGameMessage();
         else if (eventName == "revealPlayers")
             ProcessRevealPlayersMessage();
         else if (eventName == "sendMessage")
@@ -165,11 +169,25 @@ void OverlayClient::ProcessCreateCharacterMessage(CefRefPtr<CefListValue> aEvent
         return;
     }
 
-    World::Get().GetDispatcher().trigger(LoadingStageEvent{LoadingStage::kCreatingCharacter, 0.28f});
+    World::Get().GetDispatcher().trigger(LoadingStageEvent{LoadingStage::kCreatingCharacter, 0.36f});
     World::Get().GetRunner().Queue([slotIndex, name]() {
         if (!World::Get().GetCharacterSessionService().CreateCharacter(static_cast<std::uint32_t>(slotIndex), name))
             spdlog::debug("Character creation request was rejected by the current client session state.");
     });
+}
+
+void OverlayClient::ProcessRetryConnectMessage()
+{
+    m_transport.RetryLauncherSession();
+}
+
+void OverlayClient::ProcessQuitGameMessage()
+{
+    const HWND gameWindow = GetForegroundWindow();
+    if (gameWindow)
+        PostMessageW(gameWindow, WM_CLOSE, 0, 0);
+    else
+        PostQuitMessage(0);
 }
 
 void OverlayClient::ProcessRevealPlayersMessage()

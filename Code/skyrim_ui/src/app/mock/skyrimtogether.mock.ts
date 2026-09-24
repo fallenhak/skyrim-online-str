@@ -119,7 +119,7 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
   }
 
   createCharacter(slotIndex: number, name: string): void {
-    this.emit('loadingStage', 'creatingCharacter', 0.35);
+    this.emit('loadingStage', 'creatingCharacter', 0.65);
     setTimeout(() => {
       const trimmed = name.trim();
       let status: SkyrimTogetherTypes.CharacterCreateStatus = 0;
@@ -236,6 +236,10 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
       this.characterConnectionGeneration,
     );
   }
+
+  retryConnect(): void {}
+
+  quitGame(): void {}
 
   reconnect(): void {
     throw new Error('NOT YET IMPLEMENTED');

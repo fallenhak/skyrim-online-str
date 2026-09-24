@@ -46,6 +46,7 @@ target(name)
         "spdlog",
         "hopscotch-map",
         "cryptopp",
+        "rapidjson",
         "gamenetworkingsockets",
         "discord",
         "imgui",
@@ -69,9 +70,11 @@ target(name)
     add_syslinks(
         "version",
         "dbghelp",
-        "kernel32")
+        "kernel32",
+        "crypt32")
 end
 
 add_requires("tiltedcore")
+add_requires("rapidjson")
 
 build_client("SkyrimTogetherClient")

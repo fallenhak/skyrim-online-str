@@ -23,9 +23,10 @@ struct AuthenticationRequest final : ClientMessage
 
     bool operator==(const AuthenticationRequest& achRhs) const noexcept
     {
-        return GetOpcode() == achRhs.GetOpcode() && DiscordId == achRhs.DiscordId && SKSEActive == achRhs.SKSEActive && MO2Active == achRhs.MO2Active && Token == achRhs.Token && Version == achRhs.Version && UserMods == achRhs.UserMods && Username == achRhs.Username && RaceFormId == achRhs.RaceFormId && Sex == achRhs.Sex && Position == achRhs.Position &&
-               WorldSpaceFormId == achRhs.WorldSpaceFormId && CellFormId == achRhs.CellFormId && WorldSpaceId == achRhs.WorldSpaceId && CellId == achRhs.CellId && Level == achRhs.Level
-            && PlayerTime == achRhs.PlayerTime;
+        return GetOpcode() == achRhs.GetOpcode() && DiscordId == achRhs.DiscordId && SKSEActive == achRhs.SKSEActive && MO2Active == achRhs.MO2Active && Token == achRhs.Token &&
+               Version == achRhs.Version && UserMods == achRhs.UserMods && Username == achRhs.Username && RaceFormId == achRhs.RaceFormId && Sex == achRhs.Sex && Position == achRhs.Position &&
+               WorldSpaceFormId == achRhs.WorldSpaceFormId && CellFormId == achRhs.CellFormId && WorldSpaceId == achRhs.WorldSpaceId && CellId == achRhs.CellId && Level == achRhs.Level &&
+               PlayerTime == achRhs.PlayerTime && AuthToken == achRhs.AuthToken;
     }
 
     uint64_t DiscordId{};
@@ -44,4 +45,6 @@ struct AuthenticationRequest final : ClientMessage
     GameId CellId{};
     uint16_t Level{};
     TimeModel PlayerTime{};
+    // Separate from Token, which remains the legacy server password field.
+    String AuthToken{};
 };

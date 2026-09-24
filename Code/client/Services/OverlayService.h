@@ -69,6 +69,9 @@ struct OverlayService
 
     void SendSystemMessage(const std::string& acMessage);
 
+    void EmitAuthState(const std::string& acState, const std::string& acDisplayName = "",
+        const std::string& acAvatarUrl = "", const std::string& acErrorKey = "");
+
     void SetPlayerHealthPercentage(uint32_t aFormId) const noexcept;
 
 protected:
@@ -77,7 +80,7 @@ protected:
     void OnDisconnectedEvent(const DisconnectedEvent&) noexcept;
     void OnWaitingFor3DRemoved(entt::registry& aRegistry, entt::entity aEntity) const noexcept;
     void OnPlayerComponentRemoved(entt::registry& aRegistry, entt::entity aEntity) const noexcept;
-    void OnConnectionError(const ConnectionErrorEvent& acConnectedEvent) const noexcept;
+    void OnConnectionError(const ConnectionErrorEvent& acConnectedEvent) noexcept;
     void OnChatMessageReceived(const NotifyChatMessageBroadcast&) noexcept;
     void OnPlayerDialogue(const NotifyPlayerDialogue&) noexcept;
     void OnPlayerJoined(const NotifyPlayerJoined&) noexcept;

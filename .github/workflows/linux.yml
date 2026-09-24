@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - master
+      - feature/discord-auth
   workflow_call:
     inputs:
       build-mode:
@@ -69,6 +70,12 @@ jobs:
       # Build the server
       - name: Build
         run: xmake -y
+
+      - name: Run session and HMAC auth tests
+        run: xmake run SessionTests
+
+      - name: Test Discord auth service
+        run: python3 -m unittest discover -s Tools/AuthService -v
 
       - name: Stage Linux server
         run: |
