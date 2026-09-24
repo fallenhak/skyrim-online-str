@@ -65,9 +65,20 @@ The default rule set marks only these vanilla editor IDs as `HumanoidNpc`:
 `WoodElfRace`, `DarkElfRace`, `OrcRace`, `ArgonianRace`, and `KhajiitRace`,
 plus the vanilla variants with their own RACE records: `NordRaceChild`,
 `BretonRaceChild`, `ImperialRaceChild`, `RedguardRaceChild`,
-`BretonRaceChildVampire`, `ElderRace`, and `NordRaceAstrid` (verified against
-the `Skyrim.esm` RACE EDIDs). The playable-race `*Vampire` variants are left
-`Unknown` on purpose: those NPCs are hostile vampires, not town population.
+`BretonRaceChildVampire`, `ElderRace`, `NordRaceAstrid`, every vanilla
+`*RaceVampire` (including `ElderRaceVampire`), and the DLC humanoid races
+`DLC1NordRace`, `SnowElfRace`, `DLC1VampireBeastRace` and `DLC2MiraakRace`
+(verified against the master files' RACE EDIDs). Product rule: no
+humanoid-shaped NPC stays in the world, vampires included; creatures
+(draugr, falmer, dremora, giants, werewolves, ...) are not humanoid here.
+
+Most vanilla humanoids do not carry their real race in `RNAM`. When the
+`ACBS` template data flags contain `Traits`, the engine takes the race from
+`TPLT`, and `RNAM` is only a placeholder (`DefaultRace`, `FoxRace`, ...).
+`ClassifyNpcBase` therefore follows `TPLT` for `Traits` templates and
+resolves leveled lists (`LVLN`): a list is classified only when every entry
+resolves to the same class, otherwise it stays `Unknown`. Resolution is
+depth-bounded, so template cycles also end as `Unknown`.
 Other and edge/modded races remain `Unknown` unless an explicit server-side
 rule is added. The setting only changes server-side classification rules; it
 does not enable full record loading or the humanoid assignment gate. Editor ID
