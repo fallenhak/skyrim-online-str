@@ -1,5 +1,5 @@
 import { Overlay } from '@angular/cdk/overlay';
-import { Component, OnInit, ViewChild } from '@angular/core';
+import { Component, HostListener, OnInit, ViewChild } from '@angular/core';
 import { TranslocoService } from '@ngneat/transloco';
 import { takeUntil } from 'rxjs';
 import { environment } from '../../../environments/environment';
@@ -65,8 +65,19 @@ export class RootComponent implements OnInit {
 
   public ngOnInit(): void {
     this.onInGameStateSubscription();
+    this.onConnectionStateSubscription();
     this.onActivationStateSubscription();
     this.onFontSizeSubscription();
+  }
+
+  public onConnectionStateSubscription(): void {
+    this.client.connectionStateChange
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(connected => {
+        if (connected) {
+          this.openCharacterSelect();
+        }
+      });
   }
 
   public onInGameStateSubscription() {
@@ -121,6 +132,20 @@ export class RootComponent implements OnInit {
     this.uiRepository.openView(null);
   }
 
+  public finishConnectionView(): void {
+    if (this.client.connectionStateChange.getValue()) {
+      this.openCharacterSelect();
+    } else {
+      this.closeView();
+    }
+  }
+
+  public openCharacterSelect(): void {
+    if (this.uiRepository.getView() !== View.CHARACTER_SELECT) {
+      this.setView(View.CHARACTER_SELECT);
+    }
+  }
+
   public reconnect(): void {
     this.client.reconnect();
   }
@@ -134,5 +159,16 @@ export class RootComponent implements OnInit {
 
     this.sound.play(Sound.Focus);
     this.client.revealPlayers();
+  }
+
+  @HostListener('window:keydown.escape', ['$event'])
+  private onEscape(event: KeyboardEvent): void {
+    if (this.uiRepository.isViewOpen()) {
+      return;
+    }
+
+    this.client.deactivate();
+    event.stopPropagation();
+    event.preventDefault();
   }
 }

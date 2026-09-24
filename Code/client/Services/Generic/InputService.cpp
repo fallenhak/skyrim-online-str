@@ -191,7 +191,10 @@ void ProcessKeyboard(uint16_t aKey, uint16_t aScanCode, cef_key_event_type_t aTy
 
     spdlog::debug("ProcessKey, type: {}, key: {}, active: {}", aType, aKey, active);
 
-    if (aType != KEYEVENT_CHAR && (IsToggleKey(aKey) || (IsDisableKey(aKey) && active)))
+    // In-game Escape must reach Angular so the active view can handle Back.
+    if (aType != KEYEVENT_CHAR &&
+        (IsToggleKey(aKey) ||
+            (IsDisableKey(aKey) && active && !overlay.GetInGame())))
     {
         if (!overlay.GetInGame())
         {

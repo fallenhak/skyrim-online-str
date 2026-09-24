@@ -2,6 +2,7 @@
 
 #include <Events/ConnectedEvent.h>
 #include <Events/DisconnectedEvent.h>
+#include <Events/CharacterSessionStateChangedEvent.h>
 #include <Events/CharacterSnapshotAppliedEvent.h>
 #include <Events/CharacterSnapshotApplyFailedEvent.h>
 #include <Events/CharacterPlayerAssignmentStartedEvent.h>
@@ -41,13 +42,13 @@ bool CharacterSessionService::RequestCharacterList() const noexcept
 void CharacterSessionService::HandleConnected(const ConnectedEvent&) noexcept
 {
     m_pendingSnapshot.reset();
-    m_state = ClientCharacterSessionState::kAwaitingCharacterSelection;
+    SetState(ClientCharacterSessionState::kAwaitingCharacterSelection);
 }
 
 void CharacterSessionService::HandleDisconnected(const DisconnectedEvent&) noexcept
 {
     m_pendingSnapshot.reset();
-    m_state = ClientCharacterSessionState::kDisconnected;
+    SetState(ClientCharacterSessionState::kDisconnected);
 }
 
 bool CharacterSessionService::SelectCharacter(const std::uint64_t aCharacterId) const noexcept
@@ -65,7 +66,7 @@ void CharacterSessionService::HandleCharacterList(const NotifyCharacterList& acM
 void CharacterSessionService::HandleCharacterSelectionResult(const NotifyCharacterSelectionResult& acMessage) noexcept
 {
     if (acMessage.Status == CharacterSelectionStatus::kSuccess)
-        m_state = ClientCharacterSessionState::kCharacterSelected;
+        SetState(ClientCharacterSessionState::kCharacterSelected);
 
     m_dispatcher.trigger(CharacterSelectionResultEvent{acMessage.Status});
 }
@@ -73,7 +74,7 @@ void CharacterSessionService::HandleCharacterSelectionResult(const NotifyCharact
 void CharacterSessionService::HandleCharacterLoadSnapshot(const NotifyCharacterLoadSnapshot& acMessage) noexcept
 {
     m_pendingSnapshot = acMessage.Snapshot;
-    m_state = ClientCharacterSessionState::kApplyingCharacter;
+    SetState(ClientCharacterSessionState::kApplyingCharacter);
     m_dispatcher.trigger(CharacterLoadSnapshotReceivedEvent{acMessage.Snapshot});
 }
 
@@ -85,7 +86,7 @@ void CharacterSessionService::HandleCharacterSnapshotApplied(const CharacterSnap
         return;
     }
 
-    m_state = ClientCharacterSessionState::kAwaitingClientReady;
+    SetState(ClientCharacterSessionState::kAwaitingClientReady);
     CharacterReadyRequest request{};
     request.CharacterId = acEvent.Snapshot.CharacterId;
     if (!m_transport.Send(request))
@@ -95,7 +96,7 @@ void CharacterSessionService::HandleCharacterSnapshotApplied(const CharacterSnap
 void CharacterSessionService::HandleCharacterSnapshotApplyFailed(const CharacterSnapshotApplyFailedEvent& acEvent) noexcept
 {
     if (m_state == ClientCharacterSessionState::kApplyingCharacter)
-        m_state = ClientCharacterSessionState::kAwaitingClientReady;
+        SetState(ClientCharacterSessionState::kAwaitingClientReady);
 
     spdlog::error("Character snapshot application failed: {}", acEvent.Reason.c_str());
 }
@@ -116,7 +117,7 @@ void CharacterSessionService::HandleCharacterReadyResult(const NotifyCharacterRe
             return;
         }
 
-        m_state = ClientCharacterSessionState::kAwaitingPlayerAssignment;
+        SetState(ClientCharacterSessionState::kAwaitingPlayerAssignment);
         m_dispatcher.trigger(CharacterPlayerAssignmentStartedEvent{});
         return;
     }
@@ -124,7 +125,7 @@ void CharacterSessionService::HandleCharacterReadyResult(const NotifyCharacterRe
     if (acMessage.Status == CharacterReadyStatus::kCharacterMismatchOrUnavailable)
     {
         m_pendingSnapshot.reset();
-        m_state = ClientCharacterSessionState::kAwaitingCharacterSelection;
+        SetState(ClientCharacterSessionState::kAwaitingCharacterSelection);
     }
 }
 
@@ -136,6 +137,15 @@ void CharacterSessionService::HandleCharacterEnteredWorld(const NotifyCharacterE
         return;
     }
 
-    m_state = ClientCharacterSessionState::kInWorld;
+    SetState(ClientCharacterSessionState::kInWorld);
     m_dispatcher.trigger(CharacterWorldSyncStartedEvent{});
+}
+
+void CharacterSessionService::SetState(const ClientCharacterSessionState aState) noexcept
+{
+    if (m_state == aState)
+        return;
+
+    m_state = aState;
+    m_dispatcher.trigger(CharacterSessionStateChangedEvent{aState});
 }

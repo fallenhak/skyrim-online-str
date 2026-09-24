@@ -46,6 +46,30 @@ export class ClientService implements OnDestroy {
   /** Connect player to server change. */
   public playerConnectedChange = new Subject<Player>();
 
+  /** Complete server-owned character list. */
+  public characterListChange = new Subject<
+    SkyrimTogetherTypes.CharacterSummaryBridge[]
+  >();
+
+  /** Reset reason for character selection state local to the UI. */
+  public characterUiResetChange = new Subject<
+    'connecting' | 'disconnected' | 'error'
+  >();
+
+  /** Server result for the most recent character-selection request. */
+  public characterSelectionResultChange =
+    new Subject<SkyrimTogetherTypes.CharacterSelectionStatus>();
+
+  /** Current client phase in the server-owned character session flow. */
+  public characterSessionStateChange =
+    new BehaviorSubject<SkyrimTogetherTypes.CharacterSessionState>(
+      'disconnected',
+    );
+
+  /** Character ID for the outstanding selection request, if any. */
+  public characterSelectionPendingIdChange =
+    new BehaviorSubject<SkyrimTogetherTypes.CharacterId | null>(null);
+
   /** Connect party info change. */
   public partyInfoChange = new Subject<PartyInfo>();
 
@@ -105,6 +129,10 @@ export class ClientService implements OnDestroy {
 
   private _remainingReconnectionAttempt = environment.nbReconnectionAttempts;
 
+  private _acceptCharacterListMessages = false;
+
+  private _characterConnectionGeneration: number | null = null;
+
   /**
    * Instantiate.
    */
@@ -123,6 +151,15 @@ export class ClientService implements OnDestroy {
     skyrimtogether.on('openingMenu', this.onOpeningMenu.bind(this));
     skyrimtogether.on('connect', this.onConnect.bind(this));
     skyrimtogether.on('disconnect', this.onDisconnect.bind(this));
+    skyrimtogether.on('characterList', this.onCharacterList.bind(this));
+    skyrimtogether.on(
+      'characterSelectionResult',
+      this.onCharacterSelectionResult.bind(this),
+    );
+    skyrimtogether.on(
+      'characterSessionState',
+      this.onCharacterSessionState.bind(this),
+    );
     skyrimtogether.on('setName', this.onSetName.bind(this)); //not wanted, we dont sync name changes
     skyrimtogether.on('setVersion', this.onSetVersion.bind(this));
     skyrimtogether.on('debug', this.onDebug.bind(this)); //not needed anymore
@@ -165,6 +202,9 @@ export class ClientService implements OnDestroy {
     skyrimtogether.off('openingMenu');
     skyrimtogether.off('connect');
     skyrimtogether.off('disconnect');
+    skyrimtogether.off('characterList');
+    skyrimtogether.off('characterSelectionResult');
+    skyrimtogether.off('characterSessionState');
     skyrimtogether.off('setName');
     skyrimtogether.off('setVersion');
     skyrimtogether.off('debug');
@@ -194,19 +234,39 @@ export class ClientService implements OnDestroy {
    * @param password Password or admin password
    */
   public connect(host: string, port: number, password = ''): void {
-    skyrimtogether.connect(host, port, password);
+    this.resetCharacterUi('connecting', true);
     this.isConnectionInProgressChange.next(true);
     this._host = host;
     this._port = port;
     this._password = password;
+    skyrimtogether.connect(host, port, password);
   }
 
   /**
    * Disconnect from the server or cancel connection.
    */
   public disconnect(): void {
+    this.resetCharacterUi('disconnected', true);
+    this.isConnectionInProgressChange.next(false);
     skyrimtogether.disconnect();
     this._remainingReconnectionAttempt = 0;
+  }
+
+  /** Request the server-owned character list. */
+  public requestCharacterList(): void {
+    skyrimtogether.requestCharacterList();
+  }
+
+  /** Send a selection request for a server-provided character ID. */
+  public selectCharacter(
+    characterId: SkyrimTogetherTypes.CharacterId,
+  ): void {
+    if (this.characterSelectionPendingIdChange.value !== null) {
+      return;
+    }
+
+    this.characterSelectionPendingIdChange.next(characterId);
+    skyrimtogether.selectCharacter(characterId);
   }
 
   /**
@@ -269,6 +329,7 @@ export class ClientService implements OnDestroy {
    * Reconnect
    */
   public reconnect(): void {
+    this.resetCharacterUi('connecting', true);
     skyrimtogether.reconnect();
     this._remainingReconnectionAttempt = 0;
   }
@@ -337,8 +398,22 @@ export class ClientService implements OnDestroy {
   /**
    * Called when a connection is made.
    */
-  private onConnect(): void {
+  private onConnect(connectionGeneration: number): void {
     this.zone.run(async () => {
+      if (
+        this._characterConnectionGeneration !== null &&
+        connectionGeneration < this._characterConnectionGeneration
+      ) {
+        return;
+      }
+
+      // A connected event starts a fresh server-owned character session, even
+      // if the transport reconnected without going through connect() above.
+      // The native session service reports its server-owned phase for this
+      // connection. Clear UI-cached data without overwriting that phase.
+      this.resetCharacterUi('connecting');
+      this._characterConnectionGeneration = connectionGeneration;
+      this._acceptCharacterListMessages = true;
       this._remainingReconnectionAttempt = environment.nbReconnectionAttempts;
       this.isConnectionInProgressChange.next(false);
       this.connectionStateChange.next(true);
@@ -350,9 +425,18 @@ export class ClientService implements OnDestroy {
   /**
    * Called when a connection is terminated.
    */
-  private onDisconnect(isError: boolean): void {
+  private onDisconnect(isError: boolean, connectionGeneration: number): void {
     void this.zone.run(async () => {
+      if (
+        this._characterConnectionGeneration !== null &&
+        connectionGeneration < this._characterConnectionGeneration
+      ) {
+        return;
+      }
+
+      this._characterConnectionGeneration = connectionGeneration;
       this.localPlayerId = undefined;
+      this.resetCharacterUi('disconnected', true);
       this.connectionStateChange.next(false);
       this.isConnectionInProgressChange.next(false);
 
@@ -363,6 +447,65 @@ export class ClientService implements OnDestroy {
       } else {
         this.chatService.pushSystemMessage('SERVICE.CLIENT.DISCONNECTED');
       }
+    });
+  }
+
+  private onCharacterList(
+    rows: SkyrimTogetherTypes.CharacterSummaryWireRow[],
+    connectionGeneration: number,
+  ): void {
+    // Each native list callback carries the generation captured when its UI
+    // event was queued, so a delayed callback cannot cross reconnects.
+    if (
+      !this._acceptCharacterListMessages ||
+      !this.connectionStateChange.getValue() ||
+      connectionGeneration !== this._characterConnectionGeneration
+    ) {
+      return;
+    }
+
+    const characters: SkyrimTogetherTypes.CharacterSummaryBridge[] = rows.map(
+      ([characterId, name, raceBaseId, raceModId, sex, level]) => ({
+        characterId,
+        name,
+        race: { baseId: raceBaseId, modId: raceModId },
+        sex,
+        level,
+      }),
+    );
+
+    this.zone.run(() => {
+      this.characterListChange.next(characters);
+    });
+  }
+
+  private onCharacterSelectionResult(
+    status: SkyrimTogetherTypes.CharacterSelectionStatus,
+    connectionGeneration: number,
+  ): void {
+    // A selection response belongs to the connection that received it. Ignore
+    // late responses after disconnect/reconnect, and unsolicited duplicates.
+    if (
+      !this._acceptCharacterListMessages ||
+      !this.connectionStateChange.getValue() ||
+      this.characterSessionStateChange.getValue() === 'disconnected' ||
+      connectionGeneration !== this._characterConnectionGeneration ||
+      this.characterSelectionPendingIdChange.getValue() === null
+    ) {
+      return;
+    }
+
+    this.zone.run(() => {
+      this.characterSelectionPendingIdChange.next(null);
+      this.characterSelectionResultChange.next(status);
+    });
+  }
+
+  private onCharacterSessionState(
+    state: SkyrimTogetherTypes.CharacterSessionState,
+  ): void {
+    this.zone.run(() => {
+      this.characterSessionStateChange.next(state);
     });
   }
 
@@ -545,16 +688,33 @@ export class ClientService implements OnDestroy {
 
   private onProtocolMismatch() {
     this.zone.run(() => {
+      this.resetCharacterUi('error');
       this.protocolMismatchChange.next(true);
     });
   }
 
   private onTriggerError(rawError: string) {
     this.zone.run(() => {
+      this.resetCharacterUi('error');
       const error = JSON.parse(rawError) as ErrorEvents;
       this.triggerError.next(error);
       void this.errorService.setError(error);
     });
+  }
+
+  /** Clear UI-cached selection data without replacing server session authority. */
+  private resetCharacterUi(
+    reason: 'connecting' | 'disconnected' | 'error',
+    resetSessionState = false,
+  ): void {
+    this._acceptCharacterListMessages = false;
+    this.characterSelectionPendingIdChange.next(null);
+
+    if (resetSessionState) {
+      this.characterSessionStateChange.next('disconnected');
+    }
+
+    this.characterUiResetChange.next(reason);
   }
 
   private onDummyData(data: Array<number>) {

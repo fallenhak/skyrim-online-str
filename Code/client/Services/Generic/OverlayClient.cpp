@@ -4,6 +4,7 @@
 #include <DInputHook.hpp>
 
 #include <Services/OverlayClient.h>
+#include <Services/CharacterSessionService.h>
 #include <Services/TransportService.h>
 
 #include <Messages/SendChatMessageRequest.h>
@@ -12,6 +13,28 @@
 #include <Events/SetTimeCommandEvent.h>
 
 #include <World.h>
+
+#include <charconv>
+#include <cstdint>
+#include <string>
+
+namespace
+{
+bool TryParseCanonicalCharacterId(const std::string& aValue, std::uint64_t& aCharacterId) noexcept
+{
+    if (aValue.empty() || (aValue.size() > 1 && aValue.front() == '0'))
+        return false;
+
+    for (const char character : aValue)
+    {
+        if (character < '0' || character > '9')
+            return false;
+    }
+
+    const auto result = std::from_chars(aValue.data(), aValue.data() + aValue.size(), aCharacterId);
+    return result.ec == std::errc{} && result.ptr == aValue.data() + aValue.size();
+}
+} // namespace
 
 OverlayClient::OverlayClient(TransportService& aTransport, TiltedPhoques::OverlayRenderHandler* apHandler)
     : TiltedPhoques::OverlayClient(apHandler)
@@ -32,11 +55,6 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
         auto eventName = pArguments->GetString(0).ToString();
         auto eventArgs = pArguments->GetList(1);
 
-        spdlog::info(eventName);
-        spdlog::info(eventArgs->GetString(0).ToString());
-        spdlog::info(std::to_string(eventArgs->GetInt(1)));
-        spdlog::info(eventArgs->GetString(2).ToString());
-
 #ifndef PUBLIC_BUILD
         LOG(INFO) << "event=ui_event name=" << eventName;
 #endif
@@ -45,6 +63,15 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
             ProcessConnectMessage(eventArgs);
         else if (eventName == "disconnect")
             ProcessDisconnectMessage();
+        else if (eventName == "requestCharacterList")
+        {
+            World::Get().GetRunner().Queue([]() {
+                if (!World::Get().GetCharacterSessionService().RequestCharacterList())
+                    spdlog::debug("Character list request was rejected by the current client session state.");
+            });
+        }
+        else if (eventName == "selectCharacter")
+            ProcessSelectCharacterMessage(eventArgs);
         else if (eventName == "revealPlayers")
             ProcessRevealPlayersMessage();
         else if (eventName == "sendMessage")
@@ -106,6 +133,22 @@ void OverlayClient::ProcessConnectMessage(CefRefPtr<CefListValue> aEventArgs)
 void OverlayClient::ProcessDisconnectMessage()
 {
     World::Get().GetRunner().Queue([]() { World::Get().GetTransport().Close(); });
+}
+
+void OverlayClient::ProcessSelectCharacterMessage(CefRefPtr<CefListValue> aEventArgs)
+{
+    const std::string characterIdValue = aEventArgs->GetString(0).ToString();
+    std::uint64_t characterId{};
+    if (!TryParseCanonicalCharacterId(characterIdValue, characterId))
+    {
+        spdlog::warn("Ignoring a character selection request with an invalid character ID encoding.");
+        return;
+    }
+
+    World::Get().GetRunner().Queue([characterId]() {
+        if (!World::Get().GetCharacterSessionService().SelectCharacter(characterId))
+            spdlog::debug("Character selection request was rejected by the current client session state.");
+    });
 }
 
 void OverlayClient::ProcessRevealPlayersMessage()

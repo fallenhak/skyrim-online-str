@@ -43,10 +43,11 @@
         -->
         <button
           data-style-ornament="inverted"
-          [attr.data-style-active]="(view$ | async) === RootView.PLAYER_MANAGER"
-          (click)="setView(RootView.PLAYER_MANAGER)"
+          data-character-select-trigger="true"
+          [attr.data-style-active]="(view$ | async) === RootView.CHARACTER_SELECT"
+          (click)="setView(RootView.CHARACTER_SELECT)"
         >
-          {{ 'COMPONENT.ROOT.PLAYER_MANAGER' | transloco }}
+          {{ 'COMPONENT.ROOT.CHARACTER_SELECT' | transloco }}
         </button>
         <button data-style-ornament="inverted" (click)="revealPlayers()">
           <!-- See note in 'root.component.scss' for explanation -->
@@ -93,10 +94,10 @@
 
     <ng-container [ngSwitch]="view$ | async">
       <app-popup *ngSwitchCase="RootView.CONNECT">
-        <app-connect (done)="closeView()"></app-connect>
+        <app-connect (done)="finishConnectionView()"></app-connect>
       </app-popup>
       <app-popup *ngSwitchCase="RootView.CONNECT_PASSWORD">
-        <app-connect-password (done)="closeView()"></app-connect-password>
+        <app-connect-password (done)="finishConnectionView()"></app-connect-password>
       </app-popup>
       <app-popup *ngSwitchCase="RootView.DISCONNECT">
         <app-disconnect (done)="closeView()"></app-disconnect>
@@ -111,10 +112,10 @@
         ></app-settings>
       </app-popup>
       <app-popup
-        *ngSwitchCase="RootView.PLAYER_MANAGER"
-        data-popup="playerManager"
+        *ngSwitchCase="RootView.CHARACTER_SELECT"
+        data-popup="characterSelect"
       >
-        <app-player-manager (done)="closeView()"></app-player-manager>
+        <app-character-select (done)="closeView()"></app-character-select>
       </app-popup>
     </ng-container>
 
