@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "manifestVersion": "2026.09.24.5",
+  "requiredGameVersion": "1.7.104",
+  "mods": [
+    {
+      "id": "skse64-root",
+      "name": "SKSE64 2.3.1 - game root",
+      "version": "2.3.1 / Skyrim 1.7.104",
+      "url": "https://87-76-146-253.sslip.io/skyrim-online-str/assets/skse64-root.zip",
+      "sha256": "c76ced72761ec93f1979b82f07c56228a477d62958ba9c111c28d1938e5a1cd2",
+      "size": 566298,
+      "target": "root",
+      "order": 10,
+      "stripPrefix": ""
+    },
+    {
+      "id": "skse64-data",
+      "name": "SKSE64 2.3.1 - Data scripts",
+      "version": "2.3.1 / Skyrim 1.7.104",
+      "url": "https://87-76-146-253.sslip.io/skyrim-online-str/assets/skse64-data.zip",
+      "sha256": "eda04e9e2b6ff5239f6e220275f42768817a9537d82857b5c2258f22e955d08f",
+      "size": 146742,
+      "target": "data",
+      "order": 11,
+      "stripPrefix": "Data"
+    },
+    {
+      "id": "address-library",
+      "name": "Address Library AE All-in-One v13",
+      "version": "v13 / Skyrim 1.7.104.0",
+      "url": "https://87-76-146-253.sslip.io/skyrim-online-str/assets/address-library.zip",
+      "sha256": "976055086ee746d4b54c0066b6099093444f4ffe4df5613c7eb0b29fb4725015",
+      "size": 6644817,
+      "target": "data",
+      "order": 20,
+      "stripPrefix": "Data"
+    },
+    {
+      "id": "engine-fixes-preloader",
+      "name": "SSE Engine Fixes - root preloader",
+      "version": "7.0.0 / Nexus part 2",
+      "url": "https://87-76-146-253.sslip.io/skyrim-online-str/assets/engine-fixes-preloader.zip",
+      "sha256": "4f950d3c1c046399ace87e015a655cdba194423e80b0dda08e3ad478c7f98a21",
+      "size": 32753,
+      "target": "root",
+      "order": 21,
+      "stripPrefix": ""
+    },
+    {
+      "id": "engine-fixes",
+      "name": "SSE Engine Fixes - custom 1.7.104 build",
+      "version": "7.0.21 / 1.7.104 / source b289e3d",
+      "url": "https://87-76-146-253.sslip.io/skyrim-online-str/assets/engine-fixes.zip",
+      "sha256": "32104bc89c6dd2b70b4e9597e0e886b4f5bc897e2c6d73b326a2236cb11ed761",
+      "size": 1007805,
+      "target": "data",
+      "order": 30,
+      "stripPrefix": "Data"
+    },
+    {
+      "id": "sse-display-tweaks",
+      "name": "SSE Display Tweaks",
+      "version": "0.5.25 / AE 1.7.xx",
+      "url": "https://87-76-146-253.sslip.io/skyrim-online-str/assets/sse-display-tweaks.zip",
+      "sha256": "473700bc505f73186f3c2cf41b8098f806704e0639ccbe8b21b9260bc9f061f8",
+      "size": 190199,
+      "target": "data",
+      "order": 40,
+      "stripPrefix": "Data"
+    },
+    {
+      "id": "crash-logger",
+      "name": "Crash Logger SSE AE VR (PDB support)",
+      "version": "1.24.0",
+      "url": "https://87-76-146-253.sslip.io/skyrim-online-str/assets/crash-logger.zip",
+      "sha256": "e2742b7461c9ac4145be675d70756c6e6fb75b57bf44c25fa66649bc94ace5cf",
+      "size": 10883241,
+      "target": "data",
+      "order": 50,
+      "stripPrefix": "Data"
+    }
+  ]
+}

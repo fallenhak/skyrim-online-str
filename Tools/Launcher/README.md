@@ -19,12 +19,12 @@ Kaynaklar 24 Eylül 2026 tarihinde kontrol edildi. Manifestteki indirme adresler
 | SKSE64 | **2.3.1** (oyun kökü + Data) | Doğrulandı. İstenen 2.2.6 sürümü 1.7.104 için değil; 2.2.6, SKSE sitesinde GOG 1.6.1179 olarak listeleniyor. | [SKSE resmi indirme sayfası](https://skse.silverlock.org/) |
 | Address Library (AE) | **All-in-One v13** | Doğrulandı; dosya açıklaması 1.7.104.0'a kadar tüm sürümleri kapsıyor. | [Nexus dosyaları](https://www.nexusmods.com/skyrimspecialedition/mods/32444?tab=files) |
 | SSE Display Tweaks | **0.5.25** | Doğrulandı; AE 1.7.xx dosyası listelenmiş. | [Nexus dosyaları](https://www.nexusmods.com/skyrimspecialedition/mods/34705?tab=files) |
-| SSE Engine Fixes — SKSE plugin + oyun kökü DLL/preloader | **Henüz sabitlenmedi** | Yayınlanmış Nexus 7.0.21 betası **yalnız 1.7.99** içindir. Upstream ana dal/CI'de 1.7.104 derleme izi var; 1.7.104 için yayımlanmış ve doğrulanmış paket yok. Uyumlu ikili doğrulanana kadar indirme arşivini oluşturmayın. | [Nexus dosyaları](https://www.nexusmods.com/skyrimspecialedition/mods/17230?tab=files), [upstream GitHub Actions](https://github.com/aers/EngineFixesSkyrim64/actions/workflows/main.yml) |
+| SSE Engine Fixes — SKSE plugin | **7.0.21, 1.7.104 özel derleme** | Upstream kaynak commit'i `b289e3d` 1.7.104'ü uyumlu sürüm olarak bildiriyor, Address Library ve güncel yapı bayraklarını kullanıyor. Uyumluluk görevinin Windows/MSVC derlemesi manifestte dağıtılıyor; resmi Nexus dosyası değildir. | [Nexus dosyaları](https://www.nexusmods.com/skyrimspecialedition/mods/17230?tab=files), [uyumlu kaynak commit'i](https://github.com/aers/EngineFixesSkyrim64/commit/b289e3deae71ce3915bb19c5faeeda8bf6c6a25c) |
 | USSEP (CC DLC'siz temel oyun) | **4.3.9c** | Doğrulandı; resmi açıklama Skyrim 1.7.99 veya üstünü istiyor. Anniversary Upgrade DLC'si zorunlu değil. | [Nexus açıklama ve dosyaları](https://www.nexusmods.com/skyrimspecialedition/mods/266?tab=description) |
 | Skyrim Souls RE | **3.1.2** | **Doğrulanmadı.** Yayımlanmış dosya runtime 1.6.1170 (Steam) ve 1.6.1179 (GOG) diyor; 1.7.104 dosyası listelenmiyor. Bu mod için güncel DLL/uyumluluk doğrulaması gerekiyor. | [Nexus dosyaları](https://www.nexusmods.com/skyrimspecialedition/mods/27859?tab=files) |
-| JContainers STR | **rfortier/JContainers-rwf v4.2.13.2** | STR için 2 GB Lua bellek kısıtını kaldıran upstream sürüm doğrulandı; oyun runtime 1.7.104 uyumluluğu belirtilmemiş, **test edilmedi**. | [GitHub releases](https://github.com/rfortier/JContainers-rwf/releases) |
+| JContainers SE | **Nexus 4.3.2** | En yeni Nexus dosyası SKSE 2.3.1 / Skyrim 1.7.104 desteğini bildiriyor; STR düzeltmesi upstream'e `ac9ec71` ile alınmış. Bu Nexus DLL'i 1.7.104'te ayrıca çalıştırılmadı. Burak'ın ayrı v4.2.13.2-rwf derlemesi Papyrus fonksiyon kaydında çöktü. | [Nexus 4.3.2](https://www.nexusmods.com/skyrimspecialedition/mods/16495), [upstream düzeltme](https://github.com/ryobg/JContainers/commit/ac9ec71), [STR duyurusu](https://github.com/rfortier/TiltedEvolution-rwf/releases) |
 
-SKSE resmi sayfası 1.7.104 için 2.3.1 dediğinden manifest 2.2.6 yerine 2.3.1 kullanır. Engine Fixes ve Skyrim Souls RE için 1.7.104 uyumlu gerçek arşiv henüz doğrulanmamıştır; örnek manifest bu durumu sürüm alanında da işaretler. Bu iki modun yer tutucu URL'leri yayın paketi değildir.
+SKSE resmi sayfası 1.7.104 için 2.3.1 dediğinden manifest 2.3.1 kullanır. Engine Fixes için uyumluluk görevinde derlenen özel DLL kullanılır. Skyrim Souls RE'nin 3.1.2 resmi DLL'i 1.7.104'ü desteklemez ve Burak'ın etkin profilinde yoktur; dağıtım manifestine eklenmez.
 
 Mod ZIP'lerinin yollarını kurulum hedefine göre düzenleyin. Örneğin Data arşivinde `Data\SKSE\Plugins\ornek.dll` ve `stripPrefix: "Data"` kullanılırsa dosya `Stock Game\Data\SKSE\Plugins\ornek.dll` konumuna yerleşir. `target: root` arşivleri oyun köküne (özellikle Engine Fixes preloader/root DLL'leri), `target: data` ise `Stock Game\Data` altına açılır. SKSE64 kök ve Data dosyaları ayrı örnek paketlerdir. Manifestte sıra numarası çakışan mod dosyalarında son yazanı belirler.
 
@@ -38,7 +38,7 @@ Varlıkları `assets` klasörüne `id.zip` adıyla koyup gerçek boyut ve SHA-25
 python .\Tools\Launcher\Scripts\update_manifest_assets.py .\Tools\Launcher\manifest.example.json --asset-dir .\assets
 ```
 
-Manifest `requiredGameVersion` değeri `1.7.104` olmalıdır. Mod kaynakları ve `launcher.config.json` adresleri HTTPS olmalı; tüm ZIP'ler yayın öncesinde hedef sürümde test edilmelidir.
+Manifest `requiredGameVersion` değeri `1.7.104` olmalıdır. Mod deposu HTTPS üzerinden sunulur (`https://87-76-146-253.sslip.io/skyrim-online-str/`, Let's Encrypt); manifest ve DLL'ler şifresiz kanaldan indirilmemelidir, çünkü SHA-256 değerleri de manifestin içindedir. Eski HTTP `:8088` adresi geçiş için açık kalır. ZIP'lerin boyutu ve SHA-256'sı manifestte sabitlenir; canlı oyun testi ayrıca yapılmalıdır.
 
 ## Derleme, test ve publish
 
@@ -54,7 +54,39 @@ Tek exe `LauncherApp\bin\Release\net8.0-windows\win-x64\publish\SkyrimOnlineSTR.
 
 ## Sunucu ve manifest
 
-`manifest.example.json` şema örneğidir. `launcher.config.json` içindeki `manifestUrl`, HTTPS manifest adresiniz olmalıdır. Her paket URL'si ayrı tutulduğundan mod deposu/CDN değiştirilebilir. Boyut ve SHA-256 alanları gerçek arşivlere göre doldurulmalıdır. Örnek adresler `example.invalid` olduğundan gerçek mod indirmez.
+`manifest.example.json` şema örneğidir. Burak'ın etkin MO2 profiline göre üretilen `manifest.json` ve mod arşivleri `/srv/sos-mods/skyrim-online-str/` altında sunulur; launcher yapılandırması `https://87-76-146-253.sslip.io/skyrim-online-str/manifest.json` adresini kullanır. Her paket URL'si ayrı tutulduğundan depo/CDN değiştirilebilir. nginx: `/etc/nginx/conf.d/sos-tls.conf` içindeki `/skyrim-online-str/` konumu.
+
+### Burak'ın MO2 profili ve Wabbajack yolu
+
+Envanter `Default` profilinden 24 Eylül 2026 14:40 (İstanbul) anlık görüntüsüdür. Stock Game `SkyrimSE.exe` dosya/ürün sürümü `1.7.104.0`; `plugins.txt` etkin plugin içermiyor ve `loadorder.txt` temel oyunun altı plugin'ini içeriyor. Manifest uyumlu etkin mod dosyalarını kapsar; Stock Game ve MO2 kurulum dosyaları dağıtılmaz. Root Builder'ın etkin `Root` klasörleri SKSE dosyaları ile Engine Fixes `d3dx9_42.dll` preloader'ıdır.
+
+| Profil bileşeni | `meta.ini` sürümü | Kaynak / Nexus mod/file kimliği | Launcher |
+|---|---|---|---|
+| Crash Logger SSE AE VR (PDB support) | 1.24.0 | Nexus 59818 | Dağıtımda; Burak'ın 1.7.104 kurulumunda çalıştı ve JContainers çökmesini teşhis etti |
+| JContainers STR 1.7.104 (devre dışı) | Özel v4.2.13.2-rwf build | `modID=0`; uyumluluk görevi derlemesi | Etkinleştirilene kadar dışarıda |
+| EngineFixes 1.7.104 (STR build) | Özel 7.0.21 build | `modID=0`; kaynak commit `b289e3d` | Dahil |
+| Address Library for SKSE Plugins | 13.0.0 | Nexus 32444 / 795954 | Dahil |
+| SSE Display Tweaks | 0.5.25.0 | Nexus 34705 / 797175 | Dahil |
+| SSE Engine Fixes preloader (`Root`) | 7.0.0 | Nexus 17230 / 725261 | Dahil |
+| Skyrim Script Extender (SKSE64) | 2.3.1.0 | Nexus 30379 / 795992 | Dahil |
+
+En yeni Nexus JContainers 4.3.2 (16495 / file 800245) 1.7.104 desteğini bildiriyor ve STR düzeltmesi upstream'e birleşmiş durumda. Ancak bu Nexus DLL'i 1.7.104'te çalıştırılmadı. Burak'ın ayrı v4.2.13.2-rwf derlemesi Papyrus fonksiyon kaydı sırasında çöktüğünden özel build dağıtılmıyor. Bu MO2 anlık görüntüsünde JContainers klasörü de devre dışı; manifestte JContainers yok. Crash Logger'ın Nexus sayfası 1.7.104'ü belirtmiyor, ancak MO2 profilindeki 1.24.0 sürümü 1.7.104'te oyunda çalıştı (2026-09-24 crash raporu) ve test build'de çökme teşhisi için dağıtılıyor. Skyrim Souls RE etkin profilde yoktur ve resmi 3.1.2 DLL'i hedef runtime'ı desteklemez.
+
+| `downloads` arşivi | Bayt | Not |
+|---|---:|---|
+| Address Library All-in-One v13 | 6,640,552 | Nexus 32444 / 795954 |
+| crash-logger.zip (1.24.0, PDB destekli) | 10,883,241 | Nexus 59818; dağıtımda |
+| Engine Fixes SKSE64 Preloader | 25,080 | Nexus 17230 / 725261; Root Builder kök dosyası |
+| Mod Organizer 2.5.2 | 149,660,212 | Kurulum arşivi; dağıtıma alınmadı |
+| Root Builder 5.1.1 | 957,191 | Nexus 31720 / 707262; MO2 eklentisi |
+| SKSE64 Steam 2.3.1 | 952,607 | Nexus 30379 / 795992 |
+| SSE Display Tweaks 0.5.25 | 187,137 | Nexus 34705 / 797175 |
+
+Engine Fixes özel derlemesi `downloads` içinde Nexus arşivi olarak yok; launcher varlığı uyumluluk görevi derlemesinden hazırlanmıştır. JContainers özel klasörünün arşivi `downloads` içinde yok ve profil anlık görüntüsünde devre dışı.
+
+Şimdilik Wabbajack CLI yerine MO2 profilinden sabitlenmiş manifest seçildi: launcher zaten güvenli ZIP açma, root/Data hedefi, SHA-256 ve oyun sürümü denetimini destekliyor; dört uyumlu etkin mod grubu için `.wabbajack` çözümlemesi ek kurulum bağımlılığı ve bakım getirir. Altı ZIP paketi VDS'e yüklenir (8,588,614 byte). Gelecek adım, tam MO2 profilinin yeniden kurulması ve Nexus/kurum lisanslarına uygun kaynak indirme gerekirse Wabbajack listesi/CLI desteğidir.
+
+`Data/renewable_encounters.txt`, `integration/m01-test` dalındaki örnekten türetilir ve launcher yayın klasörüne yan dosya olarak kopyalanır; oyun `Stock Game\Data` klasörüne kurulmaz. Hata raporu endpoint'i bu dağıtımda ayarsızdır; kullanıcı raporu yerelde ZIP olarak kalır.
 
 ## Hata raporu
 
