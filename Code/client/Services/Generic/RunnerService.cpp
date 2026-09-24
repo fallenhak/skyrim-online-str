@@ -16,5 +16,11 @@ void RunnerService::Queue(std::function<void()> aFunctor) noexcept
 
 void RunnerService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
 {
+    static bool s_loggedFirstDrain = false;
+    if (!s_loggedFirstDrain)
+    {
+        s_loggedFirstDrain = true;
+        spdlog::info("[Runner] first world update drain");
+    }
     m_runner.Drain();
 }

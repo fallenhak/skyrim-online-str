@@ -87,7 +87,10 @@ void TransportService::LoadLauncherSessionConfig() noexcept
 {
     const DWORD pathLength = GetEnvironmentVariableW(L"SOS_AUTH_CONFIG_PATH", nullptr, 0);
     if (!pathLength)
+    {
+        spdlog::info("[LauncherSession] SOS_AUTH_CONFIG_PATH not set; launcher session disabled");
         return;
+    }
 
     m_launcherConfigPresent = true;
     std::wstring path(pathLength, L'\0');
@@ -153,6 +156,7 @@ void TransportService::LoadLauncherSessionConfig() noexcept
             return;
         }
         m_launcherEndpoint = host + ":" + std::to_string(port);
+        spdlog::info("[LauncherSession] config loaded, endpoint {}", m_launcherEndpoint);
     }
     catch (const CryptoPP::Exception&)
     {
@@ -166,6 +170,7 @@ void TransportService::LoadLauncherSessionConfig() noexcept
 
 void TransportService::StartLauncherSession() noexcept
 {
+    spdlog::info("[LauncherSession] start requested (configPresent={}, error='{}')", m_launcherConfigPresent, m_launcherConfigErrorKey);
     if (!m_launcherConfigPresent)
         return;
     if (!m_launcherConfigErrorKey.empty())
@@ -178,7 +183,10 @@ void TransportService::StartLauncherSession() noexcept
     m_world.GetOverlayService().EmitAuthState("connecting");
     m_world.GetDispatcher().trigger(LoadingStageEvent{LoadingStage::kConnecting, 0.05f});
     const auto endpoint = m_launcherEndpoint;
-    m_world.GetRunner().Queue([this, endpoint]() { Connect(endpoint); });
+    m_world.GetRunner().Queue([this, endpoint]() {
+        const bool started = Connect(endpoint);
+        spdlog::info("[LauncherSession] Connect({}) started={}", endpoint, started);
+    });
 }
 
 void TransportService::RetryLauncherSession() noexcept
@@ -289,6 +297,7 @@ void TransportService::OnConsume(const void* apData, uint32_t aSize)
 
 void TransportService::OnConnected()
 {
+    spdlog::info("[LauncherSession] transport connected");
     if (m_launcherConfigPresent)
     {
         m_world.GetOverlayService().EmitAuthState("authenticating");
