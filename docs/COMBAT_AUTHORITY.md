@@ -86,35 +86,29 @@ An accepted request is appended to a fixed 1024-entry pending FIFO. A full FIFO
 rejects new requests and retains existing entries. The server assigns the
 observation tick. After an accepted canonical health decrease, at most one
 pending observation for that target server ID and lifecycle generation is
-correlated and forwarded as a server-internal event. Stale generations for the
-same entity ID are discarded. The match contains no client damage magnitude
-and does not prove that the observation caused the decrease. The handler does
-not apply damage, mutate death state, record contribution, award XP, or grant
-loot. Client `HitEvent` production remains disabled: the target lifecycle
-generation is server-only and is not yet sent in spawn or ownership messages,
-so ordinary clients currently have no producer that can populate that field
-correctly.
+correlated and forwarded as a server-internal event. Before selecting that
+observation, stale target generations and observations whose attacker no
+longer resolves to its current in-world owner at the recorded epoch are
+discarded. A disconnected or transferred attacker therefore cannot consume a
+later owner's canonical health decrease. The match contains no client damage
+magnitude and does not prove that the observation caused the decrease. The
+handler does not apply damage, mutate death state, record contribution, award
+XP, or grant loot. Client `HitEvent` production remains disabled: the target
+lifecycle generation is server-only and is not yet sent in spawn or ownership
+messages, so ordinary clients currently have no producer that can populate
+that field correctly.
 
-Later correlation work must use the accepted request's bounded, replayable
-identity rather than trusting a client-provided persistent character ID:
-
-- attacker server entity ID and attacker ownership epoch;
-- target server entity ID and target lifecycle generation/epoch;
-- a bounded observation/event ID;
-- a server-assigned observation tick for ordering diagnostics;
-- optional weapon/projectile/effect identity only after server-side form and
-  classification checks.
-
-The server must resolve the sender to the current owner, then resolve the
-attacker server ID to the authoritative ECS entity and its persistent
-`CharacterId`. The client must not choose that `CharacterId`. The target server
-ID must resolve to a canonical entity with trusted creature classification;
-self-hits, PvP targets, unsupported target classes, missing entities, and stale
-epochs must be rejected by explicit policy. A bounded replay cache must reject
-duplicate observation IDs and stale entity incarnations. The accepted
-observation must be correlated with canonical health/death changes before any
-future contribution is recorded. No client-provided XP amount or reward amount
-should be authoritative.
+The current correlation keeps the accepted request's bounded, replayable
+identity through health matching, then re-resolves the attacker against its
+current owner, in-world session, ownership epoch, and server-owned persistent
+`CharacterId` before recording a contribution. The client does not choose that
+`CharacterId`. Target eligibility comes from the canonical target's trusted
+Creature classification and lifecycle generation. Self-hits, PvP targets,
+unsupported target classes, missing entities, and stale epochs are rejected by
+explicit policy. The contribution ledger is consumed only for the accepted
+canonical Creature death transition; the death event carries contributor IDs,
+not a client-selected killer. No client-provided XP or reward amount is
+authoritative.
 
 `CombatObservationReplayCache` provides a bounded replay window. It keys an
 observation ID by attacker server entity ID and ownership epoch, plus target
@@ -126,11 +120,13 @@ the server-assigned observation tick.
 
 ## Contribution and transfer implications
 
-An attacker can disconnect or lose ownership before a target dies. Any future
-contribution record must therefore store the resolved persistent character ID
-only after server validation, while retaining the target server identity and
-incarnation. Ownership transfer must invalidate stale attacker/target epochs
-without retroactively granting a client authority to rewrite the record.
+An attacker can disconnect or lose ownership before a target dies. An
+observation still pending at that point is discarded when it fails current
+owner, epoch, or in-world session validation. Once a canonical health decrease
+has correlated an observation, the contribution ledger stores only its
+server-resolved persistent CharacterId and the target server identity and
+incarnation. A later disconnect or ownership transfer does not rewrite that
+record, and a stale packet cannot replace its contributor identity.
 
 The record must expire, be bounded per target, and be consumed once at death.
 Disconnect alone must not be interpreted as death or as proof of contribution.

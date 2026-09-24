@@ -64,6 +64,27 @@ public:
         const ValidatedHitObservation::ServerId aTargetServerId,
         const ValidatedHitObservation::LifecycleGeneration aTargetLifecycleGeneration) noexcept
     {
+        return TakeForAcceptedHealthDecrease(
+            aTargetServerId,
+            aTargetLifecycleGeneration,
+            [](const ValidatedHitObservation&) noexcept { return true; });
+    }
+
+    /**
+     * @brief Select the oldest still-authorized observation for a target
+     * lifecycle after an accepted canonical health decrease.
+     *
+     * Stale target incarnations and observations whose attacker no longer has
+     * current authority are discarded while scanning. This lets a transfer
+     * or disconnect invalidate its queued reports without allowing an old
+     * report to consume a later owner's accepted health decrease.
+     */
+    template <typename tIsStillAuthorized>
+    [[nodiscard]] std::optional<ValidatedHitObservation> TakeForAcceptedHealthDecrease(
+        const ValidatedHitObservation::ServerId aTargetServerId,
+        const ValidatedHitObservation::LifecycleGeneration aTargetLifecycleGeneration,
+        tIsStillAuthorized&& aIsStillAuthorized) noexcept(noexcept(aIsStillAuthorized(std::declval<const ValidatedHitObservation&>())))
+    {
         if (aTargetServerId == 0 || aTargetLifecycleGeneration == 0)
             return std::nullopt;
 
@@ -78,15 +99,15 @@ public:
                 continue;
             }
 
-            if (observation.TargetLifecycleGeneration == aTargetLifecycleGeneration)
+            if (observation.TargetLifecycleGeneration == aTargetLifecycleGeneration && aIsStillAuthorized(observation))
             {
                 std::optional<ValidatedHitObservation> matched{observation};
                 RemoveAt(offset);
                 return matched;
             }
 
-            // The entity ID has been observed in another lifecycle. This
-            // pending record can no longer match the current incarnation.
+            // The target incarnation or attacker authority is stale, so this
+            // pending record cannot be correlated to the current decrease.
             RemoveAt(offset);
         }
 

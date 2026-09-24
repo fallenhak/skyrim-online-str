@@ -16,7 +16,67 @@
 #include <Messages/NotifyProjectileLaunch.h>
 
 #include <limits>
+#include <optional>
 #include <utility>
+
+namespace
+{
+std::optional<Persistence::CharacterId> ResolveAuthorizedAttackerCharacterId(
+    World& aWorld,
+    const ValidatedHitObservation::ServerId aAttackerServerId,
+    const ValidatedHitObservation::OwnershipEpoch aOwnershipEpoch,
+    Player* apSender) noexcept
+{
+    if (!apSender || aAttackerServerId == 0)
+        return std::nullopt;
+
+    const auto attackerEntity = static_cast<entt::entity>(aAttackerServerId);
+    const auto attackerView = aWorld.view<CharacterComponent, OwnerComponent, PersistentCharacterComponent>();
+    const auto attackerIt = attackerView.find(attackerEntity);
+    if (attackerIt == attackerView.end())
+        return std::nullopt;
+
+    const auto* const pSession = aWorld.GetSessionService().Get(apSender->GetConnectionId());
+    const auto& character = attackerView.get<CharacterComponent>(*attackerIt);
+    const auto& owner = attackerView.get<OwnerComponent>(*attackerIt);
+    const auto& persistentCharacter = attackerView.get<PersistentCharacterComponent>(*attackerIt);
+
+    CombatAttackerAuthorizationInput attackerInput{};
+    attackerInput.SessionIsInWorld = pSession && pSession->State == SessionState::kInWorld;
+    if (pSession)
+        attackerInput.SessionCharacterId = pSession->SelectedCharacterId;
+    attackerInput.AttackerServerId = aAttackerServerId;
+    attackerInput.AttackerEntityExists = true;
+    attackerInput.AttackerIsPlayerCharacter = character.IsPlayer();
+    attackerInput.OwnerExists = true;
+    attackerInput.SenderIsCurrentOwner = owner.IsCurrentOwner(apSender, aOwnershipEpoch);
+    attackerInput.RequestedOwnershipEpoch = aOwnershipEpoch;
+    attackerInput.CurrentOwnershipEpoch = owner.OwnershipEpoch;
+    attackerInput.ServerResolvedPersistentCharacterId = persistentCharacter.CharacterId;
+
+    return CombatAttackerAuthorizationPolicy::ResolveAuthorizedCharacterId(attackerInput);
+}
+
+std::optional<Persistence::CharacterId> ResolveCurrentObservationAttackerCharacterId(
+    World& aWorld,
+    const ValidatedHitObservation& acObservation) noexcept
+{
+    if (!acObservation.IsWellFormed())
+        return std::nullopt;
+
+    const auto attackerEntity = static_cast<entt::entity>(acObservation.AttackerServerId);
+    const auto attackerView = aWorld.view<OwnerComponent>();
+    const auto attackerIt = attackerView.find(attackerEntity);
+    if (attackerIt == attackerView.end())
+        return std::nullopt;
+
+    return ResolveAuthorizedAttackerCharacterId(
+        aWorld,
+        acObservation.AttackerServerId,
+        acObservation.AttackerOwnershipEpoch,
+        attackerView.get<OwnerComponent>(*attackerIt).GetOwner());
+}
+} // namespace
 
 CombatService::CombatService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
     : m_world(aWorld)
@@ -38,31 +98,7 @@ void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservati
         return;
 
     const auto attackerEntity = static_cast<entt::entity>(packet.AttackerServerId);
-    const auto attackerView = m_world.view<CharacterComponent, OwnerComponent, PersistentCharacterComponent>();
-    const auto attackerIt = attackerView.find(attackerEntity);
-    const bool attackerExists = attackerIt != attackerView.end();
-    const auto* const pSession = m_world.GetSessionService().Get(pPlayer->GetConnectionId());
-
-    CombatAttackerAuthorizationInput attackerInput{};
-    attackerInput.SessionIsInWorld = pSession && pSession->State == SessionState::kInWorld;
-    if (pSession)
-        attackerInput.SessionCharacterId = pSession->SelectedCharacterId;
-    attackerInput.AttackerServerId = packet.AttackerServerId;
-    attackerInput.AttackerEntityExists = attackerExists;
-    if (attackerExists)
-    {
-        const auto& character = attackerView.get<CharacterComponent>(*attackerIt);
-        const auto& owner = attackerView.get<OwnerComponent>(*attackerIt);
-        const auto& persistentCharacter = attackerView.get<PersistentCharacterComponent>(*attackerIt);
-        attackerInput.AttackerIsPlayerCharacter = character.IsPlayer();
-        attackerInput.OwnerExists = true;
-        attackerInput.SenderIsCurrentOwner = owner.IsCurrentOwner(pPlayer, packet.AttackerOwnershipEpoch);
-        attackerInput.RequestedOwnershipEpoch = packet.AttackerOwnershipEpoch;
-        attackerInput.CurrentOwnershipEpoch = owner.OwnershipEpoch;
-        attackerInput.ServerResolvedPersistentCharacterId = persistentCharacter.CharacterId;
-    }
-
-    if (!CombatAttackerAuthorizationPolicy::ResolveAuthorizedCharacterId(attackerInput).has_value())
+    if (!ResolveAuthorizedAttackerCharacterId(m_world, packet.AttackerServerId, packet.AttackerOwnershipEpoch, pPlayer).has_value())
         return;
 
     const auto targetEntity = static_cast<entt::entity>(packet.TargetServerId);
@@ -73,7 +109,7 @@ void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservati
     targetInput.ObservedTargetLifecycleGeneration = packet.TargetLifecycleGeneration;
     targetInput.pCurrentTargetLifecycle = m_world.try_get<ActorLifecycleComponent>(targetEntity);
     targetInput.pTargetPopulationIdentity = m_world.try_get<ActorPopulationIdentityComponent>(targetEntity);
-    targetInput.pAttackerCell = attackerExists ? m_world.try_get<CellIdComponent>(attackerEntity) : nullptr;
+    targetInput.pAttackerCell = m_world.try_get<CellIdComponent>(attackerEntity);
     targetInput.pTargetCell = targetExists ? m_world.try_get<CellIdComponent>(targetEntity) : nullptr;
     if (!CombatTargetAuthorizationPolicy::IsAuthorized(targetInput))
         return;
@@ -107,7 +143,11 @@ void CombatService::OnCanonicalHealthDecrease(const AcceptedCanonicalHealthDecre
         return;
 
     const auto observation = m_pendingObservations.TakeForAcceptedHealthDecrease(
-        acEvent.TargetServerId, acEvent.TargetLifecycleGeneration);
+        acEvent.TargetServerId,
+        acEvent.TargetLifecycleGeneration,
+        [this](const ValidatedHitObservation& acObservation) noexcept {
+            return ResolveCurrentObservationAttackerCharacterId(m_world, acObservation).has_value();
+        });
     if (!observation)
         return;
 
@@ -133,32 +173,7 @@ void CombatService::OnCorrelatedCombatObservation(const CorrelatedCombatObservat
         pTargetLifecycle->GetGeneration() != observation.TargetLifecycleGeneration)
         return;
 
-    const auto attackerEntity = static_cast<entt::entity>(observation.AttackerServerId);
-    const auto attackerView = m_world.view<CharacterComponent, OwnerComponent, PersistentCharacterComponent>();
-    const auto attackerIt = attackerView.find(attackerEntity);
-    if (attackerIt == attackerView.end())
-        return;
-
-    const auto& character = attackerView.get<CharacterComponent>(*attackerIt);
-    const auto& owner = attackerView.get<OwnerComponent>(*attackerIt);
-    const auto& persistentCharacter = attackerView.get<PersistentCharacterComponent>(*attackerIt);
-    Player* const pCurrentOwner = owner.GetOwner();
-    const auto* const pSession = pCurrentOwner ? m_world.GetSessionService().Get(pCurrentOwner->GetConnectionId()) : nullptr;
-
-    CombatAttackerAuthorizationInput attackerInput{};
-    attackerInput.SessionIsInWorld = pSession && pSession->State == SessionState::kInWorld;
-    if (pSession)
-        attackerInput.SessionCharacterId = pSession->SelectedCharacterId;
-    attackerInput.AttackerServerId = observation.AttackerServerId;
-    attackerInput.AttackerEntityExists = true;
-    attackerInput.AttackerIsPlayerCharacter = character.IsPlayer();
-    attackerInput.OwnerExists = pCurrentOwner != nullptr;
-    attackerInput.SenderIsCurrentOwner = owner.IsCurrentOwner(pCurrentOwner, observation.AttackerOwnershipEpoch);
-    attackerInput.RequestedOwnershipEpoch = observation.AttackerOwnershipEpoch;
-    attackerInput.CurrentOwnershipEpoch = owner.OwnershipEpoch;
-    attackerInput.ServerResolvedPersistentCharacterId = persistentCharacter.CharacterId;
-
-    const auto attackerCharacterId = CombatAttackerAuthorizationPolicy::ResolveAuthorizedCharacterId(attackerInput);
+    const auto attackerCharacterId = ResolveCurrentObservationAttackerCharacterId(m_world, observation);
     if (!attackerCharacterId)
         return;
 
