@@ -9,6 +9,10 @@ struct NotifyInventoryChanges;
 struct InventoryChangeEvent;
 struct EquipmentChangeEvent;
 struct NotifyEquipmentChanges;
+struct NotifyContainerTransferResult;
+struct DisconnectedEvent;
+
+#include <Events/ContainerTransferEvent.h>
 
 /**
  * @brief Manages inventories of actors and containers.
@@ -49,6 +53,15 @@ struct InventoryService
      * @brief Applies equipment changes sent by the server.
      */
     void OnNotifyEquipmentChanges(const NotifyEquipmentChanges& acMessage) noexcept;
+    /**
+     * @brief Sends a local player <-> container move as one server transfer.
+     */
+    void OnContainerTransferEvent(const ContainerTransferEvent& acEvent) noexcept;
+    /**
+     * @brief Rolls a local container move back when the server rejected it.
+     */
+    void OnNotifyContainerTransferResult(const NotifyContainerTransferResult& acMessage) noexcept;
+    void OnDisconnected(const DisconnectedEvent&) noexcept;
 
 private:
     /**
@@ -61,9 +74,15 @@ private:
     entt::dispatcher& m_dispatcher;
     TransportService& m_transport;
 
+    uint32_t m_nextTransferId{};
+    Map<uint32_t, ContainerTransferEvent> m_pendingTransfers;
+
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_inventoryConnection;
     entt::scoped_connection m_equipmentConnection;
     entt::scoped_connection m_inventoryChangeConnection;
     entt::scoped_connection m_equipmentChangeConnection;
+    entt::scoped_connection m_containerTransferConnection;
+    entt::scoped_connection m_containerTransferResultConnection;
+    entt::scoped_connection m_disconnectedConnection;
 };

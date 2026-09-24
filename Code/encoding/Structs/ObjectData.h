@@ -40,4 +40,6 @@ struct ObjectData
     // Lever, chain, button, puzzle pillar: each accepted activation is relayed.
     bool IsActivator{};
     uint32_t ActivationCount{};
+    // A container: contents are server-owned and change only through RequestContainerTransfer.
+    bool IsContainer{};
 };

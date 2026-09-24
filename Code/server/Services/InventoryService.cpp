@@ -12,6 +12,10 @@
 #include <Messages/RequestEquipmentChanges.h>
 #include <Messages/NotifyEquipmentChanges.h>
 #include <Messages/DrawWeaponRequest.h>
+#include <Messages/RequestContainerTransfer.h>
+#include <Messages/NotifyContainerTransferResult.h>
+
+#include <chrono>
 
 #include <Setting.h>
 namespace
@@ -25,6 +29,7 @@ InventoryService::InventoryService(World& aWorld, entt::dispatcher& aDispatcher)
     m_inventoryChangeConnection = aDispatcher.sink<PacketEvent<RequestInventoryChanges>>().connect<&InventoryService::OnInventoryChanges>(this);
     m_equipmentChangeConnection = aDispatcher.sink<PacketEvent<RequestEquipmentChanges>>().connect<&InventoryService::OnEquipmentChanges>(this);
     m_drawWeaponConnection = aDispatcher.sink<PacketEvent<DrawWeaponRequest>>().connect<&InventoryService::OnWeaponDrawnRequest>(this);
+    m_containerTransferConnection = aDispatcher.sink<PacketEvent<RequestContainerTransfer>>().connect<&InventoryService::OnContainerTransfer>(this);
 }
 
 void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChanges>& acMessage) noexcept
@@ -50,7 +55,9 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     const auto* pPersistentCharacterComponent = m_world.try_get<PersistentCharacterComponent>(*it);
     const auto* pObjectComponent = m_world.try_get<ObjectComponent>(*it);
     const bool isObject = pObjectComponent != nullptr;
-    const bool hasTrustedObjectState = pObjectComponent && pObjectComponent->HasTrustedState;
+    // Container contents change only through RequestContainerTransfer; the two-message
+    // path (container -N, player +N) cannot be made atomic and would allow duplication.
+    const bool hasTrustedObjectState = pObjectComponent && pObjectComponent->HasTrustedState && !pObjectComponent->IsContainer;
     const bool hasOwner = pOwnerComponent && pOwnerComponent->GetOwner();
     const bool isCurrentOwner = pOwnerComponent && pOwnerComponent->IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch);
     const bool ownershipEpochMatches = pOwnerComponent
@@ -176,4 +183,83 @@ void InventoryService::OnWeaponDrawnRequest(const PacketEvent<DrawWeaponRequest>
     auto& characterComponent = characterView.get<CharacterComponent>(*it);
     characterComponent.SetWeaponDrawn(message.IsWeaponDrawn);
     spdlog::debug("Updating weapon drawn state {:x}:{} at epoch {}", message.Id, message.IsWeaponDrawn, message.OwnershipEpoch);
+}
+
+void InventoryService::OnContainerTransfer(const PacketEvent<RequestContainerTransfer>& acMessage) noexcept
+{
+    const auto& message = acMessage.Packet;
+    Player* const pPlayer = acMessage.pPlayer;
+
+    NotifyContainerTransferResult reply;
+    reply.RequestId = message.RequestId;
+
+    auto& session = m_transferSessions[pPlayer->GetId()];
+    const uint64_t nowSecond = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+
+    const auto containerEntity = static_cast<entt::entity>(message.ContainerId);
+    auto* pObjectComponent = m_world.valid(containerEntity) ? m_world.try_get<ObjectComponent>(containerEntity) : nullptr;
+    auto* pContainerInventory = pObjectComponent ? m_world.try_get<InventoryComponent>(containerEntity) : nullptr;
+    const auto* pContainerCell = pObjectComponent ? m_world.try_get<CellIdComponent>(containerEntity) : nullptr;
+
+    const auto characterEntity = pPlayer->GetCharacter();
+    auto* pPlayerInventory = characterEntity ? m_world.try_get<InventoryComponent>(*characterEntity) : nullptr;
+    const auto* pCharacterCell = characterEntity ? m_world.try_get<CellIdComponent>(*characterEntity) : nullptr;
+
+    Inventory scratchContainer{};
+    Inventory scratchPlayer{};
+    const bool hasInventories = pContainerInventory && pPlayerInventory && pContainerCell && pCharacterCell;
+
+    bool allowed = false;
+    if (hasInventories && pObjectComponent->IsContainer && pObjectComponent->HasTrustedState)
+    {
+        const auto& senderCell = pPlayer->GetCellComponent();
+        allowed = ObjectInteractionPolicy::CanInteract(
+                      pContainerCell->Cell, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+                      pContainerCell->Cell, pContainerCell->WorldSpaceId, pContainerCell->CenterCoords) &&
+            ObjectInteractionPolicy::IsInSenderRange(
+                      pCharacterCell->Cell, pCharacterCell->WorldSpaceId, pCharacterCell->CenterCoords,
+                      pContainerCell->Cell, pContainerCell->WorldSpaceId, pContainerCell->CenterCoords);
+    }
+
+    bool applied = false;
+    const auto result = ContainerTransferPolicy::TryTransfer(
+        session, message.RequestId, nowSecond, allowed, static_cast<ContainerTransferDirection>(message.Direction), message.Item,
+        message.ExpectedContainerCount, hasInventories ? pContainerInventory->Content : scratchContainer,
+        hasInventories ? pPlayerInventory->Content : scratchPlayer, &applied);
+
+    reply.Result = static_cast<uint8_t>(result);
+    pPlayer->Send(reply);
+
+    if (result != ContainerTransferResult::kAccepted)
+    {
+        spdlog::info(
+            "Container transfer {} from player {:X} rejected ({}): container {:X}, item {:X} x{}", message.RequestId, pPlayer->GetId(),
+            static_cast<int>(result), message.ContainerId, message.Item.BaseId.BaseId, message.Item.Count);
+        return;
+    }
+
+    // A replayed id is answered again but must not be relayed twice.
+    if (!applied || !hasInventories)
+        return;
+
+    const bool isTake = static_cast<ContainerTransferDirection>(message.Direction) == ContainerTransferDirection::kTake;
+
+    NotifyInventoryChanges containerNotify;
+    containerNotify.ServerId = message.ContainerId;
+    containerNotify.Item = message.Item;
+    containerNotify.Item.Count = isTake ? -message.Item.Count : message.Item.Count;
+    if (!GameServer::Get()->SendToPlayersInRange(containerNotify, containerEntity, pPlayer))
+        spdlog::error("{}: SendToPlayersInRange failed for container", __FUNCTION__);
+
+    if (const auto* pOwner = m_world.try_get<OwnerComponent>(*characterEntity))
+    {
+        NotifyInventoryChanges playerNotify;
+        playerNotify.ServerId = World::ToInteger(*characterEntity);
+        playerNotify.OwnershipEpoch = pOwner->OwnershipEpoch;
+        playerNotify.Item = message.Item;
+        playerNotify.Item.Count = isTake ? message.Item.Count : -message.Item.Count;
+        if (!GameServer::Get()->SendToPlayersInRange(playerNotify, *characterEntity, pPlayer))
+            spdlog::error("{}: SendToPlayersInRange failed for character", __FUNCTION__);
+    }
 }

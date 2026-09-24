@@ -5,6 +5,7 @@
 #include <Components.h>
 #include <Services/ObjectInteractionPolicy.h>
 #include <Services/PresentationAuthorityPolicy.h>
+#include <Services/InventoryInteractionPolicy.h>
 
 #include <Events/PlayerLeaveCellEvent.h>
 #include <Events/UpdateEvent.h>
@@ -150,6 +151,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.IsDoorOpen = objectComponent.Door.IsOpen;
             objectData.IsActivator = objectComponent.IsActivator;
             objectData.ActivationCount = objectComponent.Activator.ActivationCount;
+            objectData.IsContainer = objectComponent.IsContainer;
             if (objectComponent.HasTrustedState)
             {
                 objectData.CurrentLockData = objectComponent.CurrentLockData;
@@ -178,7 +180,23 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectComponent.IsActivator = object.IsActivator && !object.IsDoor && !object.IsHarvestable;
 
             m_world.emplace<CellIdComponent>(cEntity, object.CellId, object.WorldSpaceId, object.CurrentCoords);
-            m_world.emplace<InventoryComponent>(cEntity);
+            auto& inventoryComponent = m_world.emplace<InventoryComponent>(cEntity);
+
+            // Container baseline: the first discoverer's contents become the server's copy.
+            // Not verified against the CONT record yet (second phase), so it is logged.
+            if (object.IsContainer && !object.IsDoor && !object.IsHarvestable && !objectComponent.IsActivator)
+            {
+                for (const auto& entry : object.CurrentInventory.Entries)
+                {
+                    if (entry.Count > 0 && InventoryInteractionPolicy::HasValidItemPayload(entry))
+                        inventoryComponent.Content.AddOrRemoveEntry(entry);
+                }
+                objectComponent.IsContainer = true;
+                objectComponent.HasTrustedState = true;
+                spdlog::info(
+                    "[World] container {:X}:{:X} baseline learned from player {:X}: {} entries ({} reported)", object.Id.ModId, object.Id.BaseId,
+                    acMessage.pPlayer->GetId(), inventoryComponent.Content.Entries.size(), object.CurrentInventory.Entries.size());
+            }
 
             ObjectData objectData;
             objectData.Id = object.Id;
@@ -190,6 +208,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.IsFurniture = objectComponent.IsFurniture;
             objectData.IsDoor = object.IsDoor;
             objectData.IsActivator = objectComponent.IsActivator;
+            objectData.IsContainer = objectComponent.IsContainer;
 
             response.Objects.push_back(objectData);
         }
