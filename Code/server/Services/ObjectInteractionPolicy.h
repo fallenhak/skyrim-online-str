@@ -8,6 +8,14 @@
 #include <limits>
 #include <utility>
 
+// Server-owned open state of a door. Unknown until the first valid activation
+// teaches the server what the activating client saw.
+struct DoorState
+{
+    bool IsKnown{};
+    bool IsOpen{};
+};
+
 struct ObjectInteractionPolicy final
 {
     [[nodiscard]] static bool IsInSenderRange(
@@ -139,10 +147,53 @@ struct ObjectInteractionPolicy final
         return aHarvested && aNowTick >= aRespawnAtTick;
     }
 
+    // TESObjectREFR::OpenState: kNone = 0, kOpen = 1, kOpening = 2, kClosed = 3, kClosing = 4.
+    // kNone covers load doors and doors without an open animation; those are not toggled.
+    template <typename TOnToggle>
+    [[nodiscard]] static bool TryToggleDoor(
+        const bool aIsDoor,
+        DoorState& aState,
+        const uint8_t aPreActivationOpenState,
+        const bool aActorExists,
+        const bool aOwnedBySender,
+        const GameId& aRequestedCell,
+        const GameId& aSenderCell,
+        const GameId& aSenderWorldSpace,
+        const GridCellCoords& aSenderCoords,
+        const GameId& aActivatorCell,
+        const GameId& aActivatorWorldSpace,
+        const GridCellCoords& aActivatorCoords,
+        const GameId& aObjectCell,
+        const GameId& aObjectWorldSpace,
+        const GridCellCoords& aObjectCoords,
+        TOnToggle&& aOnToggle)
+    {
+        if (!aIsDoor || aPreActivationOpenState == 0 || aPreActivationOpenState > 4)
+            return false;
+
+        const bool cWasOpen = aPreActivationOpenState == 1 || aPreActivationOpenState == 2;
+
+        // The client toggled a door it saw in a state the server has already moved past.
+        if (aState.IsKnown && aState.IsOpen != cWasOpen)
+            return false;
+
+        if (!CanActivate(
+                true, aActorExists, aOwnedBySender,
+                aRequestedCell, aSenderCell, aSenderWorldSpace, aSenderCoords,
+                aActivatorCell, aActivatorWorldSpace, aActivatorCoords,
+                aObjectCell, aObjectWorldSpace, aObjectCoords))
+            return false;
+
+        aState.IsKnown = true;
+        aState.IsOpen = !cWasOpen;
+        std::forward<TOnToggle>(aOnToggle)();
+        return true;
+    }
+
     [[nodiscard]] static constexpr bool IsValidOpenState(const uint8_t aOpenState) noexcept
     {
-        // TESObjectREFR::OpenState defines kNone, kOpen, and kOpening.
-        return aOpenState <= 2;
+        // TESObjectREFR::OpenState: kNone, kOpen, kOpening, kClosed, kClosing.
+        return aOpenState <= 4;
     }
 
     template <typename TOnRelay>

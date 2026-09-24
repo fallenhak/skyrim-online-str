@@ -29,4 +29,8 @@ struct ObjectData
     // Placed ingredient (item) rather than flora: respawns on the longer timer.
     bool IsHarvestItem{};
     bool IsHarvested{};
+    // A non-load door; the open state is owned by the server once known.
+    bool IsDoor{};
+    bool IsDoorStateKnown{};
+    bool IsDoorOpen{};
 };

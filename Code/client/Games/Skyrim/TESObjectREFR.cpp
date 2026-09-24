@@ -445,6 +445,15 @@ TESObjectREFR::OpenState TESObjectREFR::GetOpenState() noexcept
     return s_pGetOpenState(this);
 }
 
+void TESObjectREFR::SetOpen(bool aOpen) noexcept
+{
+    using ObjectReference = TESObjectREFR;
+
+    PAPYRUS_FUNCTION(void, ObjectReference, SetOpen, bool);
+
+    s_pSetOpen(this, aOpen);
+}
+
 ExtraContainerChanges::Data* TESObjectREFR::GetContainerChanges() const noexcept
 {
     TP_THIS_FUNCTION(TGetContainterChanges, ExtraContainerChanges::Data*, const TESObjectREFR);

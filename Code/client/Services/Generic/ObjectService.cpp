@@ -147,6 +147,16 @@ void RestoreHarvested(TESObjectREFR* apObject) noexcept
     apObject->Enable();
 }
 
+// Load doors teleport the activator, so they are never toggled remotely.
+bool IsSyncedDoor(TESObjectREFR* apObject) noexcept
+{
+    if (!apObject || !apObject->baseForm || apObject->baseForm->formType != FormType::Door)
+        return false;
+
+    ExtraDataList* pExtraData = apObject->GetExtraDataList();
+    return !pExtraData || !pExtraData->Contains(ExtraDataType::Teleport);
+}
+
 void ObjectService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
     // TODO(cosideci): clear object components
@@ -224,6 +234,7 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
 
         objectData.IsHarvestable = cIsHarvestType;
         objectData.IsHarvestItem = pObject->baseForm->formType == FormType::Ingredient;
+        objectData.IsDoor = IsSyncedDoor(pObject);
 
         request.Objects.push_back(objectData);
     }
@@ -250,6 +261,18 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
             ApplyHarvested(pObject);
         else if (objectData.IsHarvestable)
             RestoreHarvested(pObject);
+
+        // Late join / re-entry: match the door to the server's open state.
+        if (objectData.IsDoor && objectData.IsDoorStateKnown && IsSyncedDoor(pObject))
+        {
+            const auto cLocalState = pObject->GetOpenState();
+            const bool cLocalOpen = cLocalState == TESObjectREFR::kOpen || cLocalState == TESObjectREFR::kOpening;
+            if (cLocalOpen != objectData.IsDoorOpen)
+            {
+                spdlog::info("Door {:X} set {} to match the server", pObject->formID, objectData.IsDoorOpen ? "open" : "closed");
+                pObject->SetOpen(objectData.IsDoorOpen);
+            }
+        }
 
         if (objectData.IsStateUntrusted)
             continue;

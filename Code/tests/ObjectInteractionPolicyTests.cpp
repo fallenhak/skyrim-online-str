@@ -62,7 +62,10 @@ TEST_CASE("Object activation requires an owned actor and valid open state", "[ob
     REQUIRE(ObjectInteractionPolicy::IsValidOpenState(0));
     REQUIRE(ObjectInteractionPolicy::IsValidOpenState(1));
     REQUIRE(ObjectInteractionPolicy::IsValidOpenState(2));
-    REQUIRE_FALSE(ObjectInteractionPolicy::IsValidOpenState(3));
+    // A closed or closing door is the common case when a player opens it.
+    REQUIRE(ObjectInteractionPolicy::IsValidOpenState(3));
+    REQUIRE(ObjectInteractionPolicy::IsValidOpenState(4));
+    REQUIRE_FALSE(ObjectInteractionPolicy::IsValidOpenState(5));
     REQUIRE_FALSE(ObjectInteractionPolicy::IsValidOpenState(std::numeric_limits<uint8_t>::max()));
 }
 
@@ -230,4 +233,72 @@ TEST_CASE("A respawned object can be harvested again", "[object_authority][harve
     REQUIRE(ObjectInteractionPolicy::IsHarvestRespawnDue(harvested, respawnAt, respawnAt));
     harvested = false;
     REQUIRE(harvest(harvested));
+}
+
+namespace
+{
+struct DoorFixture
+{
+    GameId Cell{0, 2};
+    GameId WorldSpace{0, 0x3C};
+    GridCellCoords Coords{10, -10};
+    DoorState State{};
+    std::size_t Relays{};
+
+    bool Toggle(const uint8_t aPreOpenState, const bool aIsDoor = true, const bool aOwned = true)
+    {
+        return ObjectInteractionPolicy::TryToggleDoor(
+            aIsDoor, State, aPreOpenState, true, aOwned, Cell, Cell, WorldSpace, Coords,
+            Cell, WorldSpace, Coords, Cell, WorldSpace, Coords, [&] { ++Relays; });
+    }
+};
+
+constexpr uint8_t kNone = 0;
+constexpr uint8_t kOpen = 1;
+constexpr uint8_t kClosed = 3;
+} // namespace
+
+TEST_CASE("The server owns door open state and relays each valid toggle", "[object_authority][door]")
+{
+    DoorFixture door;
+    REQUIRE_FALSE(door.State.IsKnown);
+
+    // First activation of a closed door: learned, flipped to open, relayed.
+    REQUIRE(door.Toggle(kClosed));
+    REQUIRE(door.State.IsKnown);
+    REQUIRE(door.State.IsOpen);
+    REQUIRE(door.Relays == 1);
+
+    REQUIRE(door.Toggle(kOpen));
+    REQUIRE_FALSE(door.State.IsOpen);
+    REQUIRE(door.Relays == 2);
+}
+
+TEST_CASE("A toggle from a client that saw a stale door state is rejected", "[object_authority][door]")
+{
+    DoorFixture door;
+    REQUIRE(door.Toggle(kClosed)); // now open on the server
+
+    // A second client still sees it closed and tries to open it.
+    REQUIRE_FALSE(door.Toggle(kClosed));
+    REQUIRE(door.State.IsOpen);
+    REQUIRE(door.Relays == 1);
+}
+
+TEST_CASE("Door toggle keeps the activation checks", "[object_authority][door]")
+{
+    DoorFixture notDoor;
+    REQUIRE_FALSE(notDoor.Toggle(kClosed, false));
+
+    DoorFixture foreign;
+    REQUIRE_FALSE(foreign.Toggle(kClosed, true, false));
+
+    DoorFixture noState; // kNone: load doors and doors without open animation
+    REQUIRE_FALSE(noState.Toggle(kNone));
+
+    for (const auto* pDoor : {&notDoor, &foreign, &noState})
+    {
+        REQUIRE_FALSE(pDoor->State.IsKnown);
+        REQUIRE(pDoor->Relays == 0);
+    }
 }
