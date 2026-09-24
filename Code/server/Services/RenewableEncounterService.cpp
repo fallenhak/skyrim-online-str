@@ -2,11 +2,13 @@
 
 #include <World.h>
 #include <Game/Player.h>
-#include <Components/ModsComponent.h>
+#include <Components.h>
 
 #include <Events/AcceptedCanonicalCreatureDeathEvent.h>
 #include <Events/CharacterExteriorCellChangeEvent.h>
 #include <Events/CharacterInteriorCellChangeEvent.h>
+#include <Events/CharacterRemoveEvent.h>
+#include <Events/CharacterSpawnedEvent.h>
 #include <Events/PlayerLeaveEvent.h>
 #include <Events/UpdateEvent.h>
 
@@ -16,6 +18,7 @@
 #include <Services/RenewableEncounterConfig.h>
 #include <Services/RenewableEncounterDeathPort.h>
 #include <Services/RenewableEncounterSnapshotMapping.h>
+#include <Services/RenewableEncounterSpawnBinding.h>
 
 RenewableEncounterService::RenewableEncounterService(World& aWorld, entt::dispatcher& aDispatcher, Persistence::RenewableEncounterRepository& aRepository) noexcept
     : m_world(aWorld)
@@ -25,6 +28,8 @@ RenewableEncounterService::RenewableEncounterService(World& aWorld, entt::dispat
     , m_interiorCellChangeConnection(aDispatcher.sink<CharacterInteriorCellChangeEvent>().connect<&RenewableEncounterService::OnInteriorCellChange>(this))
     , m_exteriorCellChangeConnection(aDispatcher.sink<CharacterExteriorCellChangeEvent>().connect<&RenewableEncounterService::OnExteriorCellChange>(this))
     , m_creatureDeathConnection(aDispatcher.sink<AcceptedCanonicalCreatureDeathEvent>().connect<&RenewableEncounterService::OnCreatureDeath>(this))
+    , m_characterSpawnedConnection(aDispatcher.sink<CharacterSpawnedEvent>().connect<&RenewableEncounterService::OnCharacterSpawned>(this))
+    , m_characterRemoveConnection(aDispatcher.sink<CharacterRemoveEvent>().connect<&RenewableEncounterService::OnCharacterRemove>(this))
 {
 }
 
@@ -165,4 +170,49 @@ void RenewableEncounterService::OnCreatureDeath(const AcceptedCanonicalCreatureD
         spdlog::info("[World] encounter cleared {:x}/{} tick={}", encounterId->CellFormId, encounterId->GroupIndex, m_tick);
         SaveState();
     }
+}
+
+void RenewableEncounterService::OnCharacterSpawned(const CharacterSpawnedEvent& acEvent) noexcept
+{
+    const auto* pFormId = m_world.try_get<FormIdComponent>(acEvent.Entity);
+    const auto* pLifecycle = m_world.try_get<ActorLifecycleComponent>(acEvent.Entity);
+    const auto* pCharacter = m_world.try_get<CharacterComponent>(acEvent.Entity);
+    if (!pFormId || !*pFormId || !pLifecycle || !pLifecycle->IsValid() || !pCharacter || pCharacter->IsPlayer())
+        return;
+
+    // Slots are configured as load-order form ids; resolve the placed reference
+    // against the server's load order like cell ids.
+    std::uint32_t placedRefFormId = 0;
+    if (!m_world.ctx().at<ModsComponent>().ResolveServerFormId(pFormId->Id, placedRefFormId))
+        return;
+
+    const auto serverId = World::ToInteger(acEvent.Entity);
+    const EncounterIncarnation incarnation{serverId, pLifecycle->GetGeneration()};
+    switch (BindPlacedActor(m_registry, placedRefFormId, incarnation, pCharacter->IsDead()))
+    {
+    case PlacedActorBindResult::Bound:
+        m_boundByServerId[serverId] = incarnation;
+        spdlog::info("[World] spawn completed slot={:x} incarnation={:x}:{} tick={}", placedRefFormId, serverId, incarnation.LifecycleGeneration, m_tick);
+        break;
+    case PlacedActorBindResult::ArrivedDead:
+        spdlog::debug("[World] dead actor not bound slot={:x} incarnation={:x}:{}", placedRefFormId, serverId, incarnation.LifecycleGeneration);
+        break;
+    case PlacedActorBindResult::Rejected:
+        spdlog::warn("[World] spawn rejected slot={:x} incarnation={:x}:{} (slot taken or dead)", placedRefFormId, serverId, incarnation.LifecycleGeneration);
+        break;
+    case PlacedActorBindResult::NotEncounterSlot:
+        break;
+    }
+}
+
+void RenewableEncounterService::OnCharacterRemove(const CharacterRemoveEvent& acEvent) noexcept
+{
+    const auto it = m_boundByServerId.find(acEvent.ServerId);
+    if (it == m_boundByServerId.end())
+        return;
+
+    const auto incarnation = it->second;
+    m_boundByServerId.erase(it);
+    if (ReleasePlacedActor(m_registry, incarnation))
+        spdlog::debug("[World] actor released incarnation={:x}:{}", incarnation.ServerId, incarnation.LifecycleGeneration);
 }

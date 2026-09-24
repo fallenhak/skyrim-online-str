@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <unordered_map>
 
 struct World;
 struct UpdateEvent;
@@ -11,6 +12,8 @@ struct PlayerLeaveEvent;
 struct CharacterInteriorCellChangeEvent;
 struct CharacterExteriorCellChangeEvent;
 struct AcceptedCanonicalCreatureDeathEvent;
+struct CharacterSpawnedEvent;
+struct CharacterRemoveEvent;
 
 namespace Persistence
 {
@@ -27,9 +30,10 @@ struct RenewableEncounterRepository;
  * resets. Ticks are whole seconds of server uptime, the unit
  * RenewableEncounterPolicy cooldowns are written in.
  *
- * Spawning and actor packet gating belong to other lanes; they reach the
- * registry through GetRegistry() (GetSpawnRequests/ClaimSpawn/CompleteSpawn,
- * GetIncarnationStatus).
+ * Actors the server creates for a configured placed reference are bound to
+ * their slot on CharacterSpawnedEvent and released on CharacterRemoveEvent
+ * (W13). Actor packet gating belongs to the actor lane and reaches the
+ * registry through GetRegistry() (GetIncarnationStatus).
  */
 struct RenewableEncounterService
 {
@@ -73,6 +77,8 @@ private:
     void OnInteriorCellChange(const CharacterInteriorCellChangeEvent& acEvent) noexcept;
     void OnExteriorCellChange(const CharacterExteriorCellChangeEvent& acEvent) noexcept;
     void OnCreatureDeath(const AcceptedCanonicalCreatureDeathEvent& acEvent) noexcept;
+    void OnCharacterSpawned(const CharacterSpawnedEvent& acEvent) noexcept;
+    void OnCharacterRemove(const CharacterRemoveEvent& acEvent) noexcept;
 
     void RunTick() noexcept;
 
@@ -83,10 +89,15 @@ private:
     std::uint64_t m_tick{};
     double m_tickAccumulator{};
     std::uint64_t m_lastSaveTick{};
+    // Bound incarnations by server id: the entity is already destroyed when
+    // CharacterRemoveEvent reaches this service.
+    std::unordered_map<std::uint32_t, EncounterIncarnation> m_boundByServerId;
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_playerLeaveConnection;
     entt::scoped_connection m_interiorCellChangeConnection;
     entt::scoped_connection m_exteriorCellChangeConnection;
     entt::scoped_connection m_creatureDeathConnection;
+    entt::scoped_connection m_characterSpawnedConnection;
+    entt::scoped_connection m_characterRemoveConnection;
 };

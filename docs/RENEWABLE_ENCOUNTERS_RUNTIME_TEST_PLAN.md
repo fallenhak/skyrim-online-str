@@ -16,10 +16,11 @@ call and what the server must log so the run can be judged from evidence, not me
 | `Restore(snapshot, nowTick)` | startup, after config | with `RenewableEncounterRepository::LoadAll()` |
 | `SetPlayerCell(player, cell)` | A11 player cell record | every `EnterInterior/ExteriorCellRequest` the server accepts |
 | `RemovePlayer(player)` + `ReleasePlayerClaims(player)` | session teardown | disconnect |
-| `GetSpawnRequests(id)` → `ClaimSpawn(...)` → `CompleteSpawn(ticket, incarnation)` | spawner | cell load by the owning player |
+| `BindPlacedActor` (`Services/RenewableEncounterSpawnBinding.h`) → `BindIncarnation` | `RenewableEncounterService` on `CharacterSpawnedEvent` (W13) | the server creates an actor for a configured placed reference |
+| `GetSpawnRequests(id)` → `ClaimSpawn(...)` → `CompleteSpawn(ticket, incarnation)` | a future server-driven spawner | not used by vanilla placed actors |
 | `ExpireSpawnClaims(nowTick, ttl)` | server tick | periodically |
 | `RecordCanonicalCreatureDeath(registry, event, tick)` (`Services/RenewableEncounterDeathPort.h`) | dispatcher sink for Combat C11 `AcceptedCanonicalCreatureDeathEvent` | never from a raw client packet |
-| `ReleaseIncarnation(incarnation)` | despawn / unload / ownership lost | actor leaves without dying |
+| `ReleaseIncarnation(incarnation)` | `RenewableEncounterService` on `CharacterRemoveEvent` (W13) | actor removed by the server |
 | `GetIncarnationStatus(incarnation)` | every actor packet handler | drop the packet unless `Current` |
 | `TryReset(id, nowTick)` / `GetResetBlocker` | server tick | periodically |
 | `Snapshot(nowTick)` → `RenewableEncounterRepository::SaveAll` | persistence | on clear, on reset, on graceful shutdown |
