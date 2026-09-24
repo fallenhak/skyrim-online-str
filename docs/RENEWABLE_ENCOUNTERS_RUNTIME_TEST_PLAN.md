@@ -22,6 +22,9 @@ one does.
   encounter over cells `000371DE` + `000371DD`, 38 slots, **cooldown=60 s**. Use the
   1800 s default in play.
 - Server log at **info** level, captured to a file for the whole run.
+- After the run: `python Tools/Scripts/encounter_log_report.py <server.log>` prints each
+  encounter's clear/blocked/reset order and flags log-provable problems (missing config,
+  double clear, reset without clear, failed saves). Exit code 1 means problems.
 - Travel: walk (or `coc`) from Whiterun to Bleak Falls Barrow. The temple is not an
   encounter cell, so spawning there does not affect occupancy.
 
