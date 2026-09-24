@@ -124,6 +124,7 @@ declare namespace SkyrimTogetherTypes {
     raceModId: string,
     sex: number,
     level: number,
+    slotIndex?: number,
   ];
 
   /** Numeric CharacterSelectionStatus values from the existing protocol. */

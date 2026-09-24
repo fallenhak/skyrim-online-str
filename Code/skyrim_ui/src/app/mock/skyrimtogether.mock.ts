@@ -42,6 +42,12 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
   ];
   public readonly players$ = playerStore.pipe(selectAllEntities());
 
+  constructor() {
+    super();
+    // Browser preview: play the entry flow the launcher/native side drives in game.
+    setTimeout(() => this.startEntryFlow(), 400);
+  }
+
   connect(host: string, port: number, password: string): void {
     if (!this.connected) {
       let error: ErrorEvents | boolean;
@@ -112,6 +118,76 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
     }
   }
 
+  createCharacter(slotIndex: number, name: string): void {
+    this.emit('loadingStage', 'creatingCharacter', 0.35);
+    setTimeout(() => {
+      const trimmed = name.trim();
+      let status: SkyrimTogetherTypes.CharacterCreateStatus = 0;
+      if (trimmed.length < 3 || trimmed.length > 24) status = 1;
+      else if (
+        this.mockServerCharacterList.some(
+          c => c.name.toLowerCase() === trimmed.toLowerCase(),
+        )
+      )
+        status = 2;
+      else if (slotIndex > 0) status = 3;
+      const characterId = status === 0 ? String(Date.now()) : '0';
+      if (status === 0) {
+        this.mockServerCharacterList.push({
+          characterId,
+          name: trimmed,
+          race: { baseId: '0', modId: '0' },
+          sex: 0,
+          level: 1,
+          slotIndex,
+        });
+      }
+      this.emit('characterCreateResult', status, characterId);
+      if (status === 0) this.playWorldEntry(true);
+    }, 600);
+  }
+
+  /** Preview of the native save-free world entry the game drives after create/select. */
+  playWorldEntry(isNew: boolean): void {
+    const stages: Array<[SkyrimTogetherTypes.LoadingStage, number]> = [
+      ['loadingWorld', 0.7],
+      ['applyingCharacter', 0.8],
+      ...(isNew ? ([['raceMenu', 0.9]] as Array<[SkyrimTogetherTypes.LoadingStage, number]>) : []),
+      ['enteringWorld', 0.95],
+      ['done', 1],
+    ];
+    stages.forEach(([stage, progress], i) =>
+      setTimeout(() => this.emit('loadingStage', stage, progress), 900 * (i + 1)),
+    );
+  }
+
+  retryConnect(): void {
+    this.startEntryFlow();
+  }
+
+  quitGame(): void {
+    console.info('[mock] quitGame');
+  }
+
+  /** Browser preview of the launcher -> auth -> slots flow. */
+  startEntryFlow(): void {
+    const steps: Array<[number, () => void]> = [
+      [0, () => this.emit('loadingStage', 'connecting', 0.1)],
+      [500, () => this.emit('authState', 'connecting', '', '', '')],
+      [900, () => this.emit('loadingStage', 'authenticating', 0.3)],
+      [1300, () => this.emit('authState', 'authenticating', '', '', '')],
+      [
+        2000,
+        () => this.emit('authState', 'authenticated', 'Burak', '', ''),
+      ],
+      [2300, () => this.emit('loadingStage', 'fetchingCharacters', 0.6)],
+      [2400, () => this.emit('characterSlots', 3, 1)],
+      [2500, () => this.connect('mock-server', 10578, '')],
+      [3000, () => this.requestCharacterList()],
+    ];
+    for (const [delay, fn] of steps) setTimeout(fn, delay);
+  }
+
   disconnect(): void {
     if (this.connected) {
       this.connected = false;
@@ -152,6 +228,7 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
       hasServerCharacter ? 0 : 2;
     if (status === 0) {
       this.emit('characterSessionState', 'characterSelected');
+      this.playWorldEntry(false);
     }
     this.emit(
       'characterSelectionResult',

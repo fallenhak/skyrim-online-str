@@ -1,3 +1,5 @@
+<app-entry *ngIf="entryActive$ | async"></app-entry>
+
 <ng-container *ngIf="inGame$ | async">
   <ng-container *ngIf="!(menuOpen$ | async)">
     <app-debug></app-debug>

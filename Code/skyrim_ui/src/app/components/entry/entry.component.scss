@@ -1,0 +1,387 @@
+// Full-screen pre-world entry, modelled on the vanilla Skyrim main menu:
+// black field, drifting smoke, right-aligned menu, confirm column between two rules,
+// outlined key captions. Monochrome only.
+$white: #ffffff;
+$text: #e6e6e6;
+$dim: #a8a8a8;
+$off: #5f5f5f;
+$rule: rgba(255, 255, 255, 0.34);
+$font: 'futura-condensed-medium', sans-serif;
+
+:host {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: all;
+}
+
+.entry {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: $text;
+  background: #000;
+  font-family: $font;
+  -webkit-font-smoothing: antialiased;
+  animation: entry-fade 0.6s ease-out both;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+
+  &:disabled {
+    cursor: default;
+  }
+}
+
+@keyframes entry-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+// --- Smoke ---------------------------------------------------------------
+// Soft noise "puffs" (SVG turbulence inside a radial mask) that drift, turn and breathe
+// slowly along the bottom of the screen, like the fog under the vanilla main-menu logo.
+
+.entry-smoke {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.puff {
+  position: absolute;
+  background-size: 100% 100%;
+  filter: blur(3px);
+  opacity: 0;
+  will-change: transform, opacity;
+  animation-name: puff-drift, puff-breathe;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+
+  &.v0 {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'%3E%3Cdefs%3E%3CradialGradient id='g'%3E%3Cstop offset='0' stop-color='white'/%3E%3Cstop offset='0.55' stop-color='white' stop-opacity='0.55'/%3E%3Cstop offset='1' stop-color='white' stop-opacity='0'/%3E%3C/radialGradient%3E%3Cmask id='m'%3E%3Crect width='512' height='512' fill='url(%23g)'/%3E%3C/mask%3E%3Cfilter id='f' x='0' y='0' width='100%' height='100%'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.011' numOctaves='5' seed='4'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.86 0 0 0 0 0.86 0 0 0 0 0.88 0 0 0 1.5 -0.42'/%3E%3C/filter%3E%3C/defs%3E%3Crect width='512' height='512' filter='url(%23f)' mask='url(%23m)'/%3E%3C/svg%3E");
+  }
+  &.v1 {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'%3E%3Cdefs%3E%3CradialGradient id='g'%3E%3Cstop offset='0' stop-color='white'/%3E%3Cstop offset='0.55' stop-color='white' stop-opacity='0.55'/%3E%3Cstop offset='1' stop-color='white' stop-opacity='0'/%3E%3C/radialGradient%3E%3Cmask id='m'%3E%3Crect width='512' height='512' fill='url(%23g)'/%3E%3C/mask%3E%3Cfilter id='f' x='0' y='0' width='100%' height='100%'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.011' numOctaves='5' seed='11'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.86 0 0 0 0 0.86 0 0 0 0 0.88 0 0 0 1.5 -0.42'/%3E%3C/filter%3E%3C/defs%3E%3Crect width='512' height='512' filter='url(%23f)' mask='url(%23m)'/%3E%3C/svg%3E");
+  }
+  &.v2 {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'%3E%3Cdefs%3E%3CradialGradient id='g'%3E%3Cstop offset='0' stop-color='white'/%3E%3Cstop offset='0.55' stop-color='white' stop-opacity='0.55'/%3E%3Cstop offset='1' stop-color='white' stop-opacity='0'/%3E%3C/radialGradient%3E%3Cmask id='m'%3E%3Crect width='512' height='512' fill='url(%23g)'/%3E%3C/mask%3E%3Cfilter id='f' x='0' y='0' width='100%' height='100%'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.011' numOctaves='5' seed='27'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.86 0 0 0 0 0.86 0 0 0 0 0.88 0 0 0 1.5 -0.42'/%3E%3C/filter%3E%3C/defs%3E%3Crect width='512' height='512' filter='url(%23f)' mask='url(%23m)'/%3E%3C/svg%3E");
+  }
+}
+
+@keyframes puff-drift {
+  from {
+    transform: translate3d(-4vw, 0.6vh, 0) rotate(var(--r0)) scale(1);
+  }
+  to {
+    transform: translate3d(4vw, -1.2vh, 0) rotate(var(--r1)) scale(1.18);
+  }
+}
+
+@keyframes puff-breathe {
+  0% {
+    opacity: calc(var(--o) * 0.55);
+  }
+  100% {
+    opacity: var(--o);
+  }
+}
+
+// --- Wordmark (sits where the vanilla logo sits) --------------------------
+
+.entry-mark {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-transform: uppercase;
+  color: $white;
+  opacity: 0.92;
+  transition:
+    left 0.7s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.5s;
+
+  .has-column & {
+    left: 32.75%;
+  }
+
+  [data-entry-view='create'] &,
+  [data-entry-view='failed'] & {
+    opacity: 0.35;
+  }
+}
+
+.entry-mark-top {
+  font-size: 11vh;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  margin-right: -0.12em;
+}
+
+.entry-mark-sub {
+  font-size: 2.6vh;
+  letter-spacing: 0.9em;
+  margin-right: -0.9em;
+  color: $dim;
+}
+
+.entry-mark-rule {
+  position: relative;
+  width: 100%;
+  height: 1px;
+  margin: 1.6vh 0 1.4vh;
+  background: linear-gradient(90deg, transparent, $rule 20%, $rule 80%, transparent);
+
+  i {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 0.9vh;
+    height: 0.9vh;
+    border: 1px solid $dim;
+    background: #000;
+    transform: translate(-50%, -50%) rotate(45deg);
+  }
+}
+
+// --- Account (top right, like the "Skyrim Updates" block) -----------------
+
+.entry-account {
+  position: absolute;
+  top: 5.5vh;
+  right: 5.2vw;
+  font-size: 2.6vh;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: $dim;
+}
+
+// --- Right-hand menu ------------------------------------------------------
+
+.entry-menu {
+  position: absolute;
+  right: 5.2vw;
+  bottom: 16.5vh;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3vh;
+  transition: opacity 0.3s;
+
+  &.is-muted {
+    opacity: 0.4;
+  }
+}
+
+.entry-menu-item {
+  font-size: 2.15vh;
+  line-height: 1.35;
+  text-transform: uppercase;
+  color: $dim;
+  transition:
+    font-size 0.18s ease-out,
+    color 0.18s ease-out;
+
+  &.is-focused {
+    font-size: 3.2vh;
+    color: $white;
+  }
+
+  &.is-locked {
+    color: $off;
+
+    &.is-focused {
+      color: #8c8c8c;
+    }
+  }
+}
+
+.entry-menu-quit {
+  margin-top: 1.2vh;
+  font-size: 1.75vh;
+
+  &:hover:not(:disabled) {
+    color: $white;
+  }
+}
+
+// --- Confirm/detail column between two vertical rules ---------------------
+
+.entry-column {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 65.5vw;
+  width: 18.1vw;
+  border-left: 2px solid $rule;
+  border-right: 2px solid $rule;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  animation: column-in 0.25s ease-out both;
+}
+
+@keyframes column-in {
+  from {
+    opacity: 0;
+    transform: translateY(1.2vh);
+  }
+}
+
+.entry-column-body {
+  padding: 0 1.6vw;
+  margin-bottom: 14vh;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.entry-column-title {
+  margin: 0 0 1.4vh;
+  font-size: 2.6vh;
+  font-weight: normal;
+  color: $white;
+}
+
+.entry-column-line,
+.entry-column-note {
+  margin: 0 0 0.6vh;
+  font-size: 2vh;
+  line-height: 1.3;
+  color: $dim;
+}
+
+.entry-column-question {
+  font-size: 2.6vh;
+  color: $white;
+  margin-bottom: 2.4vh;
+}
+
+.entry-column-note {
+  margin-top: 2.4vh;
+  font-size: 1.75vh;
+}
+
+.entry-create input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.4vh 0 0.6vh;
+  font: inherit;
+  font-size: 3vh;
+  text-align: center;
+  color: $white;
+  caret-color: $white;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid $rule;
+  outline: none;
+
+  &:focus {
+    border-bottom-color: $dim;
+  }
+}
+
+.entry-field-hint {
+  margin: 1vh 0 0;
+  font-size: 1.7vh;
+  line-height: 1.3;
+  color: $off;
+
+  &.is-error {
+    color: $text;
+  }
+}
+
+// --- Key captions ([Enter] Yes  [Tab] No) ---------------------------------
+
+.entry-keys {
+  display: flex;
+  justify-content: space-around;
+  padding: 0 1vw;
+  margin-bottom: 8.4vh;
+}
+
+.entry-key {
+  text-transform: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5vw;
+  font-size: 2.5vh;
+  color: $dim;
+
+  kbd {
+    text-transform: none;
+    font-family: $font;
+    font-size: 2vh;
+    padding: 0.15vh 0.45vh 0.05vh;
+    border: 2px solid #7a7a7a;
+    border-radius: 0.55vh;
+    color: $text;
+  }
+
+  &:hover:not(:disabled) {
+    color: $white;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+  }
+}
+
+// --- Loading ---------------------------------------------------------------
+
+.entry-loading {
+  position: absolute;
+  right: 5.2vw;
+  bottom: 8vh;
+  width: 22vw;
+  text-align: right;
+}
+
+.entry-stage {
+  margin: 0 0 1.1vh;
+  font-size: 2.1vh;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: $dim;
+}
+
+.entry-progress {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.entry-progress-fill {
+  height: 100%;
+  background: $text;
+  transition: width 0.5s ease-out;
+}
+
+.entry-tip {
+  position: absolute;
+  left: 50%;
+  bottom: 8vh;
+  width: 44vw;
+  margin: 0;
+  padding-top: 1.6vh;
+  transform: translateX(-50%);
+  border-top: 1px solid $rule;
+  text-align: center;
+  font-size: 2.1vh;
+  line-height: 1.35;
+  color: $text;
+}

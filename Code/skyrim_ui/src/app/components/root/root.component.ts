@@ -7,6 +7,7 @@ import { fadeInOutActiveAnimation } from '../../animations/fade-in-out-active.an
 import { View } from '../../models/view.enum';
 import { ClientService } from '../../services/client.service';
 import { DestroyService } from '../../services/destroy.service';
+import { EntryService } from '../../services/entry.service';
 import {
   SettingService,
   fontSizeToPixels,
@@ -45,6 +46,7 @@ export class RootComponent implements OnInit {
   active$ = this.client.activationStateChange.asObservable();
   connectionInProgress$ = this.client.isConnectionInProgressChange.asObservable();
   revealingInProgress$ = false;
+  entryActive$ = this.entry.active$.asObservable();
 
   @ViewChild('chat') private chatComp!: ChatComponent;
   @ViewChild(GroupComponent) private groupComponent: GroupComponent;
@@ -52,6 +54,7 @@ export class RootComponent implements OnInit {
   public constructor(
     private readonly destroy$: DestroyService,
     private readonly client: ClientService,
+    private readonly entry: EntryService,
     private readonly sound: SoundService,
     private readonly uiRepository: UiRepository,
     private readonly translocoService: TranslocoService,
