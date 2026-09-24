@@ -87,3 +87,40 @@ TEST_CASE("W13: an actor unloading alive frees its slot for the next load", "[re
     REQUIRE(BindPlacedActor(registry, kDraugrRef, {500, 6}, false) == Binding::Bound);
     REQUIRE_FALSE(ReleasePlacedActor(registry, {999, 9}));
 }
+
+TEST_CASE("W14: a reset marks every actor bound to the old epoch for removal", "[renewable_encounter]")
+{
+    auto registry = MakeRegistry();
+    std::unordered_map<std::uint32_t, EncounterIncarnation> bound;
+    REQUIRE(BindPlacedActor(registry, kDraugrRef, {100, 1}, false) == Binding::Bound);
+    REQUIRE(BindPlacedActor(registry, kSkeeverRef, {101, 2}, false) == Binding::Bound);
+    bound[100] = {100, 1};
+    bound[101] = {101, 2};
+
+    REQUIRE(CollectStaleBoundActors(registry, bound).empty());
+
+    REQUIRE(registry.RecordVerifiedDeath({100, 1}, 10) == RenewableEncounterState::DeathResult::Recorded);
+    REQUIRE(registry.RecordVerifiedDeath({101, 2}, 11) == RenewableEncounterState::DeathResult::Recorded);
+    REQUIRE(CollectStaleBoundActors(registry, bound).empty());
+
+    REQUIRE(registry.TryReset(kBarrow, 11 + 60));
+    REQUIRE(CollectStaleBoundActors(registry, bound) == std::vector<std::uint32_t>{100, 101});
+}
+
+TEST_CASE("W14: actors of the new epoch and unknown actors are never removed", "[renewable_encounter]")
+{
+    auto registry = MakeRegistry();
+    std::unordered_map<std::uint32_t, EncounterIncarnation> bound;
+    REQUIRE(BindPlacedActor(registry, kDraugrRef, {100, 1}, false) == Binding::Bound);
+    REQUIRE(BindPlacedActor(registry, kSkeeverRef, {101, 2}, false) == Binding::Bound);
+    bound[100] = {100, 1};
+    REQUIRE(registry.RecordVerifiedDeath({100, 1}, 10) == RenewableEncounterState::DeathResult::Recorded);
+    REQUIRE(registry.RecordVerifiedDeath({101, 2}, 10) == RenewableEncounterState::DeathResult::Recorded);
+    REQUIRE(registry.TryReset(kBarrow, 70));
+
+    REQUIRE(BindPlacedActor(registry, kDraugrRef, {400, 4}, false) == Binding::Bound);
+    bound[400] = {400, 4};
+    bound[999] = {999, 9};
+
+    REQUIRE(CollectStaleBoundActors(registry, bound) == std::vector<std::uint32_t>{100});
+}

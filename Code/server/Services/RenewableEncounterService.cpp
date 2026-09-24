@@ -121,8 +121,32 @@ void RenewableEncounterService::RunTick() noexcept
             anyCooldown = true;
     }
 
+    if (anyReset)
+        RemoveStaleActors();
+
     if (anyReset || (anyCooldown && m_tick - m_lastSaveTick >= kCooldownSaveIntervalTicks))
         SaveState();
+}
+
+void RenewableEncounterService::RemoveStaleActors() noexcept
+{
+    // Actors left over from the epoch a reset just retired would otherwise
+    // keep sending packets for a slot that now belongs to a new incarnation.
+    // Removal goes through CharacterRemoveEvent so CharacterService notifies
+    // clients and destroys the entity; the next cell load spawns fresh actors.
+    for (const auto serverId : CollectStaleBoundActors(m_registry, m_boundByServerId))
+    {
+        const auto incarnation = m_boundByServerId[serverId];
+        m_boundByServerId.erase(serverId);
+
+        const auto entity = static_cast<entt::entity>(serverId);
+        const auto* pLifecycle = m_world.valid(entity) ? m_world.try_get<ActorLifecycleComponent>(entity) : nullptr;
+        if (!pLifecycle || pLifecycle->GetGeneration() != incarnation.LifecycleGeneration)
+            continue;
+
+        m_world.GetDispatcher().enqueue(CharacterRemoveEvent(serverId));
+        spdlog::info("[World] stale actor removed incarnation={:x}:{} tick={}", serverId, incarnation.LifecycleGeneration, m_tick);
+    }
 }
 
 void RenewableEncounterService::OnPlayerLeave(const PlayerLeaveEvent& acEvent) noexcept

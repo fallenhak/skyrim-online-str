@@ -32,8 +32,8 @@ struct RenewableEncounterRepository;
  *
  * Actors the server creates for a configured placed reference are bound to
  * their slot on CharacterSpawnedEvent and released on CharacterRemoveEvent
- * (W13). Actor packet gating belongs to the actor lane and reaches the
- * registry through GetRegistry() (GetIncarnationStatus).
+ * (W13). When an encounter resets, actors still bound to the retired epoch
+ * are removed so no stale incarnation outlives its slot (W14).
  */
 struct RenewableEncounterService
 {
@@ -81,6 +81,7 @@ private:
     void OnCharacterRemove(const CharacterRemoveEvent& acEvent) noexcept;
 
     void RunTick() noexcept;
+    void RemoveStaleActors() noexcept;
 
     World& m_world;
     Persistence::RenewableEncounterRepository& m_repository;

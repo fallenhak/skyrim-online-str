@@ -2,7 +2,10 @@
 
 #include <Services/RenewableEncounterRegistry.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <unordered_map>
+#include <vector>
 
 /**
  * Binds actors the server creates for placed references to encounter slots
@@ -52,4 +55,22 @@ enum class PlacedActorBindResult : std::uint8_t
 {
     const auto result = aRegistry.ReleaseIncarnation(aIncarnation);
     return result == RenewableEncounterState::ReleaseResult::Released || result == RenewableEncounterState::ReleaseResult::AlreadyDead;
+}
+
+/**
+ * Returns the server ids of bound actors whose incarnation a reset retired
+ * (roadmap W14), sorted. The server removes them so an actor from an old epoch
+ * never outlives its slot; current and unknown incarnations are left alone.
+ */
+[[nodiscard]] inline std::vector<std::uint32_t> CollectStaleBoundActors(
+    const RenewableEncounterRegistry& acRegistry, const std::unordered_map<std::uint32_t, EncounterIncarnation>& acBoundByServerId)
+{
+    std::vector<std::uint32_t> stale;
+    for (const auto& [serverId, incarnation] : acBoundByServerId)
+    {
+        if (acRegistry.GetIncarnationStatus(incarnation) == RenewableEncounterRegistry::IncarnationStatus::Stale)
+            stale.push_back(serverId);
+    }
+    std::sort(stale.begin(), stale.end());
+    return stale;
 }
