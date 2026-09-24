@@ -48,6 +48,15 @@ selects `RECOVERING`; if paused, `paused_from_state` records that state so a
 later resume cannot infer `READY` from a clean worktree. Recovery prompts carry
 bounded, redacted failure context from persisted error, CI, and worker evidence.
 
+`FINAL_MILESTONE_OR_QUEUE_REVIEW` permits `APPROVE`, `RETRY`, or `BLOCK`.
+APPROVE only closes the empty engineering queue. RETRY validates that the
+reviewed phase is the last phase in the authoritative plan, restores that
+phase index, pauses its completed scheduler task, and authorizes the same
+bounded recovery path used by checkpoint retries. Runtime milestone acceptance
+remains human-owned. Existing V3 FINAL RETRY records blocked by the former
+missing handler can be re-reviewed with `skyrim-dev re-review-final` while
+globally paused and only at their exact phase/SHA.
+
 Untracked text is represented with a bounded new-file diff before risk scanning,
 so security-sensitive content such as `CharacterId` cannot be hidden by a
 generic filename. Binary, oversize, unreadable, and unsafe-path entries expose

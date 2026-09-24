@@ -124,7 +124,24 @@ Review metadata is explicit and persistent:
 - `CURRENT_PHASE_REVIEW`: the current phase is not safely complete. `approve`
   refuses; `skyrim-dev retry <lane>` is required to retry/continue that phase.
 - `FINAL_MILESTONE_OR_QUEUE_REVIEW`: no automatic next work exists. Approval
-  records a safe terminal decision and leaves the lane `BLOCKED`.
+  records a safe terminal decision and leaves the lane `BLOCKED`. RETRY
+  reopens only the reviewed last plan phase for a bounded repair cycle; it does
+  not accept the runtime milestone.
+
+To re-review an existing V3 FINAL RETRY that was blocked by an older
+orchestrator build, pause the VDS, confirm each lane's reviewed phase and full
+HEAD SHA in `skyrim-dev status` / `skyrim-dev review-status`, then submit all
+affected exact targets together:
+
+```sh
+skyrim-dev re-review-final --target combat C17 <full-combat-sha> --target population L16 <full-population-sha>
+```
+
+This command accepts only blocked FINAL RETRY records whose lane is still at
+the completed queue, plan phase, and exact SHA. It queues read-only reviews
+while globally paused. Check `review-status`; after RETRY is applied to a lane,
+`skyrim-dev resume` returns that lane to its bounded repair worker. APPROVE
+closes that lane's empty queue, and BLOCK leaves a human hold.
 
 `skyrim-dev review-status`, `approve`, `retry`, and `block` are explicit
 operator interfaces. The third successful phase is counted before checkpoint

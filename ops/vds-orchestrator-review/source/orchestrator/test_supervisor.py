@@ -449,6 +449,132 @@ class SupervisorLogicTests(unittest.TestCase):
         self.assertFalse(valid)
         self.assertIn("stale", reason)
 
+    def test_re_review_final_request_requires_unique_full_sha_targets(self) -> None:
+        targets = [
+            {"lane": "combat", "phase": "C17", "sha": "a" * 40},
+            {"lane": "population", "phase": "L16", "sha": "b" * 40},
+        ]
+        request = operator_payload("final-recheck", "re-review-final", {"targets": targets})
+        valid, _, reason = supervisor.validate_operator_request(request)
+        self.assertTrue(valid, reason)
+
+        targets[1]["sha"] = "b" * 39
+        invalid = operator_payload("bad-final-recheck", "re-review-final", {"targets": targets})
+        valid, _, reason = supervisor.validate_operator_request(invalid)
+        self.assertFalse(valid)
+        self.assertIn("full Git SHA", reason)
+
+    def test_final_review_recheck_requires_paused_exact_blocked_targets(self) -> None:
+        h = Harness()
+        h.state["global_mode"] = "PAUSED"
+        h.state["control_plane"] = {"status": "VALID"}
+        h.state["scheduler"] = {"tasks": {}}
+        review_state = h.state.setdefault("architect_review", {"items": {}, "queue": []})
+        review_state.update({"items": {}, "queue": []})
+        target_shas = {"combat": "a" * 40, "population": "b" * 40}
+        phases = {"combat": "C17", "population": "L16"}
+        for name, phase in phases.items():
+            h.state["lanes"][name] = {
+                "state": "BLOCKED", "phase_id": None, "phase_index": 1,
+                "plan_data": {"phases": [{"id": phase, "title": "last phase"}], "boundaries": []},
+                "worktree": name, "last_commit": target_shas[name], "worker_pid": None,
+                "review": {
+                    "type": "FINAL_MILESTONE_OR_QUEUE_REVIEW",
+                    "reviewed_phase": {"id": phase}, "commit_sha": target_shas[name],
+                    "decision": "SOL_BLOCKED", "review_tier": "architect",
+                },
+            }
+            review_state["items"][f"blocked-{name}"] = {
+                "lane": name, "phase": phase, "reviewed_sha": target_shas[name],
+                "review_type": "FINAL_MILESTONE_OR_QUEUE_REVIEW", "evidence_version": 3,
+                "status": "BLOCKED", "review_tier": "architect",
+                "decision": {"decision": "RETRY"},
+                "application_reason": (
+                    "decision RETRY is not valid for review type FINAL_MILESTONE_OR_QUEUE_REVIEW"
+                ),
+            }
+        h.git_head = lambda worktree: target_shas[str(worktree)]
+        h._control_plane_valid = lambda: True
+        h._recompute_scheduler = lambda: None
+        h.review_process = None
+        h.active_review_id = None
+
+        def queue_exact_reviews():
+            for target in review_state["operator_v3_targets"]:
+                review_id = f"fresh-{target['lane']}"
+                review_state["items"][review_id] = {
+                    **target, "review_id": review_id,
+                    "reviewed_sha": target["sha"],
+                    "review_type": "FINAL_MILESTONE_OR_QUEUE_REVIEW",
+                    "status": "QUEUED", "operator_authorized_recheck": True,
+                }
+                review_state["queue"].append(review_id)
+            return len(review_state["operator_v3_targets"])
+
+        h.queue_sol_reviews = queue_exact_reviews
+        targets = [
+            {"lane": name, "phase": phases[name], "sha": target_shas[name]}
+            for name in phases
+        ]
+        self.assertEqual(h.request_final_reviews_recheck(targets), 0)
+        self.assertTrue(review_state["read_only_while_paused"])
+        self.assertEqual(len(review_state["operator_v3_targets"]), 2)
+        self.assertEqual(review_state["queue"], ["fresh-combat", "fresh-population"])
+        self.assertEqual(h.state["lanes"]["combat"]["state"], "NEEDS_SOL_REVIEW")
+        self.assertEqual(h.state["lanes"]["population"]["state"], "NEEDS_SOL_REVIEW")
+
+    def test_final_review_recheck_refuses_sha_drift_without_mutation(self) -> None:
+        h = Harness()
+        h.state["global_mode"] = "PAUSED"
+        h.state["control_plane"] = {"status": "VALID"}
+        h.state["architect_review"] = {"items": {}, "queue": []}
+        h.state["lanes"]["combat"] = {
+            "state": "BLOCKED", "phase_id": None, "phase_index": 1,
+            "plan_data": {"phases": [{"id": "C17", "title": "last phase"}], "boundaries": []},
+            "worktree": "combat", "last_commit": "a" * 40, "worker_pid": None,
+            "review": {
+                "type": "FINAL_MILESTONE_OR_QUEUE_REVIEW",
+                "reviewed_phase": {"id": "C17"}, "commit_sha": "a" * 40,
+                "decision": "SOL_BLOCKED",
+            },
+        }
+        h.state["architect_review"]["items"]["blocked-combat"] = {
+            "lane": "combat", "phase": "C17", "reviewed_sha": "a" * 40,
+            "review_type": "FINAL_MILESTONE_OR_QUEUE_REVIEW", "evidence_version": 3,
+            "review_tier": "architect",
+            "status": "BLOCKED", "decision": {"decision": "RETRY"},
+            "application_reason": "decision RETRY is not valid for review type FINAL_MILESTONE_OR_QUEUE_REVIEW",
+        }
+        h.git_head = lambda _worktree: "c" * 40
+        h._control_plane_valid = lambda: True
+        targets = [{"lane": "combat", "phase": "C17", "sha": "a" * 40}]
+
+        self.assertEqual(h.request_final_reviews_recheck(targets), 1)
+        self.assertEqual(h.state["lanes"]["combat"]["state"], "BLOCKED")
+        self.assertFalse(h.state["architect_review"].get("read_only_while_paused", False))
+
+    def test_final_review_packet_explains_retry_and_runtime_boundary(self) -> None:
+        h = Harness()
+        h.state["control_plane"] = {"applied_sha": "c" * 40}
+        h.state["global_mode"] = "PAUSED"
+        h.state["lanes"]["combat"] = {
+            "branch": "parallel/combat-foundations", "worktree": "/lane/combat", "issue": 31,
+            "phase_id": None, "history": [], "validation": {}, "ci": {},
+            "plan_data": {"phases": [], "boundaries": []},
+            "review": {"type": "FINAL_MILESTONE_OR_QUEUE_REVIEW", "reviewed_phase": {"id": "C17"},
+                       "commit_sha": "a" * 40, "next_phase": None},
+        }
+        with patch.object(supervisor, "REVIEW_ROOT", Path("review-output")), \
+                patch.object(Path, "write_text", autospec=True) as write_text, \
+                patch.object(supervisor.os, "chmod"):
+            packet = h.make_review_packet("combat", ["final queue review"])
+        self.assertEqual(packet.name, "combat-FINAL.md")
+        text = write_text.call_args.args[1]
+        self.assertIn("FINAL_MILESTONE_OR_QUEUE_REVIEW", text)
+        self.assertIn("APPROVE (close the empty engineering queue)", text)
+        self.assertIn("RETRY (reopen the last completed phase for bounded repair)", text)
+        self.assertIn("Runtime and milestone acceptance remain human decisions", text)
+
     def test_daemon_owned_approve_applies_to_current_memory_and_emits_receipt(self) -> None:
         h = Harness()
         h.state["lanes"]["combat"] = {
@@ -697,6 +823,7 @@ class SupervisorLogicTests(unittest.TestCase):
             ("approve-control-plane", {"sha": "a" * 40}, "approve_control_plane"),
             ("accept-milestone", {"milestone_id": "M01", "evidence": {}}, "accept_milestone"),
             ("sync-control-plane", {"force": True}, "sync_control_plane"),
+            ("re-review-final", {"targets": [{"lane": "combat", "phase": "C17", "sha": "a" * 40}]}, "request_final_reviews_recheck"),
         ]
         for command, args, method in cases:
             return_value = True if command == "sync-control-plane" else 0
@@ -727,6 +854,19 @@ class SupervisorLogicTests(unittest.TestCase):
         constructor.assert_not_called()
         submit.assert_called_once_with(
             "block", {"lane": "combat"}, config=supervisor.read_json(supervisor.CONFIG_PATH, {})
+        )
+
+    def test_cli_parses_exact_final_review_recheck_targets(self) -> None:
+        sha = "a" * 40
+        with patch.object(supervisor, "submit_operator_request", return_value=0) as submit, \
+                patch.object(supervisor, "Supervisor") as constructor, \
+                patch.object(sys, "argv", ["supervisor.py", "re-review-final", "--target", "combat", "C17", sha]):
+            self.assertEqual(supervisor.main(), 0)
+        constructor.assert_not_called()
+        submit.assert_called_once_with(
+            "re-review-final",
+            {"targets": [{"lane": "combat", "phase": "C17", "sha": sha}]},
+            config=supervisor.read_json(supervisor.CONFIG_PATH, {}),
         )
 
     def test_complete_with_validation_gap_enters_local_validation_and_persists_reason(self) -> None:

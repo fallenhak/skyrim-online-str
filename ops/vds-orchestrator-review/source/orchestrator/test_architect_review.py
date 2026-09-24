@@ -179,6 +179,13 @@ class ReviewValidationTests(unittest.TestCase):
         self.assertNotIn("/tmp/review/bundle.json", prompt)
         self.assertNotIn("git push", prompt)
 
+    def test_22b_final_prompt_lists_valid_decisions_and_retry_meaning(self):
+        bundle = {**BUNDLE, "review_type": "FINAL_MILESTONE_OR_QUEUE_REVIEW"}
+        prompt = review_prompt(EXPECTED["review_id"], EVIDENCE, bundle)
+        self.assertIn("FINAL_MILESTONE_OR_QUEUE_REVIEW: APPROVE, RETRY, or BLOCK", prompt)
+        self.assertIn("RETRY to reopen the last completed phase for bounded repair", prompt)
+        self.assertIn("Never claim runtime or milestone acceptance", prompt)
+
     def test_23_bubblewrap_configuration_is_read_only_and_credential_isolated(self):
         args = build_bwrap_command("/bundle", "/result", "/codex-home", "/repo", "gpt-6-sol", "max")
         self.assertIn("--sandbox", args)
@@ -210,6 +217,7 @@ class DecisionHarness(ArchitectReviewMixin):
             "control_plane": {"applied_sha": "c" * 40, "status": "VALID"},
             "lanes": {"authority": {
                 "state": "NEEDS_SOL_REVIEW", "phase_id": "A06", "phase_title": "authority",
+                "plan_data": {"phases": [{"id": "A06", "title": "authority"}], "boundaries": []},
                 "worker_attempt": 1, "last_commit": EXPECTED["reviewed_sha"],
                 "review": {"type": review_type, "reviewed_phase": {"id": "A06"},
                            "commit_sha": EXPECTED["reviewed_sha"], "next_phase": {"id": "A07"},
@@ -256,6 +264,19 @@ class DecisionHarness(ArchitectReviewMixin):
 
     def _validate_current_review_state(self, item):
         return True, "", {"roadmap_dependencies_and_gates": {"dependencies": {}}}
+
+    def plan_for(self, lane_name):
+        return self.state["lanes"][lane_name].get("plan_data", {"phases": [], "boundaries": []})
+
+    def _refresh_plan(self, lane_name, lane):
+        phases = self.plan_for(lane_name).get("phases", [])
+        index = int(lane.get("phase_index", 0))
+        if 0 <= index < len(phases):
+            lane["phase_id"] = phases[index]["id"]
+            lane["phase_title"] = phases[index]["title"]
+        else:
+            lane["phase_id"] = None
+            lane["phase_title"] = None
 
     def _review_dependencies_satisfied(self, bundle):
         return True, ""
@@ -367,6 +388,47 @@ class DecisionPolicyTests(unittest.TestCase):
         self.assertEqual(lane["phase_id"], "A06")
         self.assertIn("architect_review", lane["recovery_context"])
         self.assertEqual(harness.item["status"], "APPLIED")
+
+    def test_31b_final_retry_reopens_only_the_last_phase_for_bounded_repair(self):
+        harness = DecisionHarness("FINAL_MILESTONE_OR_QUEUE_REVIEW", "RETRY")
+        lane = harness.state["lanes"]["authority"]
+        lane["phase_index"] = 1
+        lane["phase_id"] = None
+        lane["success_since_review"] = 1
+        harness.state["scheduler"]["tasks"]["A06"] = {
+            "state": "DONE", "completed_at": "2026-09-24T00:00:00+00:00",
+        }
+        harness.item["decision"]["required_actions"] = [{
+            "action": "Fix the final-phase finding and rerun the required exact-SHA checks.",
+            "evidence_refs": ["bundle.diff"],
+        }]
+
+        self.assertTrue(harness._apply_architect_decision(harness.item))
+        self.assertEqual(harness.item["status"], "APPLIED")
+        self.assertEqual(lane["state"], "RECOVERING")
+        self.assertEqual(lane["phase_index"], 0)
+        self.assertEqual(lane["phase_id"], "A06")
+        self.assertEqual(lane["success_since_review"], 0)
+        self.assertEqual(lane["review"]["decision"], "SOL_RETRY_FINAL_PHASE")
+        self.assertIn("architect_review", lane["recovery_context"])
+        self.assertEqual(harness.state["scheduler"]["tasks"]["A06"]["state"], "PAUSED")
+        self.assertNotIn("completed_at", harness.state["scheduler"]["tasks"]["A06"])
+
+    def test_31c_final_retry_refuses_to_reopen_a_non_final_plan_phase(self):
+        harness = DecisionHarness("FINAL_MILESTONE_OR_QUEUE_REVIEW", "RETRY")
+        lane = harness.state["lanes"]["authority"]
+        lane["phase_index"] = 2
+        lane["phase_id"] = None
+        lane["plan_data"]["phases"].append({"id": "A07", "title": "later phase"})
+        harness.item["decision"]["required_actions"] = [{
+            "action": "Fix the final-phase finding and rerun the required exact-SHA checks.",
+            "evidence_refs": ["bundle.diff"],
+        }]
+
+        self.assertTrue(harness._apply_architect_decision(harness.item))
+        self.assertEqual(harness.item["status"], "BLOCKED")
+        self.assertEqual(lane["state"], "BLOCKED")
+        self.assertIsNone(lane["phase_id"])
 
     def test_32_stale_review_decision_is_not_applied(self):
         harness = DecisionHarness("POST_PHASE_CHECKPOINT", "APPROVE")

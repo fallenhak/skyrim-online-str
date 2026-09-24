@@ -7,6 +7,8 @@ existing `source/management/skyrim-dev` wrapper.
 
 Mutating operator commands are `approve`, `retry`, `block`, `approve-task`,
 `approve-control-plane`, `accept-milestone`, and `sync-control-plane`.
+`re-review-final` is an exact-target, paused-only recheck path for V3 FINAL
+RETRY decisions blocked by the former missing FINAL RETRY handler.
 The CLI validates the command envelope, checks that
 `skyrim-dev-orchestrator.service` is active, writes one atomically-created JSON
 request, and waits for the matching receipt. If the daemon is inactive or the
@@ -19,6 +21,13 @@ Requests contain a version, unique request ID, command, typed arguments,
 creation timestamp, and submitting identity. Unknown commands, unsafe IDs,
 wrong argument shapes, invalid timestamps, stale requests, and malformed JSON
 fail closed.
+
+`re-review-final --target LANE PHASE SHA` accepts one or more unique lane
+targets. The daemon requires global PAUSED mode, an idle review queue, a valid
+control plane, and a blocked FINAL review whose last plan phase, lane HEAD,
+review SHA, and historical blocked RETRY record all match the supplied full
+SHA. It then queues authorized read-only V3 reviews while development remains
+paused. It cannot recheck arbitrary BLOCKED lanes or phase reviews.
 
 ## Ownership and exactly-once sequence
 

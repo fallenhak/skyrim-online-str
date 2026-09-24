@@ -6,7 +6,7 @@ UNIT=skyrim-dev-orchestrator.service
 ENVV="HOME=/home/skyrimdev CODEX_HOME=/home/skyrimdev/.codex GH_CONFIG_DIR=/home/skyrimdev/.config/gh PATH=/usr/local/bin:/usr/bin:/bin"
 
 usage() {
-    printf '%s\n' 'usage: skyrim-dev {status|roadmap-status|milestone-status|sync-control-plane|start|pause|resume|stop|logs|healthcheck|self-test|worker-smoke-test|normal-review-smoke-test|architect-review-smoke-test|review-status|approve|retry|block|approve-task|approve-control-plane|accept-milestone|re-review-v3} [argument]'
+    printf '%s\n' 'usage: skyrim-dev {status|roadmap-status|milestone-status|sync-control-plane|start|pause|resume|stop|logs|healthcheck|self-test|worker-smoke-test|normal-review-smoke-test|architect-review-smoke-test|review-status|approve|retry|block|approve-task|approve-control-plane|accept-milestone|re-review-v3|re-review-final} [argument]'
 }
 
 run_service() {
@@ -89,6 +89,13 @@ case "$command_name" in
         ;;
     re-review-v3)
         if [ "$#" -ne 17 ]; then
+            usage >&2
+            exit 2
+        fi
+        run_service "$@"
+        ;;
+    re-review-final)
+        if [ "$#" -lt 5 ] || [ "$#" -gt 17 ] || [ "$(( ($# - 1) % 4 ))" -ne 0 ]; then
             usage >&2
             exit 2
         fi
