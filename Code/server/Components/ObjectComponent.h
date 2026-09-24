@@ -19,4 +19,9 @@ struct ObjectComponent
     // Client-discovered inventory and lock snapshots remain untrusted until one exists.
     bool HasTrustedState{};
     LockData CurrentLockData{};
+    // Set by the discovering client and fixed for the entity's lifetime. Receivers
+    // re-check the local base form type before applying a harvest.
+    bool IsHarvestable{};
+    // Server-owned: flipped by the first authorized activation (ObjectInteractionPolicy::TryHarvest).
+    bool IsHarvested{};
 };

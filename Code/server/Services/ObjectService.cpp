@@ -10,6 +10,7 @@
 
 #include <Messages/ActivateRequest.h>
 #include <Messages/NotifyActivate.h>
+#include <Messages/NotifyObjectHarvested.h>
 #include <Messages/LockChangeRequest.h>
 #include <Messages/NotifyLockChange.h>
 #include <Messages/AssignObjectsRequest.h>
@@ -95,6 +96,8 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
 
             auto& objectComponent = view.get<ObjectComponent>(*iter);
             objectData.IsStateUntrusted = !objectComponent.HasTrustedState;
+            objectData.IsHarvestable = objectComponent.IsHarvestable;
+            objectData.IsHarvested = objectComponent.IsHarvested;
             if (objectComponent.HasTrustedState)
             {
                 objectData.CurrentLockData = objectComponent.CurrentLockData;
@@ -114,7 +117,8 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
 
             m_world.emplace<FormIdComponent>(cEntity, object.Id);
 
-            m_world.emplace<ObjectComponent>(cEntity, acMessage.pPlayer);
+            auto& objectComponent = m_world.emplace<ObjectComponent>(cEntity, acMessage.pPlayer);
+            objectComponent.IsHarvestable = object.IsHarvestable;
 
             m_world.emplace<CellIdComponent>(cEntity, object.CellId, object.WorldSpaceId, object.CurrentCoords);
             m_world.emplace<InventoryComponent>(cEntity);
@@ -123,6 +127,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.Id = object.Id;
             objectData.ServerId = World::ToInteger(cEntity);
             objectData.IsStateUntrusted = true;
+            objectData.IsHarvestable = object.IsHarvestable;
 
             response.Objects.push_back(objectData);
         }
@@ -150,7 +155,7 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
 
     const auto& senderCell = acMessage.pPlayer->GetCellComponent();
     const auto& objectCell = objectView.get<CellIdComponent>(*objectIt);
-    const auto& objectComponent = objectView.get<ObjectComponent>(*objectIt);
+    auto& objectComponent = objectView.get<ObjectComponent>(*objectIt);
 
     const auto activatorEntity = static_cast<entt::entity>(packet.ActivatorId);
     const auto activatorView = m_world.view<CharacterComponent, OwnerComponent, CellIdComponent>();
@@ -161,6 +166,31 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
         return;
 
     const auto& activatorCell = activatorView.get<CellIdComponent>(*activatorIt);
+
+    if (objectComponent.IsHarvestable)
+    {
+        const bool harvested = ObjectInteractionPolicy::TryHarvest(
+            true, objectComponent.IsHarvested, activatorExists, ownedBySender,
+            packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+            activatorCell.Cell, activatorCell.WorldSpaceId, activatorCell.CenterCoords,
+            objectCell.Cell, objectCell.WorldSpaceId, objectCell.CenterCoords,
+            [&]
+            {
+                NotifyObjectHarvested notifyHarvested;
+                notifyHarvested.Id = packet.Id;
+                notifyHarvested.IsHarvested = true;
+
+                for (Player* pPlayer : m_world.GetPlayerManager())
+                {
+                    if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == packet.CellId)
+                        pPlayer->Send(notifyHarvested);
+                }
+            });
+        if (!harvested)
+            spdlog::info("Harvest of {:X}:{:X} rejected (already harvested or out of range)", packet.Id.ModId, packet.Id.BaseId);
+        return;
+    }
+
     if (!ObjectInteractionPolicy::CanActivate(
             objectComponent.HasTrustedState, activatorExists, ownedBySender,
             packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,

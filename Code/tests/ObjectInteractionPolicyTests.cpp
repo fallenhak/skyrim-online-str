@@ -142,3 +142,55 @@ TEST_CASE("A client-reported lock result needs more than a trusted baseline", "[
     assertRejectedWithoutValidatedOutcome(false); // Provisional object remains rejected.
     assertRejectedWithoutValidatedOutcome(true);  // A baseline alone cannot validate a client result.
 }
+
+TEST_CASE("A harvestable object is harvested once and relayed once", "[object_authority][harvest]")
+{
+    const GameId senderCell{0, 1};
+    const GameId objectCell{0, 2};
+    const GameId worldSpace{0, 0x3C};
+    const GridCellCoords coords{10, -10};
+
+    bool harvested = false;
+    std::size_t relayCount = 0;
+    const auto relay = [&] { ++relayCount; };
+
+    REQUIRE(ObjectInteractionPolicy::TryHarvest(
+        true, harvested, true, true, objectCell, senderCell, worldSpace, coords,
+        objectCell, worldSpace, coords, objectCell, worldSpace, coords, relay));
+    REQUIRE(harvested);
+    REQUIRE(relayCount == 1);
+
+    // A second player activating the same flora gets nothing relayed.
+    REQUIRE_FALSE(ObjectInteractionPolicy::TryHarvest(
+        true, harvested, true, true, objectCell, senderCell, worldSpace, coords,
+        objectCell, worldSpace, coords, objectCell, worldSpace, coords, relay));
+    REQUIRE(harvested);
+    REQUIRE(relayCount == 1);
+}
+
+TEST_CASE("Harvest rejects non-harvestable, foreign or out-of-range activations", "[object_authority][harvest]")
+{
+    const GameId senderCell{0, 1};
+    const GameId objectCell{0, 2};
+    const GameId worldSpace{0, 0x3C};
+    const GridCellCoords coords{10, -10};
+    const GridCellCoords farCoords{20, -10};
+
+    const auto assertRejected = [&](const bool harvestable, const bool actorExists, const bool owned,
+                                    const GameId& requestedCell, const GridCellCoords& activatorCoords)
+    {
+        bool harvested = false;
+        std::size_t relayCount = 0;
+        REQUIRE_FALSE(ObjectInteractionPolicy::TryHarvest(
+            harvestable, harvested, actorExists, owned, requestedCell, senderCell, worldSpace, coords,
+            objectCell, worldSpace, activatorCoords, objectCell, worldSpace, coords, [&] { ++relayCount; }));
+        REQUIRE_FALSE(harvested);
+        REQUIRE(relayCount == 0);
+    };
+
+    assertRejected(false, true, true, objectCell, coords);  // doors/containers keep the A09 trusted-state gate
+    assertRejected(true, false, true, objectCell, coords);  // unknown activator
+    assertRejected(true, true, false, objectCell, coords);  // activator owned by another player
+    assertRejected(true, true, true, GameId{0, 9}, coords); // forged cell
+    assertRejected(true, true, true, objectCell, farCoords); // activator too far from the object
+}

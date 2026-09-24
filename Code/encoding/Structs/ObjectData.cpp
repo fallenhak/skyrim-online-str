@@ -5,7 +5,7 @@ using TiltedPhoques::Serialization;
 
 bool ObjectData::operator==(const ObjectData& acRhs) const noexcept
 {
-    return ServerId == acRhs.ServerId && Id == acRhs.Id && CellId == acRhs.CellId && WorldSpaceId == acRhs.WorldSpaceId && CurrentCoords == acRhs.CurrentCoords && CurrentLockData == acRhs.CurrentLockData && CurrentInventory == acRhs.CurrentInventory && IsStateUntrusted == acRhs.IsStateUntrusted;
+    return ServerId == acRhs.ServerId && Id == acRhs.Id && CellId == acRhs.CellId && WorldSpaceId == acRhs.WorldSpaceId && CurrentCoords == acRhs.CurrentCoords && CurrentLockData == acRhs.CurrentLockData && CurrentInventory == acRhs.CurrentInventory && IsStateUntrusted == acRhs.IsStateUntrusted && IsHarvestable == acRhs.IsHarvestable && IsHarvested == acRhs.IsHarvested;
 }
 
 bool ObjectData::operator!=(const ObjectData& acRhs) const noexcept
@@ -23,6 +23,8 @@ void ObjectData::Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcep
     CurrentLockData.Serialize(aWriter);
     CurrentInventory.Serialize(aWriter);
     Serialization::WriteBool(aWriter, IsStateUntrusted);
+    Serialization::WriteBool(aWriter, IsHarvestable);
+    Serialization::WriteBool(aWriter, IsHarvested);
 }
 
 void ObjectData::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
@@ -35,4 +37,6 @@ void ObjectData::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
     CurrentLockData.Deserialize(aReader);
     CurrentInventory.Deserialize(aReader);
     IsStateUntrusted = Serialization::ReadBool(aReader);
+    IsHarvestable = Serialization::ReadBool(aReader);
+    IsHarvested = Serialization::ReadBool(aReader);
 }
