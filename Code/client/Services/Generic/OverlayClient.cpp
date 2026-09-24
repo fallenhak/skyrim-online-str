@@ -54,6 +54,7 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
         auto pArguments = message->GetArgumentList();
 
         auto eventName = pArguments->GetString(0).ToString();
+        spdlog::info("[UI] event '{}'", eventName);
         auto eventArgs = pArguments->GetList(1);
 
 #ifndef PUBLIC_BUILD

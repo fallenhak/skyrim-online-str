@@ -411,6 +411,7 @@ void TransportService::HandleDisconnected(const DisconnectedEvent& acEvent) noex
 void TransportService::HandleAuthenticationResponse(const AuthenticationResponse& acMessage) noexcept
 {
     using AR = AuthenticationResponse::ResponseType;
+    spdlog::info("[LauncherSession] authentication response type {}", static_cast<int>(acMessage.Type));
     if (acMessage.Type == AR::kAccepted)
     {
         m_connected = true;

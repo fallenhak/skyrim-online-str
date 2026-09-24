@@ -263,6 +263,7 @@ void OverlayService::SendSystemMessage(const std::string& acMessage)
 void OverlayService::EmitAuthState(const std::string& acState, const std::string& acDisplayName,
     const std::string& acAvatarUrl, const std::string& acErrorKey)
 {
+    spdlog::info("[UI] authState '{}' (error '{}', overlay={})", acState, acErrorKey, m_pOverlay != nullptr);
     if (!m_pOverlay)
         return;
 
@@ -396,8 +397,8 @@ void OverlayService::OnConnectionError(const ConnectionErrorEvent& acConnectedEv
     m_pOverlay->ExecuteAsync("triggerError", pArgs);
     if (m_transport.HasLauncherAuthSession())
     {
+        // Do not reset the loading stage to "connecting" here: the UI would hide the failure behind the spinner.
         EmitAuthState("failed", "", "", "auth.connection_failed");
-        m_world.GetDispatcher().trigger(LoadingStageEvent{LoadingStage::kConnecting, 0.f});
     }
 }
 
@@ -592,6 +593,7 @@ void OverlayService::OnLoadingStage(const LoadingStageEvent& acEvent) noexcept
     }
 
     auto pArguments = CefListValue::Create();
+    spdlog::info("[UI] loadingStage '{}'", stage);
     pArguments->SetString(0, stage);
     pArguments->SetDouble(1, std::clamp(acEvent.Progress, 0.f, 1.f));
     m_pOverlay->ExecuteAsync("loadingStage", pArguments);
