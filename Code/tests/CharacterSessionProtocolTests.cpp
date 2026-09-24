@@ -560,3 +560,12 @@ TEST_CASE("Character outbound protocol policy keeps pre-world traffic narrow", "
     REQUIRE(CanSendCharacterProtocolMessage(kAssignCharacterRequest, CharacterClientSessionPhase::kAwaitingPlayerAssignment, true));
     REQUIRE(CanSendCharacterProtocolMessage(kRequestActorValueChanges, CharacterClientSessionPhase::kInWorld, false));
 }
+
+TEST_CASE("Character outbound protocol policy lets in-world clients assign loaded actors", "[encoding.character_session]")
+{
+    // BeginWorldSync requests assignment for every loaded NPC once the session is in world;
+    // blocking these left every NPC, corpse and creature client-local.
+    REQUIRE(CanSendCharacterProtocolMessage(kAssignCharacterRequest, CharacterClientSessionPhase::kInWorld, false));
+    REQUIRE(!CanSendCharacterProtocolMessage(kAssignCharacterRequest, CharacterClientSessionPhase::kApplyingCharacter, false));
+    REQUIRE(!CanSendCharacterProtocolMessage(kAssignCharacterRequest, CharacterClientSessionPhase::kAwaitingClientReady, true));
+}

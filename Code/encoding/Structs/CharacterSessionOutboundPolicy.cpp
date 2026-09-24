@@ -13,7 +13,9 @@ bool CanSendCharacterProtocolMessage(const ClientOpcode aOpcode, const Character
     case kCharacterReadyRequest:
         return aPhase == CharacterClientSessionPhase::kAwaitingClientReady;
     case kAssignCharacterRequest:
-        return aPhase == CharacterClientSessionPhase::kAwaitingPlayerAssignment && aIsLocalPlayerAssignment;
+        // Before world entry only the local player may be assigned; once in world, loaded
+        // actors must reach the server or they stay client-local for every player.
+        return (aPhase == CharacterClientSessionPhase::kAwaitingPlayerAssignment && aIsLocalPlayerAssignment) || aPhase == CharacterClientSessionPhase::kInWorld;
     default:
         return aPhase == CharacterClientSessionPhase::kInWorld;
     }

@@ -11,6 +11,7 @@
 #include <Events/PlayerLevelEvent.h>
 #include <Events/AuthorityChangedEvent.h>
 #include <Events/BeastFormChangeEvent.h>
+#include <Events/CharacterWorldSyncStartedEvent.h>
 
 #include <Messages/PlayerRespawnRequest.h>
 #include <Messages/NotifyPlayerRespawn.h>
@@ -46,6 +47,7 @@ PlayerService::PlayerService(World& aWorld, entt::dispatcher& aDispatcher, Trans
     m_playerDialogueConnection = m_dispatcher.sink<PlayerDialogueEvent>().connect<&PlayerService::OnPlayerDialogueEvent>(this);
     m_playerLevelConnection = m_dispatcher.sink<PlayerLevelEvent>().connect<&PlayerService::OnPlayerLevelEvent>(this);
     m_authorityChangedConnection = aDispatcher.sink<AuthorityChangedEvent>().connect<&PlayerService::OnAuthorityChangedEvent>(this);
+    m_worldSyncStartedConnection = aDispatcher.sink<CharacterWorldSyncStartedEvent>().connect<&PlayerService::OnWorldSyncStarted>(this);
 }
 
 void PlayerService::OnUpdate(const UpdateEvent&) noexcept
@@ -108,8 +110,10 @@ void PlayerService::OnNotifyPlayerRespawn(const NotifyPlayerRespawn& acMessage) 
     Utils::ShowHudMessage(String(message));
 }
 
-void PlayerService::OnGridCellChangeEvent(const GridCellChangeEvent& acEvent) const noexcept
+void PlayerService::OnGridCellChangeEvent(const GridCellChangeEvent& acEvent) noexcept
 {
+    m_lastGridCellChange = acEvent;
+
     uint32_t baseId = 0;
     uint32_t modId = 0;
 
@@ -125,8 +129,12 @@ void PlayerService::OnGridCellChangeEvent(const GridCellChangeEvent& acEvent) co
     }
 }
 
-void PlayerService::OnCellChangeEvent(const CellChangeEvent& acEvent) const noexcept
+void PlayerService::OnCellChangeEvent(const CellChangeEvent& acEvent) noexcept
 {
+    m_lastCellChange = acEvent;
+    if (!acEvent.WorldSpaceId)
+        m_lastGridCellChange.reset();
+
     if (acEvent.WorldSpaceId)
     {
         EnterExteriorCellRequest message;
@@ -143,6 +151,19 @@ void PlayerService::OnCellChangeEvent(const CellChangeEvent& acEvent) const noex
 
         m_transport.Send(message);
     }
+}
+
+void PlayerService::OnWorldSyncStarted(const CharacterWorldSyncStartedEvent&) noexcept
+{
+    // Replay in discovery order: the cell first, then the exterior grid.
+    if (m_lastCellChange)
+    {
+        spdlog::info("Replaying cell {:X} at world entry", m_lastCellChange->CellId.BaseId);
+        OnCellChangeEvent(*m_lastCellChange);
+    }
+
+    if (m_lastGridCellChange)
+        OnGridCellChangeEvent(*m_lastGridCellChange);
 }
 
 void PlayerService::OnPlayerDialogueEvent(const PlayerDialogueEvent& acEvent) const noexcept

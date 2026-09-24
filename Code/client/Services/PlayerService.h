@@ -1,5 +1,10 @@
 #pragma once
 
+#include <Events/CellChangeEvent.h>
+#include <Events/GridCellChangeEvent.h>
+
+#include <optional>
+
 struct World;
 struct TransportService;
 
@@ -7,8 +12,7 @@ struct UpdateEvent;
 struct ConnectedEvent;
 struct DisconnectedEvent;
 struct ServerSettings;
-struct GridCellChangeEvent;
-struct CellChangeEvent;
+struct CharacterWorldSyncStartedEvent;
 struct PlayerDialogueEvent;
 struct PlayerLevelEvent;
 struct AuthorityChangedEvent;
@@ -31,8 +35,9 @@ protected:
     void OnDisconnected(const DisconnectedEvent& acEvent) noexcept;
     void OnServerSettingsReceived(const ServerSettings& acSettings) noexcept;
     void OnNotifyPlayerRespawn(const NotifyPlayerRespawn& acMessage) const noexcept;
-    void OnGridCellChangeEvent(const GridCellChangeEvent& acEvent) const noexcept;
-    void OnCellChangeEvent(const CellChangeEvent& acEvent) const noexcept;
+    void OnGridCellChangeEvent(const GridCellChangeEvent& acEvent) noexcept;
+    void OnCellChangeEvent(const CellChangeEvent& acEvent) noexcept;
+    void OnWorldSyncStarted(const CharacterWorldSyncStartedEvent& acEvent) noexcept;
     void OnPlayerDialogueEvent(const PlayerDialogueEvent& acEvent) const noexcept;
     void OnPlayerLevelEvent(const PlayerLevelEvent& acEvent) const noexcept;
     void OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept;
@@ -72,6 +77,11 @@ private:
     uint32_t m_cachedSecondarySpellId = 0;
     uint32_t m_cachedPowerId = 0;
 
+    // Cell transitions happen while loading, before the session may send gameplay traffic.
+    // The latest ones are replayed at world entry so the server sends actors already there.
+    std::optional<CellChangeEvent> m_lastCellChange;
+    std::optional<GridCellChangeEvent> m_lastGridCellChange;
+
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_connectedConnection;
     entt::scoped_connection m_disconnectedConnection;
@@ -82,4 +92,5 @@ private:
     entt::scoped_connection m_playerDialogueConnection;
     entt::scoped_connection m_playerLevelConnection;
     entt::scoped_connection m_authorityChangedConnection;
+    entt::scoped_connection m_worldSyncStartedConnection;
 };
