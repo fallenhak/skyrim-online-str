@@ -42,6 +42,20 @@ Ayrıntılı elle kontrol listesi: `docs/CHARACTER_ENTRY_NO_SAVE.md`.
 - [ ] İki oyuncu da dungeon dışına çıkınca `[World] encounter reset ... epoch=0->1` satırını kontrol et.
 - [ ] Eski epoch'a ait bir test paketi sunulursa yeni epoch'taki actor durumunu değiştirmemeli. Bu paketi üretmek için özel test istemcisi gerekir.
 
+## Ölüm ve yeniden kalkış
+
+Save'siz akışta ölüm henüz denenmedi. Sunucuda `Gameplay:bEnableDeathSystem` varsayılan olarak açık.
+
+**Beklenen davranış:** Can 0 olunca bleedout başlar ve ekran kararır. Crime gold ödenir, **5 sn** sonra karakter kalkar. İç mekânda kalkış noktası hücrenin başlangıç noktasıdır (COC ya da `CellRespawnOverrides`). Dış mekânda kalkış noktası, bulunulan grid hücresinin COC noktasıdır. Kalkıştan sonra 10 sn god mode açık olur, büyü ve shout'lar yeniden kuşanılır. `fGoldLossFactor=0` olduğu için "You died and lost 0 gold." mesajı görünür.
+
+Takılma, sonsuz bleedout ya da çökme olursa sonucu not al. `crash-*.log` dosyasını ve istemci logunu #40'a ekle.
+
+- [ ] **Bleak Falls içinde öl.** Karakter zindanın aynı hücresinde başlangıç noktasında kalkmalı. Kalkış noktası da encounter hücresi olduğu için ölen oyuncu doluluk sayılmaya devam eder ve encounter sıfırlanmamalı. `reset blocked ... reason=Occupied` satırı yalnızca encounter **temizlendikten** ve 60 sn'lik bekleme **dolduktan** sonra, 30 sn'de bir yazılır. Bu satırı görmek için önce tüm slotları öldür, 60 sn'den fazla bekle, sonra zindanın içinde öl. Encounter temizlenmeden ölünürse bu satırın çıkmaması hata değildir.
+- [ ] **Whiterun dışında öl.** Karakter yakında kalkmalı. Dünya dışına ya da boşluğa düşmemeli.
+- [ ] **Yeni karakterle ilk dakikada öl:** RaceMenu kapandıktan hemen sonra, mabedin içinde. En riskli durum bu, çünkü iç mekân kalkışı `GetSaveParentCell()` kullanıyor ve save'siz girişte bu değerin doğru dolup dolmadığı bilinmiyor. Karakter kalkamazsa ya da takılırsa Crash Logger çıktısını ve istemci logunu ekle.
+- [ ] **İkinci oyuncu** ölen oyuncunun yığılışını ve kalkışını senkron görmeli.
+- [ ] **Öldükten sonra çık-gir:** Karakter son konumunda ve canlı olarak dönmeli.
+
 ## Test sonrası
 
 - [ ] Sunucu log'unu encounter bazında özetle:
