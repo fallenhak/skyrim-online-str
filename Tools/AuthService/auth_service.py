@@ -24,6 +24,8 @@ TOKEN_TTL_SECONDS = 12 * 60 * 60
 OAUTH_STATE_TTL_SECONDS = 10 * 60
 DISCORD_AUTHORIZE_URL = "https://discord.com/oauth2/authorize"
 DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
+# Discord sits behind Cloudflare, which rejects urllib's default User-Agent (HTTP 403).
+DISCORD_USER_AGENT = "DiscordBot (https://github.com/fallenhak/skyrim-online-str, 1.0)"
 DISCORD_USER_URL = "https://discord.com/api/users/@me"
 _LOOPBACK_STATE = re.compile(r"^[A-Za-z0-9_-]{32,100}$")
 
@@ -118,14 +120,14 @@ def exchange_discord_code(config: AuthConfig, code: str) -> dict:
         "code": code,
         "redirect_uri": config.callback_url,
     }).encode("ascii")
-    request = urllib.request.Request(DISCORD_TOKEN_URL, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
+    request = urllib.request.Request(DISCORD_TOKEN_URL, data=body, headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": DISCORD_USER_AGENT})
     with urllib.request.urlopen(request, timeout=10) as response:
         token_data = json.loads(response.read(65536))
     access_token = token_data.get("access_token")
     if not isinstance(access_token, str) or not access_token:
         raise ValueError("Discord did not return an access token")
 
-    request = urllib.request.Request(DISCORD_USER_URL, headers={"Authorization": "Bearer " + access_token})
+    request = urllib.request.Request(DISCORD_USER_URL, headers={"Authorization": "Bearer " + access_token, "User-Agent": DISCORD_USER_AGENT})
     with urllib.request.urlopen(request, timeout=10) as response:
         profile = json.loads(response.read(65536))
     discord_id = str(profile.get("id", ""))
