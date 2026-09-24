@@ -27,6 +27,7 @@ private:
     void OnActorValueChanges(const PacketEvent<RequestActorValueChanges>& acMessage) const noexcept;
     void OnActorMaxValueChanges(const PacketEvent<RequestActorMaxValueChanges>& acMessage) const noexcept;
     void OnHealthChangeBroadcast(const PacketEvent<RequestHealthChangeBroadcast>& acMessage) const noexcept;
+    bool IsAcceptedNonOwnerDamage(const PacketEvent<RequestHealthChangeBroadcast>& acMessage) const noexcept;
     void OnDeathStateChange(const PacketEvent<RequestDeathStateChange>& acMessage) const noexcept;
 
     entt::scoped_connection m_updateHealthConnection;
