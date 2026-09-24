@@ -367,6 +367,15 @@ TEST_CASE("Packets", "[encoding.packets]")
 
         AuthenticationRequest sendMessage, recvMessage;
         sendMessage.Token = "TesSt";
+        sendMessage.Username = "Dragonborn";
+        sendMessage.RaceFormId = 0x00013746;
+        sendMessage.Sex = 1;
+        sendMessage.Position = glm::vec3{1.f, 2.f, 3.f};
+        sendMessage.WorldSpaceFormId = 0x0000003C;
+        sendMessage.CellFormId = 0x0000003D;
+        sendMessage.WorldSpaceId = GameId(1, 0x0000003C);
+        sendMessage.CellId = GameId(1, 0x0000003D);
+        sendMessage.Level = 42;
         sendMessage.UserMods.ModList.push_back({"Hello", 42});
         sendMessage.UserMods.ModList.push_back({"Hi", 14});
         sendMessage.UserMods.ModList.push_back({"Test", 8});

@@ -5,6 +5,7 @@
 #include <TiltedCore/Buffer.hpp>
 #include <Structs/GameId.h>
 #include <Structs/TimeModel.h>
+#include <Structs/Vector3_NetQuantize.h>
 
 struct AuthenticationRequest final : ClientMessage
 {
@@ -22,8 +23,8 @@ struct AuthenticationRequest final : ClientMessage
 
     bool operator==(const AuthenticationRequest& achRhs) const noexcept
     {
-        return GetOpcode() == achRhs.GetOpcode() && DiscordId == achRhs.DiscordId && SKSEActive == achRhs.SKSEActive && MO2Active == achRhs.MO2Active && Token == achRhs.Token && Version == achRhs.Version && UserMods == achRhs.UserMods && Username == achRhs.Username &&
-               WorldSpaceId == achRhs.WorldSpaceId && CellId == achRhs.CellId && Level == achRhs.Level
+        return GetOpcode() == achRhs.GetOpcode() && DiscordId == achRhs.DiscordId && SKSEActive == achRhs.SKSEActive && MO2Active == achRhs.MO2Active && Token == achRhs.Token && Version == achRhs.Version && UserMods == achRhs.UserMods && Username == achRhs.Username && RaceFormId == achRhs.RaceFormId && Sex == achRhs.Sex && Position == achRhs.Position &&
+               WorldSpaceFormId == achRhs.WorldSpaceFormId && CellFormId == achRhs.CellFormId && WorldSpaceId == achRhs.WorldSpaceId && CellId == achRhs.CellId && Level == achRhs.Level
             && PlayerTime == achRhs.PlayerTime;
     }
 
@@ -34,6 +35,11 @@ struct AuthenticationRequest final : ClientMessage
     String Version{};
     Mods UserMods{};
     String Username{};
+    uint32_t RaceFormId{};
+    uint8_t Sex{};
+    Vector3_NetQuantize Position{};
+    uint32_t WorldSpaceFormId{};
+    uint32_t CellFormId{};
     GameId WorldSpaceId{};
     GameId CellId{};
     uint16_t Level{};

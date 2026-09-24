@@ -1,0 +1,54 @@
+name: M01 integration build
+
+on:
+  push:
+    branches:
+      - integration/m01-test
+  workflow_dispatch:
+
+jobs:
+  windows:
+    uses: ./.github/workflows/windows.yml
+    with:
+      build-mode: releasedbg
+      upload-build-for-next-job: true
+
+  linux:
+    uses: ./.github/workflows/linux.yml
+    with:
+      build-mode: releasedbg
+      upload-build-for-next-job: true
+
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Checkout submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --force --recursive --depth=1
+
+      - name: Setup xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: 3.1.0
+
+      - name: Configure xmake and install dependencies
+        run: xmake config --mode=releasedbg --yes -vD
+
+      - name: Build existing native test targets
+        run: |
+          xmake -y TPTests
+          xmake -y ActorPopulationTests
+          xmake -y SessionTests
+          xmake -y PersistenceTests
+
+      - name: Run existing native test targets
+        run: |
+          xmake run TPTests
+          xmake run ActorPopulationTests
+          xmake run SessionTests
+          xmake run PersistenceTests

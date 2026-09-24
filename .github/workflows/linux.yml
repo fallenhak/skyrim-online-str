@@ -88,7 +88,8 @@ jobs:
       - name: Create Linux release archive
         if: ${{ inputs.upload-build-for-next-job }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="$(git describe --tags --always)"
+          version="${version#v}"
           echo "ARTIFACT_VERSION=$version" >> "$GITHUB_ENV"
           mkdir -p release-assets
           tar -C release-stage -czf \

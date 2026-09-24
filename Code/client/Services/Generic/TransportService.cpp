@@ -191,9 +191,20 @@ void TransportService::OnConnected()
     }
 
     auto& modSystem = m_world.GetModSystem();
+    if (pNpc)
+    {
+        if (pNpc->raceForm.race)
+            request.RaceFormId = pNpc->raceForm.race->formID;
+        request.Sex = (pNpc->actorData.actorBaseFlags & TESActorBaseData::IS_FEMALE) != 0 ? 1 : 0;
+    }
+    request.Position = pPlayer->position;
     if (pPlayer->GetWorldSpace())
+    {
+        request.WorldSpaceFormId = pPlayer->GetWorldSpace()->formID;
         modSystem.GetServerModId(pPlayer->GetWorldSpace()->formID, request.WorldSpaceId);
+    }
 
+    request.CellFormId = pPlayer->parentCell->formID;
     modSystem.GetServerModId(pPlayer->parentCell->formID, request.CellId);
 
     request.Level = pPlayer->GetLevel();

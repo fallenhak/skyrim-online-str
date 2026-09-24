@@ -1,4 +1,5 @@
 #include <Services/SessionService.h>
+#include <Services/DevelopmentSaveFormId.h>
 
 #include <Persistence/Database.h>
 
@@ -37,6 +38,28 @@ protected:
     Persistence::CharacterRepository repository;
     SessionService sessions;
 };
+
+TEST(DevelopmentSaveFormId, ResolvesStandardAndLightFormsThroughSubmittedModOrder)
+{
+    Mods userMods{};
+    userMods.ModList.push_back({"Standard.esp", 1, false});
+    userMods.ModList.push_back({"Light.esp", 4, true});
+    TiltedPhoques::Vector<std::uint16_t> serverModIds{7, 12};
+
+    EXPECT_EQ(ResolveDevelopmentSaveFormId(0x01012345, userMods, serverModIds), GameId(7, 0x0012345));
+    EXPECT_EQ(ResolveDevelopmentSaveFormId(0xFE004ABC, userMods, serverModIds), GameId(12, 0xABC));
+}
+
+TEST(DevelopmentSaveFormId, RejectsMissingOrMismatchedLocalMods)
+{
+    Mods userMods{};
+    userMods.ModList.push_back({"Standard.esp", 1, false});
+    TiltedPhoques::Vector<std::uint16_t> serverModIds{7};
+
+    EXPECT_EQ(ResolveDevelopmentSaveFormId(0, userMods, serverModIds), GameId{});
+    EXPECT_EQ(ResolveDevelopmentSaveFormId(0x02012345, userMods, serverModIds), GameId{});
+    EXPECT_EQ(ResolveDevelopmentSaveFormId(0xFE004ABC, userMods, serverModIds), GameId{});
+}
 
 TEST_F(SessionServiceTest, StartsWithoutIdentityAndBindsVerifiedOwner)
 {
@@ -109,6 +132,69 @@ TEST_F(SessionServiceTest, ListsOnlyBoundOwnersRecordsAndKeepsSqlLookingIdsSafe)
     ASSERT_EQ(characters->size(), 1u);
     EXPECT_EQ(characters->front().CharacterId, static_cast<std::uint64_t>(firstId));
     EXPECT_EQ(characters->front().Name, "First");
+}
+
+TEST_F(SessionServiceTest, UnboundCharacterListHasAnExplicitIdentityError)
+{
+    constexpr TiltedPhoques::ConnectionId_t connectionId = 118;
+    ASSERT_TRUE(sessions.Create(connectionId));
+    ASSERT_TRUE(sessions.MarkAuthenticated(connectionId));
+
+    EXPECT_FALSE(sessions.ListCharacters(connectionId).has_value());
+    EXPECT_EQ(sessions.GetCharacterListFailureStatus(connectionId), CharacterSelectionStatus::kIdentityNotReady);
+}
+
+TEST_F(SessionServiceTest, DevelopmentBootstrapSeedsEmptyListFromSaveAndKeepsExistingRecords)
+{
+    constexpr TiltedPhoques::ConnectionId_t connectionId = 119;
+    ASSERT_TRUE(sessions.Create(connectionId));
+    ASSERT_TRUE(sessions.MarkAuthenticated(connectionId));
+    ASSERT_TRUE(sessions.BindIdentity(connectionId, "devtest:owner"));
+
+    auto save = MakeCharacter("ignored-client-owner", "Saved Dragonborn", 42);
+    save.Race = GameId(7, 0x00013746);
+    save.WorldSpace = GameId(1, 0x0000003C);
+    save.Cell = GameId(1, 0x0000003D);
+    save.PositionX = 12.5f;
+    save.PositionY = -23.25f;
+    save.PositionZ = 300.f;
+    save.Health = 100.f;
+    save.Magicka = 80.f;
+    save.Stamina = 90.f;
+
+    EXPECT_EQ(sessions.CreateDevelopmentCharacterFromSaveIfEmpty(connectionId, save), DevelopmentCharacterBootstrapResult::kCreated);
+    const auto characters = sessions.ListCharacters(connectionId);
+    ASSERT_TRUE(characters.has_value());
+    ASSERT_EQ(characters->size(), 1u);
+    EXPECT_EQ(characters->front().Name, "Saved Dragonborn");
+    EXPECT_EQ(characters->front().Race, save.Race);
+    EXPECT_EQ(characters->front().Sex, save.Sex);
+    EXPECT_EQ(characters->front().Level, 42);
+
+    const auto character = repository.GetCharacterForOwner(static_cast<Persistence::CharacterId>(characters->front().CharacterId), "devtest:owner");
+    ASSERT_TRUE(character.has_value());
+    EXPECT_EQ(character->OwnerProfileId, "devtest:owner");
+    EXPECT_EQ(character->WorldSpace, save.WorldSpace);
+    EXPECT_EQ(character->Cell, save.Cell);
+    EXPECT_FLOAT_EQ(character->PositionX, save.PositionX);
+    EXPECT_FLOAT_EQ(character->PositionY, save.PositionY);
+    EXPECT_FLOAT_EQ(character->PositionZ, save.PositionZ);
+    EXPECT_EQ(sessions.CreateDevelopmentCharacterFromSaveIfEmpty(connectionId, save), DevelopmentCharacterBootstrapResult::kAlreadyExists);
+    EXPECT_EQ(sessions.ListCharacters(connectionId)->size(), 1u);
+}
+
+TEST_F(SessionServiceTest, DevelopmentBootstrapRejectsUnboundOrInvalidSave)
+{
+    constexpr TiltedPhoques::ConnectionId_t connectionId = 120;
+    ASSERT_TRUE(sessions.Create(connectionId));
+    ASSERT_TRUE(sessions.MarkAuthenticated(connectionId));
+    EXPECT_EQ(sessions.CreateDevelopmentCharacterFromSaveIfEmpty(connectionId, MakeCharacter("owner", "Save", 10)), DevelopmentCharacterBootstrapResult::kIdentityNotReady);
+
+    ASSERT_TRUE(sessions.BindIdentity(connectionId, "devtest:owner"));
+    auto invalidSave = MakeCharacter("owner", "Save", 10);
+    invalidSave.Cell = {};
+    EXPECT_EQ(sessions.CreateDevelopmentCharacterFromSaveIfEmpty(connectionId, invalidSave), DevelopmentCharacterBootstrapResult::kInvalidSave);
+    EXPECT_TRUE(sessions.ListCharacters(connectionId)->empty());
 }
 
 TEST_F(SessionServiceTest, SelectsOwnedCharacterAndRejectsInvalidStateAfterSelection)

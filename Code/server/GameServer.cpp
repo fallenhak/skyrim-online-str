@@ -26,11 +26,14 @@
 #include <Messages/NotifyCharacterEnteredWorld.h>
 #include <Messages/RequestCharacterList.h>
 #include <Messages/SelectCharacterRequest.h>
+#include <Persistence/CharacterRecord.h>
+#include <Services/DevelopmentSaveFormId.h>
 #include <es_loader/PluginFilename.h>
 #include <console/ConsoleRegistry.h>
 #include <resources/ResourceCollection.h>
 
 #include <limits>
+#include <string>
 
 constexpr size_t kMaxServerNameLength = 128u;
 
@@ -66,6 +69,8 @@ Console::StringSetting sRaceClassificationOverrides{
 Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
 Console::Setting bEnableDevelopmentIdentityBinding{
     "Identity:bEnableDevelopmentIdentityBinding", "(Development only) Allow server operators to bind a live player to an explicit owner profile", false, Console::SettingsFlags::kLocked};
+Console::Setting bDevTestMode{
+    "Identity:bDevTestMode", "(TEST ONLY) Bind a development identity and seed an empty character list from the connecting player's save", false, Console::SettingsFlags::kLocked};
 
 // Gameplay
 // TODO: to make this easier for users, use game names for difficulty instead of int
@@ -227,6 +232,9 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole)
         spdlog::warn("Development identity binding is enabled. This is for local development only and is not authentication.");
     }
 
+    if (bDevTestMode)
+        spdlog::warn("DEV TEST MODE is enabled: sessions receive an unverified development identity and may bootstrap one character from the client save.");
+
     BindMessageHandlers();
     UpdateTimeScale();
 
@@ -337,7 +345,12 @@ void GameServer::BindMessageHandlers()
 
         const auto characters = m_pWorld->GetSessionService().ListCharacters(aConnectionId);
         if (!characters.has_value())
+        {
+            NotifyCharacterSelectionResult response{};
+            response.Status = m_pWorld->GetSessionService().GetCharacterListFailureStatus(aConnectionId);
+            pPlayer->Send(response);
             return;
+        }
 
         NotifyCharacterList response{};
         response.Characters = *characters;
@@ -1170,6 +1183,45 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
 
         if (!m_pWorld->GetSessionService().MarkAuthenticated(aConnectionId))
             spdlog::warn("Unable to transition session {:x} to identity binding state", aConnectionId);
+
+        if (bDevTestMode)
+        {
+            std::string ownerProfileId = "devtest:";
+            if (acRequest->DiscordId != 0)
+                ownerProfileId += "discord:" + std::to_string(acRequest->DiscordId);
+            else if (!pPlayer->GetUsername().empty())
+                ownerProfileId += "name:" + std::string(pPlayer->GetUsername().c_str());
+            else
+                ownerProfileId += "player:" + std::to_string(pPlayer->GetId());
+
+            auto& sessions = m_pWorld->GetSessionService();
+            if (sessions.BindIdentity(aConnectionId, ownerProfileId))
+            {
+                Persistence::CharacterRecord saveCharacter{};
+                saveCharacter.Name = pPlayer->GetUsername().c_str();
+                saveCharacter.Race = ResolveDevelopmentSaveFormId(acRequest->RaceFormId, acRequest->UserMods, playerModsIds);
+                saveCharacter.Sex = acRequest->Sex;
+                saveCharacter.Level = pPlayer->GetLevel();
+                saveCharacter.WorldSpace = ResolveDevelopmentSaveFormId(acRequest->WorldSpaceFormId, acRequest->UserMods, playerModsIds);
+                saveCharacter.Cell = ResolveDevelopmentSaveFormId(acRequest->CellFormId, acRequest->UserMods, playerModsIds);
+                saveCharacter.PositionX = acRequest->Position.x;
+                saveCharacter.PositionY = acRequest->Position.y;
+                saveCharacter.PositionZ = acRequest->Position.z;
+                saveCharacter.Health = 100.f;
+                saveCharacter.Magicka = 100.f;
+                saveCharacter.Stamina = 100.f;
+
+                const auto result = sessions.CreateDevelopmentCharacterFromSaveIfEmpty(aConnectionId, saveCharacter);
+                if (result == DevelopmentCharacterBootstrapResult::kCreated)
+                    spdlog::info("DEV TEST MODE created the first character record for player '{}' using owner profile '{}'.", pPlayer->GetUsername().c_str(), ownerProfileId);
+                else if (result == DevelopmentCharacterBootstrapResult::kInvalidSave)
+                    spdlog::warn("DEV TEST MODE could not seed a character for player '{}': the save fields are incomplete or invalid.", pPlayer->GetUsername().c_str());
+            }
+            else
+            {
+                spdlog::warn("DEV TEST MODE could not bind a development identity for connection {:x}.", aConnectionId);
+            }
+        }
 
         serverResponse.PlayerId = pPlayer->GetId();
 

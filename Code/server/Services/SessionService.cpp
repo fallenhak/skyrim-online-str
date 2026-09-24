@@ -109,6 +109,45 @@ std::optional<std::vector<CharacterSummary>> SessionService::ListCharacters(cons
     return summaries;
 }
 
+CharacterSelectionStatus SessionService::GetCharacterListFailureStatus(const ConnectionId_t aConnectionId) const noexcept
+{
+    const auto* pSession = Get(aConnectionId);
+    return !pSession || !pSession->OwnerProfileId.has_value() ? CharacterSelectionStatus::kIdentityNotReady : CharacterSelectionStatus::kInvalidState;
+}
+
+DevelopmentCharacterBootstrapResult SessionService::CreateDevelopmentCharacterFromSaveIfEmpty(
+    const ConnectionId_t aConnectionId, const Persistence::CharacterRecord& acSaveCharacter)
+{
+    auto* pSession = Get(aConnectionId);
+    if (!pSession || !pSession->OwnerProfileId.has_value() || pSession->State != SessionState::kAwaitingCharacterSelection)
+        return DevelopmentCharacterBootstrapResult::kIdentityNotReady;
+
+    if (!m_characterRepository.ListCharactersForOwner(*pSession->OwnerProfileId).empty())
+        return DevelopmentCharacterBootstrapResult::kAlreadyExists;
+
+    CharacterLoadSnapshot snapshot{};
+    snapshot.CharacterId = 1;
+    snapshot.Name = acSaveCharacter.Name;
+    snapshot.Race = acSaveCharacter.Race;
+    snapshot.Sex = acSaveCharacter.Sex;
+    snapshot.Level = acSaveCharacter.Level;
+    snapshot.WorldSpaceId = acSaveCharacter.WorldSpace;
+    snapshot.CellId = acSaveCharacter.Cell;
+    snapshot.PositionX = acSaveCharacter.PositionX;
+    snapshot.PositionY = acSaveCharacter.PositionY;
+    snapshot.PositionZ = acSaveCharacter.PositionZ;
+    snapshot.Health = acSaveCharacter.Health;
+    snapshot.Magicka = acSaveCharacter.Magicka;
+    snapshot.Stamina = acSaveCharacter.Stamina;
+    if (!IsCharacterLoadSnapshotValid(snapshot))
+        return DevelopmentCharacterBootstrapResult::kInvalidSave;
+
+    auto character = acSaveCharacter;
+    character.OwnerProfileId = *pSession->OwnerProfileId;
+    character.Id = m_characterRepository.CreateCharacter(character);
+    return character.Id > 0 ? DevelopmentCharacterBootstrapResult::kCreated : DevelopmentCharacterBootstrapResult::kInvalidSave;
+}
+
 CharacterSelectionStatus SessionService::SelectCharacter(const ConnectionId_t aConnectionId, const std::uint64_t aCharacterId)
 {
     auto* pSession = Get(aConnectionId);

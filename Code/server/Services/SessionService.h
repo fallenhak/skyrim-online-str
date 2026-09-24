@@ -38,6 +38,14 @@ struct CharacterSession final
     std::optional<Persistence::CharacterId> SelectedCharacterId;
 };
 
+enum class DevelopmentCharacterBootstrapResult : std::uint8_t
+{
+    kCreated,
+    kAlreadyExists,
+    kIdentityNotReady,
+    kInvalidSave
+};
+
 /**
  * @brief Owns the connection-to-verified-identity session state used by character selection.
  *
@@ -64,6 +72,9 @@ struct SessionService final
     [[nodiscard]] const CharacterSession* Get(ConnectionId_t aConnectionId) const noexcept;
 
     [[nodiscard]] std::optional<std::vector<CharacterSummary>> ListCharacters(ConnectionId_t aConnectionId) const;
+    [[nodiscard]] CharacterSelectionStatus GetCharacterListFailureStatus(ConnectionId_t aConnectionId) const noexcept;
+    [[nodiscard]] DevelopmentCharacterBootstrapResult CreateDevelopmentCharacterFromSaveIfEmpty(
+        ConnectionId_t aConnectionId, const Persistence::CharacterRecord& acSaveCharacter);
     [[nodiscard]] CharacterSelectionStatus SelectCharacter(ConnectionId_t aConnectionId, std::uint64_t aCharacterId);
     [[nodiscard]] std::optional<CharacterLoadSnapshot> PrepareCharacterLoadSnapshot(ConnectionId_t aConnectionId);
     [[nodiscard]] CharacterReadyStatus AcceptCharacterReady(ConnectionId_t aConnectionId, std::uint64_t aCharacterId);
