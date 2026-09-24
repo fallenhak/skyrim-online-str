@@ -1,5 +1,12 @@
 #pragma once
 
+// Tests compile without EncodingPch.h, so pull in what Inventory.h expects.
+#include <optional>
+
+#include <TiltedCore/Stl.hpp>
+#include <TiltedCore/Buffer.hpp>
+#include <TiltedCore/Serialization.hpp>
+
 #include <Structs/Inventory.h>
 
 #include <algorithm>
