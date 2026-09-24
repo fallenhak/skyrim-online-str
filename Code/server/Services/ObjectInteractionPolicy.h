@@ -125,6 +125,19 @@ struct ObjectInteractionPolicy final
         return true;
     }
 
+    // Ticks are whole seconds of server uptime (same unit as RenewableEncounterService).
+    static constexpr std::uint64_t kHarvestRespawnTicks = 30 * 60;
+
+    [[nodiscard]] static constexpr std::uint64_t HarvestRespawnTick(const std::uint64_t aHarvestTick) noexcept
+    {
+        return aHarvestTick + kHarvestRespawnTicks;
+    }
+
+    [[nodiscard]] static constexpr bool IsHarvestRespawnDue(const bool aHarvested, const std::uint64_t aRespawnAtTick, const std::uint64_t aNowTick) noexcept
+    {
+        return aHarvested && aNowTick >= aRespawnAtTick;
+    }
+
     [[nodiscard]] static constexpr bool IsValidOpenState(const uint8_t aOpenState) noexcept
     {
         // TESObjectREFR::OpenState defines kNone, kOpen, and kOpening.

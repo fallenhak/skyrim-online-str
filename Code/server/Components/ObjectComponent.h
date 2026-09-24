@@ -24,4 +24,5 @@ struct ObjectComponent
     bool IsHarvestable{};
     // Server-owned: flipped by the first authorized activation (ObjectInteractionPolicy::TryHarvest).
     bool IsHarvested{};
+    std::uint64_t HarvestRespawnAtTick{};
 };

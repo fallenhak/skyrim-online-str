@@ -8,6 +8,7 @@ struct ActivateRequest;
 struct LockChangeRequest;
 struct AssignObjectsRequest;
 struct ScriptAnimationRequest;
+struct UpdateEvent;
 
 /**
  * @brief Manages (interactive) objects and relays interactions with said objects.
@@ -23,12 +24,17 @@ private:
     void OnActivate(const PacketEvent<ActivateRequest>&) const noexcept;
     void OnLockChange(const PacketEvent<LockChangeRequest>&) const noexcept;
     void OnScriptAnimationRequest(const PacketEvent<ScriptAnimationRequest>&) noexcept;
+    void OnUpdate(const UpdateEvent& acEvent) noexcept;
+    void RespawnHarvestedObjects() noexcept;
 
     World& m_world;
+    std::uint64_t m_tick{};
+    double m_tickAccumulator{};
 
     entt::scoped_connection m_leaveCellConnection;
     entt::scoped_connection m_assignObjectConnection;
     entt::scoped_connection m_activateConnection;
     entt::scoped_connection m_lockChangeConnection;
     entt::scoped_connection m_scriptAnimationConnection;
+    entt::scoped_connection m_updateConnection;
 };
