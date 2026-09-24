@@ -299,7 +299,7 @@ protected:
         plugin.close();
 
         TiltedPhoques::Map<TiltedPhoques::String, uint32_t> masterFiles;
-        masterFiles.emplace("Master.esm", uint32_t{0x02000000});
+        masterFiles.emplace("master.esm", uint32_t{0x02000000});
         ESLoader::TESFile tesFile(masterFiles);
         tesFile.Setup(uint8_t{1});
         ASSERT_TRUE(tesFile.LoadFile(m_pluginPath));
@@ -1033,7 +1033,8 @@ TEST(ESLoader, RejectsMasterListsWithoutDistinctSelfParentSlot)
     {
         const std::string masterNameValue = "Master" + std::to_string(i) + ".esm";
         String masterName(masterNameValue.c_str());
-        masterPrefixes.emplace(masterName, static_cast<uint32_t>(i) << 24);
+        const std::string masterNameKey = "master" + std::to_string(i) + ".esm";
+        masterPrefixes.emplace(String(masterNameKey.c_str()), static_cast<uint32_t>(i) << 24);
         masterNames.push_back(std::move(masterName));
     }
 
