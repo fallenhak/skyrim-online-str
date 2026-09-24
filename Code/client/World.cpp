@@ -83,6 +83,21 @@ void World::Update() noexcept
     m_dispatcher.trigger(UpdateEvent(cDeltaSeconds));
 }
 
+void World::UpdateNetworkOnly() noexcept
+{
+    const auto cNow = std::chrono::high_resolution_clock::now();
+    const auto cDeltaSeconds = std::chrono::duration_cast<std::chrono::duration<double>>(cNow - m_lastFrameTime).count();
+    m_lastFrameTime = cNow;
+
+    m_runner.OnUpdate(UpdateEvent(cDeltaSeconds));
+    m_transport.Update();
+}
+
+bool World::IsCreated() noexcept
+{
+    return entt::locator<World>::has_value();
+}
+
 RunnerService& World::GetRunner() noexcept
 {
     return m_runner;

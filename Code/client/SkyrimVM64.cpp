@@ -1,6 +1,7 @@
 #include <TiltedOnlinePCH.h>
 #include "TiltedOnlineApp.h"
 #include <Misc/GameVM.h>
+#include <World.h>
 
 extern std::unique_ptr<TiltedOnlineApp> g_appInstance;
 
@@ -14,10 +15,16 @@ static TVMUpdate* VMUpdate = nullptr;
 static TMainLoop* MainLoop = nullptr;
 static TVMDestructor* VMDestructor = nullptr;
 
+// Set when the VM hook ran the full world update during the current main loop iteration.
+static bool s_worldUpdatedThisFrame = false;
+
 int TP_MAKE_THISCALL(HookVMUpdate, GameVM, float a2)
 {
     if (apThis->inactive == 0)
+    {
         g_appInstance->Update();
+        s_worldUpdatedThisFrame = true;
+    }
 
     return TiltedPhoques::ThisCall(VMUpdate, apThis, a2);
 }
@@ -26,7 +33,22 @@ short TP_MAKE_THISCALL(HookMainLoop, Main)
 {
     TP_EMPTY_HOOK_PLACEHOLDER
 
-    return TiltedPhoques::ThisCall(MainLoop, apThis);
+    const auto result = TiltedPhoques::ThisCall(MainLoop, apThis);
+
+    // The Papyrus VM does not tick on the title menu, but the launcher session connects from there.
+    if (!s_worldUpdatedThisFrame && World::IsCreated())
+    {
+        static bool s_loggedMenuPump = false;
+        if (!s_loggedMenuPump)
+        {
+            s_loggedMenuPump = true;
+            spdlog::info("[Runner] VM idle, pumping network from main loop");
+        }
+        World::Get().UpdateNetworkOnly();
+    }
+    s_worldUpdatedThisFrame = false;
+
+    return result;
 }
 
 uintptr_t TP_MAKE_THISCALL(HookVMDestructor, void)

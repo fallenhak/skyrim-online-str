@@ -24,6 +24,9 @@ struct World : entt::registry
     ~World();
 
     void Update() noexcept;
+    // Pumps queued tasks and the network while the Papyrus VM is idle (title menu).
+    void UpdateNetworkOnly() noexcept;
+    [[nodiscard]] static bool IsCreated() noexcept;
 
     RunnerService& GetRunner() noexcept;
     TransportService& GetTransport() noexcept;
