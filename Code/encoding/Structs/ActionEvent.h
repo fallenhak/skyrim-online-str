@@ -34,5 +34,5 @@ struct ActionEvent
     void Save(std::ostream&) const;
 
     void GenerateDifferential(const ActionEvent& aPrevious, TiltedPhoques::Buffer::Writer& aWriter) const noexcept;
-    void ApplyDifferential(TiltedPhoques::Buffer::Reader& aReader) noexcept;
+    bool ApplyDifferential(TiltedPhoques::Buffer::Reader& aReader) noexcept;
 };

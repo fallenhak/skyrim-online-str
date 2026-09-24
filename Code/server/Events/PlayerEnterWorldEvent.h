@@ -3,7 +3,7 @@
 struct Player;
 
 /**
- * @brief Dispatched when a player enters joins server and requests its actor to be loaded.
+ * @brief Dispatched after a persistent player entity is created and the session enters InWorld.
  */
 struct PlayerEnterWorldEvent
 {

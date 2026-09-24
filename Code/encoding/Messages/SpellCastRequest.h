@@ -15,11 +15,16 @@ struct SpellCastRequest final : ClientMessage
     void SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept override;
     void DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept override;
 
-    bool operator==(const SpellCastRequest& acRhs) const noexcept { return CasterId == acRhs.CasterId && SpellFormId == acRhs.SpellFormId && CastingSource == acRhs.CastingSource && IsDualCasting == acRhs.IsDualCasting && DesiredTarget == acRhs.DesiredTarget && GetOpcode() == acRhs.GetOpcode(); }
+    bool operator==(const SpellCastRequest& acRhs) const noexcept
+    {
+        return CasterId == acRhs.CasterId && SpellFormId == acRhs.SpellFormId && CastingSource == acRhs.CastingSource && IsDualCasting == acRhs.IsDualCasting &&
+               DesiredTarget == acRhs.DesiredTarget && OwnershipEpoch == acRhs.OwnershipEpoch && GetOpcode() == acRhs.GetOpcode();
+    }
 
-    uint32_t CasterId;
+    uint32_t CasterId{};
     GameId SpellFormId{};
-    int32_t CastingSource;
-    bool IsDualCasting;
-    uint32_t DesiredTarget;
+    int32_t CastingSource{};
+    bool IsDualCasting{};
+    uint32_t DesiredTarget{};
+    uint32_t OwnershipEpoch{};
 };

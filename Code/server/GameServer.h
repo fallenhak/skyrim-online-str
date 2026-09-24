@@ -35,7 +35,7 @@ struct GameServer final : Server
         uint16_t tick_rate;
     };
 
-    GameServer(Console::ConsoleRegistry& aConsole) noexcept;
+    GameServer(Console::ConsoleRegistry& aConsole);
     virtual ~GameServer();
 
     TP_NOCOPYMOVE(GameServer);

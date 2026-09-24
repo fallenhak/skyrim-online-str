@@ -15,6 +15,11 @@
 #include <Messages/RequestQuestUpdate.h>
 #include <Messages/NotifyQuestUpdate.h>
 
+namespace
+{
+constexpr bool kEnableVanillaQuestSync = false;
+}
+
 static TESQuest* FindQuestByNameId(const String& name)
 {
     auto& questRegistry = ModManager::Get()->quests;
@@ -54,7 +59,8 @@ void QuestService::OnConnected(const ConnectedEvent&) noexcept
 
 BSTEventResult QuestService::OnEvent(const TESQuestStartStopEvent* apEvent, const EventDispatcher<TESQuestStartStopEvent>*)
 {
-    if (ScopedQuestOverride::IsOverriden() || !m_world.Get().GetPartyService().IsInParty())
+    // Persistent-world mode keeps vanilla quest progression local to each character.
+    if (!kEnableVanillaQuestSync || ScopedQuestOverride::IsOverriden())
         return BSTEventResult::kOk;
 
     spdlog::info("Quest start/stop event: {:X}", apEvent->formId);
@@ -102,7 +108,8 @@ BSTEventResult QuestService::OnEvent(const TESQuestStartStopEvent* apEvent, cons
 
 BSTEventResult QuestService::OnEvent(const TESQuestStageEvent* apEvent, const EventDispatcher<TESQuestStageEvent>*)
 {
-    if (ScopedQuestOverride::IsOverriden() || !m_world.Get().GetPartyService().IsInParty())
+    // Persistent-world mode keeps vanilla quest progression local to each character.
+    if (!kEnableVanillaQuestSync || ScopedQuestOverride::IsOverriden())
         return BSTEventResult::kOk;
 
     spdlog::info("Quest stage event: {:X}, stage: {}", apEvent->formId, apEvent->stageId);

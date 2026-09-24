@@ -1,10 +1,12 @@
 #pragma once
 
+#include "Records/ACHR.h"
 #include "Records/CLMT.h"
 #include "Records/CONT.h"
 #include "Records/GMST.h"
 #include "Records/NAVM.h"
 #include "Records/NPC.h"
+#include "Records/RACE.h"
 #include "Records/REFR.h"
 #include "Records/WRLD.h"
 
@@ -29,8 +31,44 @@ struct RecordCollection
     bool HasAnyRecords() const noexcept { return m_allRecords.size(); }
 
     REFR& GetObjectRefById(uint32_t aFormId) noexcept { return m_objectReferences[aFormId]; }
+    [[nodiscard]] const ACHR* FindActorReferenceById(uint32_t aFormId) const noexcept
+    {
+        const auto it = m_actorReferences.find(aFormId);
+        return it == m_actorReferences.end() ? nullptr : &it->second;
+    }
+
+    [[nodiscard]] ACHR* FindActorReferenceById(uint32_t aFormId) noexcept
+    {
+        auto it = m_actorReferences.find(aFormId);
+        return it == m_actorReferences.end() ? nullptr : &it.value();
+    }
+
     CLMT& GetClimateById(uint32_t aFormId) noexcept { return m_climates[aFormId]; }
     NPC& GetNpcById(uint32_t aFormId) noexcept { return m_npcs[aFormId]; }
+    [[nodiscard]] const NPC* FindNpcById(uint32_t aFormId) const noexcept
+    {
+        const auto it = m_npcs.find(aFormId);
+        return it == m_npcs.end() ? nullptr : &it->second;
+    }
+
+    [[nodiscard]] NPC* FindNpcById(uint32_t aFormId) noexcept
+    {
+        auto it = m_npcs.find(aFormId);
+        return it == m_npcs.end() ? nullptr : &it.value();
+    }
+
+    [[nodiscard]] const RACE* FindRaceById(uint32_t aFormId) const noexcept
+    {
+        const auto it = m_races.find(aFormId);
+        return it == m_races.end() ? nullptr : &it->second;
+    }
+
+    [[nodiscard]] RACE* FindRaceById(uint32_t aFormId) noexcept
+    {
+        auto it = m_races.find(aFormId);
+        return it == m_races.end() ? nullptr : &it.value();
+    }
+
     CONT& GetContainerById(uint32_t aFormId) noexcept { return m_containers[aFormId]; }
     GMST& GetGameSettingById(uint32_t aFormId) noexcept { return m_gameSettings[aFormId]; }
     WRLD& GetWorldById(uint32_t aFormId) noexcept { return m_worlds[aFormId]; }
@@ -40,9 +78,11 @@ struct RecordCollection
 
 private:
     Map<uint32_t, Record> m_allRecords{};
+    Map<uint32_t, ACHR> m_actorReferences{};
     Map<uint32_t, REFR> m_objectReferences{};
     Map<uint32_t, CLMT> m_climates{};
     Map<uint32_t, NPC> m_npcs{};
+    Map<uint32_t, RACE> m_races{};
     Map<uint32_t, CONT> m_containers{};
     Map<uint32_t, GMST> m_gameSettings{};
     Map<uint32_t, WRLD> m_worlds{};

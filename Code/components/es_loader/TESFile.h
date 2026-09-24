@@ -5,7 +5,9 @@
 #include <Records/CLMT.h>
 #include <Records/GMST.h>
 #include <Records/Group.h>
+#include <Records/ACHR.h>
 #include <Records/NPC.h>
+#include <Records/RACE.h>
 #include <Records/REFR.h>
 #include <Records/TES4.h>
 

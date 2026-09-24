@@ -14,8 +14,12 @@ struct DrawWeaponRequest final : ClientMessage
     void SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept override;
     void DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept override;
 
-    bool operator==(const DrawWeaponRequest& acRhs) const noexcept { return Id == acRhs.Id && IsWeaponDrawn == acRhs.IsWeaponDrawn && GetOpcode() == acRhs.GetOpcode(); }
+    bool operator==(const DrawWeaponRequest& acRhs) const noexcept
+    {
+        return Id == acRhs.Id && OwnershipEpoch == acRhs.OwnershipEpoch && IsWeaponDrawn == acRhs.IsWeaponDrawn && GetOpcode() == acRhs.GetOpcode();
+    }
 
     uint32_t Id{};
+    uint32_t OwnershipEpoch{};
     bool IsWeaponDrawn{};
 };

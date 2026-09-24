@@ -1,12 +1,13 @@
 #include <Structs/ReferenceUpdate.h>
 #include <TiltedCore/Serialization.hpp>
+#include <algorithm>
 #include <stdexcept>
 
 using TiltedPhoques::Serialization;
 
 bool ReferenceUpdate::operator==(const ReferenceUpdate& acRhs) const noexcept
 {
-    return UpdatedMovement == acRhs.UpdatedMovement && ActionEvents == acRhs.ActionEvents;
+    return OwnershipEpoch == acRhs.OwnershipEpoch && UpdatedMovement == acRhs.UpdatedMovement && ActionEvents == acRhs.ActionEvents;
 }
 
 bool ReferenceUpdate::operator!=(const ReferenceUpdate& acRhs) const noexcept
@@ -16,26 +17,36 @@ bool ReferenceUpdate::operator!=(const ReferenceUpdate& acRhs) const noexcept
 
 void ReferenceUpdate::Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
 {
+    Serialization::WriteVarInt(aWriter, OwnershipEpoch);
     UpdatedMovement.Serialize(aWriter);
 
-    Serialization::WriteVarInt(aWriter, ActionEvents.size());
+    const auto actionCount = std::min(ActionEvents.size(), MovementPayloadLimits::kMaxActionEvents);
+    Serialization::WriteVarInt(aWriter, actionCount);
 
-    for (auto& entry : ActionEvents)
+    for (auto it = ActionEvents.begin(); it != ActionEvents.begin() + actionCount; ++it)
     {
-        entry.GenerateDifferential(ActionEvent{}, aWriter);
+        it->GenerateDifferential(ActionEvent{}, aWriter);
     }
 }
 
-void ReferenceUpdate::Deserialize(TiltedPhoques::Buffer::Reader& aReader)
+bool ReferenceUpdate::Deserialize(TiltedPhoques::Buffer::Reader& aReader)
 {
-    UpdatedMovement.Deserialize(aReader);
+    OwnershipEpoch = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
+
+    if (!UpdatedMovement.Deserialize(aReader))
+        return false;
 
     const auto count = Serialization::ReadVarInt(aReader);
+    if (count > MovementPayloadLimits::kMaxActionEvents)
+        return false;
 
-    ActionEvents.resize(count);
+    ActionEvents.resize(static_cast<size_t>(count));
 
     for (auto i = 0u; i < count; ++i)
     {
-        ActionEvents[i].ApplyDifferential(aReader);
+        if (!ActionEvents[i].ApplyDifferential(aReader))
+            return false;
     }
+
+    return true;
 }

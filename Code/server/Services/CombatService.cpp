@@ -1,4 +1,5 @@
 #include <Services/CombatService.h>
+#include <Services/ProjectileLaunchAuthorityPolicy.h>
 #include <Components.h>
 #include <GameServer.h>
 #include <World.h>
@@ -16,9 +17,24 @@ void CombatService::OnProjectileLaunchRequest(const PacketEvent<ProjectileLaunch
 {
     auto& packet = acMessage.Packet;
 
+    auto characterView = m_world.view<CharacterComponent, OwnerComponent>();
+    const auto shooterIt = characterView.find(static_cast<entt::entity>(packet.ShooterID));
+    const bool shooterExists = shooterIt != characterView.end();
+    const bool isCurrentOwner = shooterExists && characterView.get<OwnerComponent>(*shooterIt).IsCurrentOwner(acMessage.pPlayer, packet.OwnershipEpoch);
+    if (!ProjectileLaunchAuthorityPolicy::IsAuthorized(shooterExists, shooterExists, isCurrentOwner, packet.OwnershipEpoch))
+        return;
+
+    if (!ProjectileLaunchAuthorityPolicy::HasFiniteParameters(
+            packet.OriginX, packet.OriginY, packet.OriginZ, packet.ZAngle, packet.XAngle, packet.YAngle, packet.Power, packet.Scale))
+        return;
+
+    if (packet.CastingSource < 0 || packet.CastingSource >= 4)
+        return;
+
     NotifyProjectileLaunch notify{};
 
     notify.ShooterID = packet.ShooterID;
+    notify.OwnershipEpoch = packet.OwnershipEpoch;
 
     notify.OriginX = packet.OriginX;
     notify.OriginY = packet.OriginY;

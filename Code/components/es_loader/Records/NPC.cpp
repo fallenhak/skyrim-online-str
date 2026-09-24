@@ -10,6 +10,7 @@ void NPC::ParseChunks(NPC& aSourceRecord, Map<uint8_t, uint32_t>& aParentToFormI
             switch (aChunkId)
             {
             case ChunkId::EDID_ID: m_editorId = ESLoader::ReadZString(aReader); break;
+            case ChunkId::RNAM_ID: m_raceId = Chunks::ReadFormId(aReader, aParentToFormIdPrefix); break;
             case ChunkId::ACBS_ID: m_baseStats = Chunks::ACBS(aReader); break;
             case ChunkId::DOFT_ID: m_defaultOutfit = Chunks::DOFT(aReader, aParentToFormIdPrefix); break;
             case ChunkId::VMAD_ID: m_scriptData = Chunks::VMAD(aReader, aParentToFormIdPrefix); break;

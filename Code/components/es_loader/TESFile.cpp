@@ -103,7 +103,12 @@ bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aReco
 
             break;
         }
-        // case FormEnum::ACHR:
+        case FormEnum::ACHR:
+        {
+            ACHR parsedRecord = CopyAndParseRecord<ACHR>(pRecord);
+            aRecordCollection.m_actorReferences[parsedRecord.GetFormId()] = parsedRecord;
+            break;
+        }
         case FormEnum::REFR:
         {
             REFR parsedRecord = CopyAndParseRecord<REFR>(pRecord);
@@ -121,6 +126,12 @@ bool TESFile::ReadGroupOrRecord(Buffer::Reader& aReader, RecordCollection& aReco
         {
             NPC parsedRecord = CopyAndParseRecord<NPC>(pRecord);
             aRecordCollection.m_npcs[parsedRecord.GetFormId()] = parsedRecord;
+            break;
+        }
+        case FormEnum::RACE:
+        {
+            RACE parsedRecord = CopyAndParseRecord<RACE>(pRecord);
+            aRecordCollection.m_races[parsedRecord.GetFormId()] = parsedRecord;
             break;
         }
         case FormEnum::CONT:

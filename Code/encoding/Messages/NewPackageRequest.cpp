@@ -4,6 +4,7 @@ void NewPackageRequest::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) con
 {
     Serialization::WriteVarInt(aWriter, ActorId);
     PackageId.Serialize(aWriter);
+    Serialization::WriteVarInt(aWriter, OwnershipEpoch);
 }
 
 void NewPackageRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept
@@ -12,4 +13,5 @@ void NewPackageRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) n
 
     ActorId = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
     PackageId.Deserialize(aReader);
+    OwnershipEpoch = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
 }

@@ -16,11 +16,20 @@
 #include <AdminMessages/ClientAdminMessageFactory.h>
 #include <Messages/AuthenticationResponse.h>
 #include <Messages/ClientMessageFactory.h>
-#include <Messages/NotifyPlayerJoined.h>
-#include <Messages/NotifyPlayerLeft.h>
 #include <Messages/NotifySettingsChange.h>
+#include <Messages/NotifyCharacterList.h>
+#include <Messages/NotifyCharacterSelectionResult.h>
+#include <Messages/NotifyCharacterLoadSnapshot.h>
+#include <Messages/NotifyCharacterReadyResult.h>
+#include <Messages/CharacterReadyRequest.h>
+#include <Messages/AssignCharacterRequest.h>
+#include <Messages/NotifyCharacterEnteredWorld.h>
+#include <Messages/RequestCharacterList.h>
+#include <Messages/SelectCharacterRequest.h>
 #include <console/ConsoleRegistry.h>
 #include <resources/ResourceCollection.h>
+
+#include <limits>
 
 constexpr size_t kMaxServerNameLength = 128u;
 
@@ -32,7 +41,25 @@ Console::Setting bPremiumTickrate{"GameServer:bPremiumMode", "Use premium tick r
 Console::StringSetting sServerName{"GameServer:sServerName", "Name that shows up in the server list", "Dedicated Together Server"};
 Console::StringSetting sAdminPassword{"GameServer:sAdminPassword", "Admin authentication password", ""};
 Console::StringSetting sPassword{"GameServer:sPassword", "Server password", ""};
+Console::StringSetting sPersistenceDatabasePath{"Persistence:sDatabasePath", "SQLite database path relative to the server working directory", "Data/SkyrimTogetherServer.db"};
+Console::Setting bEnableActorRecordLoading{
+    "Population:bEnableActorRecordLoading",
+    "Enable full server plugin record parsing for actor-population NPC/race classification at startup; not runtime filtering",
+    false,
+    Console::SettingsFlags::kLocked};
+Console::Setting bEnableHumanoidAssignmentGate{
+    "Population:bEnableHumanoidAssignmentGate",
+    "Reject trusted vanilla humanoid NPCs from becoming STR-managed server entities",
+    false,
+    Console::SettingsFlags::kLocked};
+Console::Setting bAllowUnknownActorAssignments{
+    "Population:bAllowUnknownActorAssignments",
+    "Allow actor assignments when server population identity is unknown or untrusted",
+    true,
+    Console::SettingsFlags::kLocked};
 Console::Setting bAnnounceServer{"LiveServices:bAnnounceServer", "Whether to list the server on the public server list", false};
+Console::Setting bEnableDevelopmentIdentityBinding{
+    "Identity:bEnableDevelopmentIdentityBinding", "(Development only) Allow server operators to bind a live player to an explicit owner profile", false, Console::SettingsFlags::kLocked};
 
 // Gameplay
 // TODO: to make this easier for users, use game names for difficulty instead of int
@@ -147,7 +174,7 @@ ServerSettings GetSettings()
     return settings;
 }
 
-GameServer::GameServer(Console::ConsoleRegistry& aConsole) noexcept
+GameServer::GameServer(Console::ConsoleRegistry& aConsole)
     : m_lastFrameTime(std::chrono::high_resolution_clock::now())
     , m_startTime(std::chrono::high_resolution_clock::now())
     , m_commands(aConsole)
@@ -186,7 +213,13 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole) noexcept
     spdlog::info("Server {} started on port {}", BUILD_COMMIT, GetPort());
     UpdateTitle();
 
-    m_pWorld = MakeUnique<World>();
+    m_pWorld = MakeUnique<World>(
+        std::filesystem::path(sPersistenceDatabasePath.value()), bEnableActorRecordLoading, bEnableHumanoidAssignmentGate, bAllowUnknownActorAssignments);
+
+    if (bEnableDevelopmentIdentityBinding)
+    {
+        spdlog::warn("Development identity binding is enabled. This is for local development only and is not authentication.");
+    }
 
     BindMessageHandlers();
     UpdateTimeScale();
@@ -259,6 +292,11 @@ void GameServer::BindMessageHandlers()
 
         m_messageHandlers[T::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
         {
+            // Authentication, character selection, and other pre-world protocol handlers are
+            // installed explicitly below. Everything generated here is ordinary gameplay.
+            if (!m_pWorld->GetSessionService().CanProcessGameplay(aConnectionId))
+                return;
+
             auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
 
             if (!pPlayer)
@@ -277,6 +315,102 @@ void GameServer::BindMessageHandlers()
     };
 
     ClientMessageFactory::Visit(handlerGenerator);
+
+    m_messageHandlers[RequestCharacterList::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
+    {
+        auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
+        if (!pPlayer)
+        {
+            spdlog::error("Connection {:x} is not associated with a player.", aConnectionId);
+            Kick(aConnectionId);
+            return;
+        }
+
+        auto pRealMessage = CastUnique<RequestCharacterList>(std::move(apMessage));
+        (void)pRealMessage;
+
+        const auto characters = m_pWorld->GetSessionService().ListCharacters(aConnectionId);
+        if (!characters.has_value())
+            return;
+
+        NotifyCharacterList response{};
+        response.Characters = *characters;
+        pPlayer->Send(response);
+    };
+
+    m_messageHandlers[SelectCharacterRequest::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
+    {
+        auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
+        if (!pPlayer)
+        {
+            spdlog::error("Connection {:x} is not associated with a player.", aConnectionId);
+            Kick(aConnectionId);
+            return;
+        }
+
+        const auto pRealMessage = CastUnique<SelectCharacterRequest>(std::move(apMessage));
+
+        NotifyCharacterSelectionResult response{};
+        response.Status = m_pWorld->GetSessionService().SelectCharacter(aConnectionId, pRealMessage->CharacterId);
+        if (response.Status == CharacterSelectionStatus::kSuccess)
+        {
+            const auto snapshot = m_pWorld->GetSessionService().PrepareCharacterLoadSnapshot(aConnectionId);
+            if (!snapshot.has_value())
+            {
+                // Keep the external failure generic and do not report selection success when
+                // the selected record disappeared before its snapshot could be prepared.
+                response.Status = CharacterSelectionStatus::kNotFoundOrNotOwned;
+                pPlayer->Send(response);
+                return;
+            }
+
+            pPlayer->Send(response);
+
+            NotifyCharacterLoadSnapshot snapshotMessage{};
+            snapshotMessage.Snapshot = *snapshot;
+            pPlayer->Send(snapshotMessage);
+            return;
+        }
+
+        pPlayer->Send(response);
+    };
+
+    m_messageHandlers[CharacterReadyRequest::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
+    {
+        auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
+        if (!pPlayer)
+        {
+            spdlog::error("Connection {:x} is not associated with a player.", aConnectionId);
+            Kick(aConnectionId);
+            return;
+        }
+
+        const auto pRealMessage = CastUnique<CharacterReadyRequest>(std::move(apMessage));
+        NotifyCharacterReadyResult response{};
+        response.Status = m_pWorld->GetSessionService().AcceptCharacterReady(aConnectionId, pRealMessage->CharacterId);
+        pPlayer->Send(response);
+    };
+
+    // Character assignment is the one pre-world exception. Only the real local player
+    // reference may cross this gate while the session is awaiting player assignment.
+    m_messageHandlers[AssignCharacterRequest::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
+    {
+        const auto pRealMessage = CastUnique<AssignCharacterRequest>(std::move(apMessage));
+        const bool isPlayerReference = pRealMessage->ReferenceId.ModId == 0 && pRealMessage->ReferenceId.BaseId == 0x14;
+        const auto& sessionService = m_pWorld->GetSessionService();
+        if ((isPlayerReference && !sessionService.CanAssignPlayer(aConnectionId)) || (!isPlayerReference && !sessionService.CanProcessGameplay(aConnectionId)))
+            return;
+
+        auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
+        if (!pPlayer)
+        {
+            spdlog::error("Connection {:x} is not associated with a player.", aConnectionId);
+            Kick(aConnectionId);
+            return;
+        }
+
+        m_pWorld->GetDispatcher().trigger(PacketEvent<AssignCharacterRequest>(pRealMessage.get(), pPlayer));
+    };
 
     // Override authentication request
     m_messageHandlers[AuthenticationRequest::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
@@ -328,6 +462,64 @@ void GameServer::BindServerCommands()
             {
                 out->info("{}: {}", pPlayer->GetId(), pPlayer->GetUsername().c_str());
             }
+        });
+
+    m_commands.RegisterCommand<int64_t, String>(
+        "DevBindIdentity", "(Development only) Bind a live PlayerId to an explicit OwnerProfileId",
+        [&](Console::ArgStack& aStack)
+        {
+            auto out = spdlog::get("ConOut");
+            const auto playerId = aStack.Pop<int64_t>();
+            const auto ownerProfileId = aStack.Pop<String>();
+
+            if (!bEnableDevelopmentIdentityBinding)
+            {
+                out->error("DevBindIdentity is disabled. Enable Identity:bEnableDevelopmentIdentityBinding explicitly for local development.");
+                return;
+            }
+
+            if (playerId < 0 || playerId > std::numeric_limits<uint32_t>::max())
+            {
+                out->error("PlayerId {} is outside the valid range.", playerId);
+                return;
+            }
+
+            if (ownerProfileId.empty())
+            {
+                out->error("OwnerProfileId must not be empty.");
+                return;
+            }
+
+            auto* pPlayer = m_pWorld->GetPlayerManager().GetById(static_cast<uint32_t>(playerId));
+            if (!pPlayer)
+            {
+                out->error("No active player was found for PlayerId {}.", playerId);
+                return;
+            }
+
+            const auto connectionId = pPlayer->GetConnectionId();
+            const auto* pSession = m_pWorld->GetSessionService().Get(connectionId);
+            if (!pSession)
+            {
+                out->error("No session was found for PlayerId {} (connection {:x}).", playerId, connectionId);
+                return;
+            }
+
+            if (pSession->State != SessionState::kAwaitingIdentity)
+            {
+                out->error("PlayerId {} is not awaiting identity binding; refusing to overwrite the existing session identity.", playerId);
+                return;
+            }
+
+            if (!m_pWorld->GetSessionService().BindIdentity(connectionId, ownerProfileId))
+            {
+                out->error("Identity binding failed for PlayerId {} (connection {:x}).", playerId, connectionId);
+                return;
+            }
+
+            out->info(
+                "Development identity bound: PlayerId {} ('{}', connection {:x}) -> OwnerProfileId '{}'; session is awaiting character selection.",
+                pPlayer->GetId(), pPlayer->GetUsername().c_str(), connectionId, ownerProfileId.c_str());
         });
 
     m_commands.RegisterCommand<>(
@@ -604,12 +796,15 @@ void GameServer::OnConsume(const void* apData, const uint32_t aSize, const Conne
 void GameServer::OnConnection(const ConnectionId_t aHandle)
 {
     spdlog::info("Connection received {:x}", aHandle);
+    if (!m_pWorld->GetSessionService().Create(aHandle))
+        spdlog::warn("Session already exists for connection {:x}", aHandle);
     UpdateTitle();
 }
 
 void GameServer::OnDisconnection(const ConnectionId_t aConnectionId, EDisconnectReason aReason)
 {
     m_adminSessions.erase(aConnectionId);
+    m_pWorld->GetSessionService().Remove(aConnectionId);
 
     auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
 
@@ -627,11 +822,6 @@ void GameServer::OnDisconnection(const ConnectionId_t aConnectionId, EDisconnect
         }
 
         m_pWorld->GetDispatcher().trigger(PlayerLeaveEvent(pPlayer));
-
-        NotifyPlayerLeft notify{};
-        notify.PlayerId = pPlayer->GetId();
-        notify.Username = pPlayer->GetUsername();
-        SendToPlayers(notify);
 
         entt::entity playerCharacter = pPlayer->GetCharacter().value_or(static_cast<entt::entity>(0));
 
@@ -965,9 +1155,13 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
         {
             spdlog::info("New player {:x} has a been rejected because \"{}\".", aConnectionId, reason.c_str());
             Kick(aConnectionId);
+            m_pWorld->GetSessionService().Remove(aConnectionId);
             m_pWorld->GetPlayerManager().Remove(pPlayer);
             return;
         }
+
+        if (!m_pWorld->GetSessionService().MarkAuthenticated(aConnectionId))
+            spdlog::warn("Unable to transition session {:x} to identity binding state", aConnectionId);
 
         serverResponse.PlayerId = pPlayer->GetId();
 
@@ -985,26 +1179,6 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
         pPlayer->SetStringCacheId(startId);
 
         Send(aConnectionId, initStringCache);
-
-        for (auto* pOtherPlayer : m_pWorld->GetPlayerManager())
-        {
-            if (pOtherPlayer == pPlayer)
-                continue;
-
-            NotifyPlayerJoined notify{};
-            notify.PlayerId = pOtherPlayer->GetId();
-            notify.Username = pOtherPlayer->GetUsername();
-
-            auto& cellComponent = pOtherPlayer->GetCellComponent();
-            notify.WorldSpaceId = cellComponent.WorldSpaceId;
-            notify.CellId = cellComponent.Cell;
-
-            notify.Level = pOtherPlayer->GetLevel();
-
-            spdlog::debug("[GameServer] New notify player {:x} {}", notify.PlayerId, notify.Username.c_str());
-
-            Send(pPlayer->GetConnectionId(), notify);
-        }
 
         m_pWorld->GetDispatcher().trigger(PlayerJoinEvent(pPlayer, acRequest->WorldSpaceId, acRequest->CellId, acRequest->PlayerTime));
     }

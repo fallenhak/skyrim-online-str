@@ -2,6 +2,7 @@
 
 #include "Message.h"
 #include "Structs/CachedString.h"
+#include "Structs/GameId.h"
 
 struct NotifyScriptAnimation final : ServerMessage
 {
@@ -17,7 +18,7 @@ struct NotifyScriptAnimation final : ServerMessage
 
     bool operator==(const NotifyScriptAnimation& acRhs) const noexcept { return FormID == acRhs.FormID && Animation == acRhs.Animation && EventName == acRhs.EventName && GetOpcode() == acRhs.GetOpcode(); }
 
-    uint32_t FormID;
+    GameId FormID{};
     CachedString Animation;
     CachedString EventName;
 };

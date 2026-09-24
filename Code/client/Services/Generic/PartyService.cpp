@@ -6,6 +6,7 @@
 #include <Events/DisconnectedEvent.h>
 #include <Events/PartyJoinedEvent.h>
 #include <Events/PartyLeftEvent.h>
+#include <Events/PartyStateChangedEvent.h>
 
 #include <Messages/NotifyPlayerList.h>
 #include <Messages/NotifyPartyInfo.h>
@@ -21,7 +22,6 @@
 
 #include <OverlayApp.hpp>
 
-#include <Forms/TESGlobal.h>
 
 PartyService::PartyService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransportService) noexcept
     : m_world(aWorld)
@@ -102,6 +102,7 @@ void PartyService::OnUpdate(const UpdateEvent& acEvent) noexcept
 void PartyService::OnDisconnected(const DisconnectedEvent& acEvent) noexcept
 {
     DestroyParty();
+    m_world.GetDispatcher().trigger(PartyStateChangedEvent());
 }
 
 void PartyService::OnPlayerList(const NotifyPlayerList& acPlayerList) noexcept
@@ -118,13 +119,6 @@ void PartyService::OnPartyInfo(const NotifyPartyInfo& acPartyInfo) noexcept
         m_leaderPlayerId = acPartyInfo.LeaderPlayerId;
         m_partyMembers = acPartyInfo.PlayerIds;
 
-        // TODO: this can be done a bit prettier
-        if (m_isLeader)
-        {
-            TESGlobal* pWorldEncountersEnabled = Cast<TESGlobal>(TESForm::GetById(0xB8EC1));
-            pWorldEncountersEnabled->f = 1.f;
-        }
-
         auto pArguments = CefListValue::Create();
 
         auto pPlayerIds = CefListValue::Create();
@@ -135,6 +129,7 @@ void PartyService::OnPartyInfo(const NotifyPartyInfo& acPartyInfo) noexcept
         pArguments->SetInt(1, acPartyInfo.LeaderPlayerId);
 
         m_world.GetOverlayService().GetOverlayApp()->ExecuteAsync("partyInfo", pArguments);
+        m_world.GetDispatcher().trigger(PartyStateChangedEvent());
     }
 }
 
@@ -158,6 +153,7 @@ void PartyService::OnPartyJoined(const NotifyPartyJoined& acPartyJoined) noexcep
     m_leaderPlayerId = acPartyJoined.LeaderPlayerId;
     m_partyMembers = acPartyJoined.PlayerIds;
 
+    m_world.GetDispatcher().trigger(PartyStateChangedEvent());
     m_world.GetDispatcher().trigger(PartyJoinedEvent(m_isLeader));
 }
 
@@ -167,6 +163,7 @@ void PartyService::OnPartyLeft(const NotifyPartyLeft& acPartyLeft) noexcept
 
     DestroyParty();
 
+    m_world.GetDispatcher().trigger(PartyStateChangedEvent());
     m_world.GetDispatcher().trigger(PartyLeftEvent());
 }
 

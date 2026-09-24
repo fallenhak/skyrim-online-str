@@ -10,6 +10,7 @@ public:
     static constexpr FormEnum kType = FormEnum::NPC_;
 
     String m_editorId = "";
+    uint32_t m_raceId{};
     Chunks::ACBS m_baseStats{};
     Chunks::DOFT m_defaultOutfit{};
     Chunks::VMAD m_scriptData{};

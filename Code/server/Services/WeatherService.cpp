@@ -20,28 +20,17 @@ void WeatherService::OnWeatherChange(const PacketEvent<RequestWeatherChange>& ac
     NotifyWeatherChange notify{};
     notify.Id = acMessage.Packet.Id;
 
-    auto* pParty = m_world.GetPartyService().GetPlayerParty(acMessage.pPlayer);
-    if (!pParty)
+    if (!m_world.GetAuthorityService().TrySetWeatherState(acMessage.pPlayer, notify.Id))
         return;
 
-    pParty->CachedWeather = notify.Id;
-
-    if (!acMessage.pPlayer->GetCharacter())
-        return;
-
-    const auto origin = *acMessage.pPlayer->GetCharacter();
-
-    GameServer::Get()->SendToPartyInRange(notify, acMessage.pPlayer->GetParty(), origin, acMessage.pPlayer);
+    GameServer::Get()->SendToPlayers(notify, acMessage.pPlayer);
 }
 
 void WeatherService::OnRequestCurrentWeather(const PacketEvent<RequestCurrentWeather>& acMessage) const noexcept
 {
-    auto* pParty = m_world.GetPartyService().GetPlayerParty(acMessage.pPlayer);
-    if (!pParty)
-        return;
-
     NotifyWeatherChange notify{};
-    notify.Id = pParty->CachedWeather;
+    if (!m_world.GetAuthorityService().TryGetWeatherState(acMessage.pPlayer, notify.Id))
+        return;
 
     acMessage.pPlayer->Send(notify);
 }

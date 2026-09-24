@@ -2,6 +2,7 @@
 
 #include "Message.h"
 
+// Deprecated compatibility placeholder. No active progression service consumes this message.
 struct NotifySyncExperience final : ServerMessage
 {
     static constexpr ServerOpcode Opcode = kNotifySyncExperience;

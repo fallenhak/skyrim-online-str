@@ -6,7 +6,6 @@
 #include <Events/PlayerLeaveEvent.h>
 #include <Events/UpdateEvent.h>
 
-#include <Messages/NotifyPlayerList.h>
 #include <Messages/NotifyPartyInfo.h>
 #include <Messages/NotifyPartyInvite.h>
 #include <Messages/PartyInviteRequest.h>
@@ -17,7 +16,6 @@
 #include <Messages/PartyCreateRequest.h>
 #include <Messages/PartyChangeLeaderRequest.h>
 #include <Messages/PartyKickRequest.h>
-#include <Messages/NotifyPlayerJoined.h>
 
 PartyService::PartyService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
     : m_world(aWorld)
@@ -190,28 +188,12 @@ void PartyService::OnPartyKick(const PacketEvent<PartyKickRequest>& acPacket) no
         {
             spdlog::debug("[PartyService]: Kicking player {} from party", pKick->GetId());
             RemovePlayerFromParty(pKick);
-            BroadcastPlayerList(pKick);
         }
     }
 }
 
 void PartyService::OnPlayerJoin(const PlayerJoinEvent& acEvent) noexcept
 {
-    BroadcastPlayerList();
-
-    NotifyPlayerJoined notify{};
-    notify.PlayerId = acEvent.pPlayer->GetId();
-    notify.Username = acEvent.pPlayer->GetUsername();
-
-    notify.WorldSpaceId = acEvent.WorldSpaceId;
-    notify.CellId = acEvent.CellId;
-
-    notify.Level = acEvent.pPlayer->GetLevel();
-
-    spdlog::debug("[Party] New notify player {:x} {}", notify.PlayerId, notify.Username.c_str());
-
-    GameServer::Get()->SendToPlayers(notify, acEvent.pPlayer);
-
     if (m_parties.size() == 1 && GameServer::Get()->AllowsAutoPartyJoin())
     {
         for (Player* player : m_world.GetPlayerManager())
@@ -341,7 +323,6 @@ void PartyService::OnPartyLeave(const PacketEvent<PartyLeaveRequest>& acPacket) 
 void PartyService::OnPlayerLeave(const PlayerLeaveEvent& acEvent) noexcept
 {
     RemovePlayerFromParty(acEvent.pPlayer);
-    BroadcastPlayerList(acEvent.pPlayer);
 }
 
 void PartyService::RemovePlayerFromParty(Player* apPlayer) noexcept
@@ -378,30 +359,6 @@ void PartyService::RemovePlayerFromParty(Player* apPlayer) noexcept
         spdlog::debug("[PartyService]: Sending party left event to player.");
         NotifyPartyLeft leftMessage;
         apPlayer->Send(leftMessage);
-    }
-}
-
-void PartyService::BroadcastPlayerList(Player* apPlayer) const noexcept
-{
-    auto pIgnoredPlayer = apPlayer;
-    for (auto pSelf : m_world.GetPlayerManager())
-    {
-        if (pIgnoredPlayer == pSelf)
-            continue;
-
-        NotifyPlayerList playerList;
-        for (auto pPlayer : m_world.GetPlayerManager())
-        {
-            if (pSelf == pPlayer)
-                continue;
-
-            if (pIgnoredPlayer == pPlayer)
-                continue;
-
-            playerList.Players[pPlayer->GetId()] = pPlayer->GetUsername();
-        }
-
-        pSelf->Send(playerList);
     }
 }
 

@@ -1,4 +1,6 @@
 #include <GameServer.h>
+#include <World.h>
+#include <Services/TeleportAuthorityPolicy.h>
 
 #include <Services/OverlayService.h>
 
@@ -44,7 +46,13 @@ void sendPlayerMessage(const ChatMessageType acType, const String acContent, Pla
 
     case kSystemMessage: spdlog::error("PlayerId {} attempted to send a System Message.", aSendingPlayer->GetId()); break;
 
-    case kPlayerDialogue: GameServer::Get()->SendToParty(notifyMessage, aSendingPlayer->GetParty()); break;
+    case kPlayerDialogue:
+        if (character)
+        {
+            if (!GameServer::Get()->SendToPlayersInRange(notifyMessage, *character))
+                spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
+        }
+        break;
 
     case kPartyChat: GameServer::Get()->SendToParty(notifyMessage, aSendingPlayer->GetParty()); break;
 
@@ -79,20 +87,32 @@ void OverlayService::OnTeleport(const PacketEvent<TeleportRequest>& acMessage) c
     if (!pTargetPlayer)
         return;
 
+    const auto& requesterParty = acMessage.pPlayer->GetParty();
+    const auto& targetParty = pTargetPlayer->GetParty();
+    const auto* pRequesterParty = requesterParty.JoinedPartyId ? m_world.GetPartyService().GetById(*requesterParty.JoinedPartyId) : nullptr;
+    const auto* pTargetParty = targetParty.JoinedPartyId ? m_world.GetPartyService().GetById(*targetParty.JoinedPartyId) : nullptr;
+    if (!TeleportAuthorityPolicy::CanRequestPartyTeleport(
+            pRequesterParty != nullptr, requesterParty.JoinedPartyId.value_or(0), pTargetParty != nullptr, targetParty.JoinedPartyId.value_or(0)))
+        return;
+
     NotifyTeleport response{};
 
     auto character = pTargetPlayer->GetCharacter();
-    if (character)
-    {
-        const auto* pMovementComponent = m_world.try_get<MovementComponent>(*character);
-        if (pMovementComponent)
-        {
-            const auto& cellComponent = pTargetPlayer->GetCellComponent();
-            response.CellId = cellComponent.Cell;
-            response.Position = pMovementComponent->Position;
-            response.WorldSpaceId = cellComponent.WorldSpaceId;
-        }
-    }
+    if (!character || !m_world.valid(*character))
+        return;
+
+    const auto* pMovementComponent = m_world.try_get<MovementComponent>(*character);
+    if (!pMovementComponent)
+        return;
+
+    const auto& cellComponent = pTargetPlayer->GetCellComponent();
+    if (!TeleportAuthorityPolicy::HasValidDestination(
+            true, true, cellComponent.WorldSpaceId, cellComponent.Cell, pMovementComponent->Position))
+        return;
+
+    response.CellId = cellComponent.Cell;
+    response.Position = pMovementComponent->Position;
+    response.WorldSpaceId = cellComponent.WorldSpaceId;
 
     acMessage.pPlayer->Send(response);
 }
@@ -103,5 +123,10 @@ void OverlayService::OnPlayerHealthUpdate(const PacketEvent<RequestPlayerHealthU
     notify.PlayerId = acMessage.pPlayer->GetId();
     notify.Percentage = acMessage.Packet.Percentage;
 
-    GameServer::Get()->SendToParty(notify, acMessage.pPlayer->GetParty(), acMessage.GetSender());
+    const auto character = acMessage.pPlayer->GetCharacter();
+    if (!character)
+        return;
+
+    if (!GameServer::Get()->SendToPlayersInRange(notify, *character, acMessage.GetSender()))
+        spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }

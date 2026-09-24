@@ -1,12 +1,16 @@
 #pragma once
 #include "Structs/Inventory.h"
 #include "Structs/ActorData.h"
+#include <Structs/CharacterAssignmentRejectReason.h>
+#include <Services/PopulationDisableTracker.h>
 
 struct ActorAddedEvent;
 struct ActorRemovedEvent;
 struct UpdateEvent;
 struct ConnectedEvent;
 struct DisconnectedEvent;
+struct CharacterPlayerAssignmentStartedEvent;
+struct CharacterWorldSyncStartedEvent;
 struct EquipmentChangeEvent;
 struct FormIdComponent;
 struct ActionEvent;
@@ -31,14 +35,13 @@ struct InitPackageEvent;
 struct NotifyNewPackage;
 struct NotifyRespawn;
 struct BeastFormChangeEvent;
-struct AddExperienceEvent;
-struct NotifySyncExperience;
 struct DialogueEvent;
 struct NotifyDialogue;
 struct SubtitleEvent;
 struct NotifySubtitle;
 struct NotifyActorTeleport;
-struct PartyJoinedEvent;
+struct AuthorityChangedEvent;
+struct NotifyCharacterAssignmentRejected;
 
 struct Actor;
 struct World;
@@ -63,7 +66,10 @@ struct CharacterService
     void OnUpdate(const UpdateEvent& acUpdateEvent) noexcept;
     void OnConnected(const ConnectedEvent& acConnectedEvent) const noexcept;
     void OnDisconnected(const DisconnectedEvent& acDisconnectedEvent) const noexcept;
+    void BeginLocalPlayerAssignment(const CharacterPlayerAssignmentStartedEvent& acEvent) const noexcept;
+    void BeginWorldSync(const CharacterWorldSyncStartedEvent& acEvent) const noexcept;
     void OnAssignCharacter(const AssignCharacterResponse& acMessage) noexcept;
+    void OnCharacterAssignmentRejected(const NotifyCharacterAssignmentRejected& acMessage) noexcept;
     void OnCharacterSpawn(const CharacterSpawnRequest& acMessage) const noexcept;
     void OnReferencesMoveRequest(const ServerReferencesMoveRequest& acMessage) const noexcept;
     void OnActionEvent(const ActionEvent& acActionEvent) const noexcept;
@@ -76,18 +82,19 @@ struct CharacterService
     void OnNotifyNewPackage(const NotifyNewPackage& acMessage) const noexcept;
     void OnNotifyRespawn(const NotifyRespawn& acMessage) const noexcept;
     void OnBeastFormChange(const BeastFormChangeEvent& acEvent) const noexcept;
-    void OnAddExperienceEvent(const AddExperienceEvent& acEvent) noexcept;
-    void OnNotifySyncExperience(const NotifySyncExperience& acMessage) noexcept;
     void OnDialogueEvent(const DialogueEvent& acEvent) noexcept;
     void OnNotifyDialogue(const NotifyDialogue& acMessage) noexcept;
     void OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept;
     void OnNotifySubtitle(const NotifySubtitle& acMessage) noexcept;
     void OnNotifyActorTeleport(const NotifyActorTeleport& acMessage) noexcept;
-    void OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept;
+    void OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept;
 
     void ProcessNewEntity(entt::entity aEntity) const noexcept;
 
 private:
+    void ApplyPhysicalPopulationSuppression(entt::entity aEntity, CharacterAssignmentRejectReason aReason, bool aAssignmentWasCancelled) const noexcept;
+    void EnsureOwnedPopulationDisable(uint32_t aFormId) const noexcept;
+    void RestoreOwnedPopulationDisable(uint32_t aFormId) const noexcept;
     void MoveActor(const Actor* apActor, const GameId& acWorldSpaceId, const GameId& acCellId, const Vector3_NetQuantize& acPosition) const noexcept;
 
     void RequestServerAssignment(entt::entity aEntity) const noexcept;
@@ -105,14 +112,11 @@ private:
     void RunRemoteUpdates() noexcept;
     void RunFactionsUpdates() const noexcept;
     void RunSpawnUpdates() const noexcept;
-    void RunExperienceUpdates() noexcept;
     void ApplyCachedWeaponDraws(const UpdateEvent& acUpdateEvent) noexcept;
 
     World& m_world;
     entt::dispatcher& m_dispatcher;
     TransportService& m_transport;
-
-    float m_cachedExperience = 0.f;
 
     // TODO: revamp this, read the local anim var like vampire lord?
     struct WeaponDrawData
@@ -133,6 +137,7 @@ private:
     // Actor form ID -> pick form ID. The active stage lives in ActorExtension.
     // Written from const message handlers, drained by ProcessLeveledConforms.
     mutable Map<uint32_t, uint32_t> m_pendingLeveledConforms{};
+    mutable PopulationDisableTracker m_populationDisableTracker{};
 
     entt::scoped_connection m_referenceAddedConnection;
     entt::scoped_connection m_referenceRemovedConnection;
@@ -143,7 +148,10 @@ private:
     entt::scoped_connection m_removeCharacterConnection;
     entt::scoped_connection m_connectedConnection;
     entt::scoped_connection m_disconnectedConnection;
+    entt::scoped_connection m_playerAssignmentStartedConnection;
+    entt::scoped_connection m_worldSyncStartedConnection;
     entt::scoped_connection m_assignCharacterConnection;
+    entt::scoped_connection m_assignmentRejectedConnection;
     entt::scoped_connection m_characterSpawnConnection;
     entt::scoped_connection m_referenceMovementSnapshotConnection;
     entt::scoped_connection m_mountConnection;
@@ -152,12 +160,11 @@ private:
     entt::scoped_connection m_newPackageConnection;
     entt::scoped_connection m_notifyRespawnConnection;
     entt::scoped_connection m_beastFormChangeConnection;
-    entt::scoped_connection m_addExperienceEventConnection;
-    entt::scoped_connection m_syncExperienceConnection;
     entt::scoped_connection m_dialogueEventConnection;
     entt::scoped_connection m_dialogueSyncConnection;
     entt::scoped_connection m_subtitleEventConnection;
     entt::scoped_connection m_subtitleSyncConnection;
     entt::scoped_connection m_actorTeleportConnection;
-    entt::scoped_connection m_partyJoinedConnection;
+    entt::scoped_connection m_authorityChangedConnection;
+    mutable bool m_worldSyncStarted{};
 };

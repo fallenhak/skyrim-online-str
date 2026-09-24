@@ -1,8 +1,6 @@
 #include "Forms/TESObjectCELL.h"
 #include "Forms/TESWorldSpace.h"
 #include "Services/PapyrusService.h"
-#include <Services/PartyService.h>
-
 #include <Services/CharacterService.h>
 #include <Services/QuestService.h>
 #include <Services/TransportService.h>
@@ -22,24 +20,27 @@
 #include <Systems/CacheSystem.h>
 #include <Systems/FaceGenSystem.h>
 #include <Systems/LeveledNpcSystem.h>
+#include <Services/PopulationSuppressionPolicy.h>
 
 #include <Events/ActorAddedEvent.h>
 #include <Events/ActorRemovedEvent.h>
 #include <Events/UpdateEvent.h>
 #include <Events/ConnectedEvent.h>
 #include <Events/DisconnectedEvent.h>
+#include <Events/CharacterPlayerAssignmentStartedEvent.h>
+#include <Events/CharacterWorldSyncStartedEvent.h>
 #include <Events/MountEvent.h>
 #include <Events/InitPackageEvent.h>
 #include <Events/BeastFormChangeEvent.h>
-#include <Events/AddExperienceEvent.h>
 #include <Events/DialogueEvent.h>
 #include <Events/SubtitleEvent.h>
 #include <Events/MoveActorEvent.h>
-#include <Events/PartyJoinedEvent.h>
+#include <Events/AuthorityChangedEvent.h>
 
 #include <Structs/ActionEvent.h>
 #include <Messages/AssignCharacterRequest.h>
 #include <Messages/AssignCharacterResponse.h>
+#include <Messages/NotifyCharacterAssignmentRejected.h>
 #include <Messages/ServerReferencesMoveRequest.h>
 #include <Messages/ClientReferencesMoveRequest.h>
 #include <Messages/CharacterSpawnRequest.h>
@@ -55,13 +56,13 @@
 #include <Messages/NotifyNewPackage.h>
 #include <Messages/RequestRespawn.h>
 #include <Messages/NotifyRespawn.h>
-#include <Messages/SyncExperienceRequest.h>
-#include <Messages/NotifySyncExperience.h>
 #include <Messages/DialogueRequest.h>
 #include <Messages/NotifyDialogue.h>
 #include <Messages/SubtitleRequest.h>
 #include <Messages/NotifySubtitle.h>
 #include <Messages/NotifyActorTeleport.h>
+#include <Structs/MovementAuthorityPolicy.h>
+#include <Structs/FactionAuthorityPolicy.h>
 
 #include <World.h>
 #include <Games/TES.h>
@@ -79,8 +80,11 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
 
     m_connectedConnection = m_dispatcher.sink<ConnectedEvent>().connect<&CharacterService::OnConnected>(this);
     m_disconnectedConnection = m_dispatcher.sink<DisconnectedEvent>().connect<&CharacterService::OnDisconnected>(this);
+    m_playerAssignmentStartedConnection = m_dispatcher.sink<CharacterPlayerAssignmentStartedEvent>().connect<&CharacterService::BeginLocalPlayerAssignment>(this);
+    m_worldSyncStartedConnection = m_dispatcher.sink<CharacterWorldSyncStartedEvent>().connect<&CharacterService::BeginWorldSync>(this);
 
     m_assignCharacterConnection = m_dispatcher.sink<AssignCharacterResponse>().connect<&CharacterService::OnAssignCharacter>(this);
+    m_assignmentRejectedConnection = m_dispatcher.sink<NotifyCharacterAssignmentRejected>().connect<&CharacterService::OnCharacterAssignmentRejected>(this);
     m_characterSpawnConnection = m_dispatcher.sink<CharacterSpawnRequest>().connect<&CharacterService::OnCharacterSpawn>(this);
     m_referenceMovementSnapshotConnection = m_dispatcher.sink<ServerReferencesMoveRequest>().connect<&CharacterService::OnReferencesMoveRequest>(this);
     m_factionsConnection = m_dispatcher.sink<NotifyFactionsChanges>().connect<&CharacterService::OnFactionsChanges>(this);
@@ -96,9 +100,6 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
     m_notifyRespawnConnection = m_dispatcher.sink<NotifyRespawn>().connect<&CharacterService::OnNotifyRespawn>(this);
     m_beastFormChangeConnection = m_dispatcher.sink<BeastFormChangeEvent>().connect<&CharacterService::OnBeastFormChange>(this);
 
-    m_addExperienceEventConnection = m_dispatcher.sink<AddExperienceEvent>().connect<&CharacterService::OnAddExperienceEvent>(this);
-    m_syncExperienceConnection = m_dispatcher.sink<NotifySyncExperience>().connect<&CharacterService::OnNotifySyncExperience>(this);
-
     m_dialogueEventConnection = m_dispatcher.sink<DialogueEvent>().connect<&CharacterService::OnDialogueEvent>(this);
     m_dialogueSyncConnection = m_dispatcher.sink<NotifyDialogue>().connect<&CharacterService::OnNotifyDialogue>(this);
 
@@ -107,7 +108,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
 
     m_actorTeleportConnection = m_dispatcher.sink<NotifyActorTeleport>().connect<&CharacterService::OnNotifyActorTeleport>(this);
 
-    m_partyJoinedConnection = aDispatcher.sink<PartyJoinedEvent>().connect<&CharacterService::OnPartyJoinedEvent>(this);
+    m_authorityChangedConnection = aDispatcher.sink<AuthorityChangedEvent>().connect<&CharacterService::OnAuthorityChangedEvent>(this);
 }
 
 void CharacterService::DeleteRemoteEntityComponents(entt::entity aEntity) const noexcept
@@ -242,6 +243,9 @@ void CharacterService::OnActorAdded(const ActorAddedEvent& acEvent) noexcept
     m_world.emplace_or_replace<FormIdComponent>(entity, acEvent.FormId);
     m_world.emplace_or_replace<EarlyAnimationBufferComponent>(entity);
 
+    if (m_populationDisableTracker.OwnsDisable(acEvent.FormId))
+        m_world.emplace_or_replace<PopulationSuppressedComponent>(entity, CharacterAssignmentRejectReason::kPopulationHumanoidDenied);
+
     ProcessNewEntity(entity);
 }
 
@@ -271,6 +275,10 @@ void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
     if (m_world.all_of<FormIdComponent>(cId))
         m_world.remove<FormIdComponent>(cId);
 
+    // DisableImpl can make DiscoveryService report this reference as removed.
+    // Keep the independent session ownership registry so disconnect can restore it.
+    m_world.remove<PopulationSuppressedComponent>(cId);
+
     if (m_world.orphan(cId))
         m_world.destroy(cId);
 
@@ -279,40 +287,26 @@ void CharacterService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcept
 
 void CharacterService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept
 {
+    if (!m_world.GetCharacterSessionService().IsGameplayActive())
+        return;
+
     RunSpawnUpdates();
     RunLocalUpdates();
     RunFactionsUpdates();
     RunRemoteUpdates();
-    RunExperienceUpdates();
     ApplyCachedWeaponDraws(acUpdateEvent);
     ProcessLeveledConforms();
 }
 
 void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const noexcept
 {
-    // Go through all the forms that were previously detected
-    auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
-    Vector<entt::entity> entities(view.begin(), view.end());
-
-    for (auto entity : entities)
-    {
-        auto& formIdComponent = m_world.get<FormIdComponent>(entity);
-        // Delete all temporary actors on connect
-        if (formIdComponent.Id > 0xFF000000)
-        {
-            Actor* pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
-            if (pActor)
-                pActor->Delete();
-
-            continue;
-        }
-
-        ProcessNewEntity(entity);
-    }
+    m_worldSyncStarted = false;
 }
 
 void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEvent) const noexcept
 {
+    m_worldSyncStarted = false;
+    const auto disabledForms = m_populationDisableTracker.DrainOwnedDisables();
     auto remoteView = m_world.view<FormIdComponent, RemoteComponent>();
     for (auto entity : remoteView)
     {
@@ -328,7 +322,7 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
             pActor->GetExtension()->SetRemote(false);
     }
 
-    m_world.clear<WaitingForAssignmentComponent, LocalComponent, RemoteComponent>();
+    m_world.clear<WaitingForAssignmentComponent, LocalComponent, RemoteComponent, PopulationSuppressedComponent>();
 
     for (const auto& [formId, pickFormId] : m_pendingLeveledConforms)
     {
@@ -344,6 +338,64 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
     }
 
     m_pendingLeveledConforms.clear();
+
+    for (const auto formId : disabledForms)
+        RestoreOwnedPopulationDisable(formId);
+}
+
+void CharacterService::BeginLocalPlayerAssignment(const CharacterPlayerAssignmentStartedEvent&) const noexcept
+{
+    if (!m_transport.IsOnline() || m_world.GetCharacterSessionService().GetState() != ClientCharacterSessionState::kAwaitingPlayerAssignment)
+        return;
+
+    auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
+    auto it = std::find_if(view.begin(), view.end(), [view](const entt::entity aEntity) { return view.get<FormIdComponent>(aEntity).Id == 0x14; });
+    entt::entity entity = entt::null;
+    if (it != view.end())
+        entity = *it;
+    else
+    {
+        entity = m_world.create();
+        m_world.emplace<FormIdComponent>(entity, static_cast<uint32_t>(0x14));
+        m_world.emplace<EarlyAnimationBufferComponent>(entity);
+    }
+
+    auto* pPlayer = Cast<Actor>(TESForm::GetById(0x14));
+    if (!pPlayer)
+    {
+        spdlog::error("Cannot begin persistent character assignment: local player form 0x14 is unavailable.");
+        return;
+    }
+
+    m_world.remove<WaitingForAssignmentComponent, LocalComponent, RemoteComponent>(entity);
+    CacheSystem::Setup(World::Get(), entity, pPlayer);
+    RequestServerAssignment(entity);
+}
+
+void CharacterService::BeginWorldSync(const CharacterWorldSyncStartedEvent&) const noexcept
+{
+    if (m_worldSyncStarted || !m_world.GetCharacterSessionService().IsGameplayActive())
+        return;
+
+    m_worldSyncStarted = true;
+
+    // The server has now confirmed the persistent player entity. Only at this point
+    // do we process the normal loaded-actor set and begin ordinary STR synchronization.
+    auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
+    Vector<entt::entity> entities(view.begin(), view.end());
+
+    for (const auto entity : entities)
+    {
+        auto& formIdComponent = m_world.get<FormIdComponent>(entity);
+        if (formIdComponent.Id > 0xFF000000)
+        {
+            if (Actor* pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id)))
+                pActor->Delete();
+            continue;
+        }
+
+        ProcessNewEntity(entity);
+    }
 }
 
 void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessage) noexcept
@@ -470,6 +522,12 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
 
 void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) const noexcept
 {
+    if (!acMessage.IsValid || !FactionAuthorityPolicy::HasValidPayload(acMessage.FactionsContent))
+    {
+        spdlog::warn("Ignored spawn for actor {:X} because its faction payload is malformed", acMessage.ServerId);
+        return;
+    }
+
     if (acMessage.OwnershipEpoch == 0)
     {
         spdlog::warn("Ignored spawn for actor {:X} because the ownership epoch is invalid", acMessage.ServerId);
@@ -628,6 +686,15 @@ void CharacterService::OnReferencesMoveRequest(const ServerReferencesMoveRequest
         if (itor == std::end(view))
             continue;
 
+        const auto& remoteComponent = view.get<RemoteComponent>(*itor);
+        if (remoteComponent.OwnershipEpoch != update.OwnershipEpoch || !MovementAuthorityPolicy::HasValidPayload(update))
+        {
+            spdlog::debug(
+                "Discarded movement update for actor {:X} because its ownership epoch or payload is invalid (received epoch {}, current epoch {})",
+                serverId, update.OwnershipEpoch, remoteComponent.OwnershipEpoch);
+            continue;
+        }
+
         auto& interpolationComponent = view.get<InterpolationComponent>(*itor);
         auto& animationComponent = view.get<RemoteAnimationComponent>(*itor);
         const auto& movement = update.UpdatedMovement;
@@ -677,9 +744,15 @@ void CharacterService::OnFactionsChanges(const NotifyFactionsChanges& acEvent) c
 {
     auto view = m_world.view<RemoteComponent, FormIdComponent, CacheComponent>();
 
-    for (const auto& [id, factions] : acEvent.Changes)
+    for (const auto& [id, update] : acEvent.Changes)
     {
-        const auto itor = std::find_if(std::begin(view), std::end(view), [id = id, view](entt::entity entity) { return view.get<RemoteComponent>(entity).Id == id; });
+        if (update.OwnershipEpoch == 0 || !FactionAuthorityPolicy::HasValidPayload(update.FactionsContent))
+            continue;
+
+        const auto itor = std::find_if(std::begin(view), std::end(view), [id, epoch = update.OwnershipEpoch, view](entt::entity entity) {
+            const auto& remote = view.get<RemoteComponent>(entity);
+            return remote.Id == id && remote.OwnershipEpoch == epoch;
+        });
 
         if (itor != std::end(view))
         {
@@ -687,10 +760,10 @@ void CharacterService::OnFactionsChanges(const NotifyFactionsChanges& acEvent) c
 
             auto* const pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
             if (!pActor)
-                return;
+                continue;
 
             auto& cacheComponent = view.get<CacheComponent>(*itor);
-            cacheComponent.FactionsContent = factions;
+            cacheComponent.FactionsContent = update.FactionsContent;
 
             pActor->SetFactions(cacheComponent.FactionsContent);
         }
@@ -836,7 +909,11 @@ void CharacterService::OnRemoveCharacter(const NotifyRemoveCharacter& acMessage)
 void CharacterService::OnNotifyRespawn(const NotifyRespawn& acMessage) const noexcept
 {
     auto view = m_world.view<FormIdComponent, RemoteComponent>();
-    const auto entityIt = std::find_if(view.begin(), view.end(), [view, id = acMessage.ActorId](auto aEntity) { return view.get<RemoteComponent>(aEntity).Id == id; });
+    const auto entityIt = std::find_if(view.begin(), view.end(), [view, &acMessage](auto aEntity)
+    {
+        const auto& remoteComponent = view.get<RemoteComponent>(aEntity);
+        return remoteComponent.Id == acMessage.ActorId && remoteComponent.OwnershipEpoch == acMessage.OwnershipEpoch;
+    });
 
     if (entityIt == view.end())
     {
@@ -859,27 +936,32 @@ void CharacterService::OnNotifyRespawn(const NotifyRespawn& acMessage) const noe
 
     RequestRespawn request;
     request.ActorId = acMessage.ActorId;
+    request.OwnershipEpoch = acMessage.OwnershipEpoch;
 
     m_transport.Send(request);
 }
 
 void CharacterService::OnBeastFormChange(const BeastFormChangeEvent& acEvent) const noexcept
 {
-    auto view = m_world.view<FormIdComponent>();
+    auto view = m_world.view<FormIdComponent, LocalComponent>();
 
     const auto it = std::find_if(view.begin(), view.end(), [view](auto entity) { return view.get<FormIdComponent>(entity).Id == 0x14; });
 
-    std::optional<uint32_t> serverIdRes = Utils::GetServerId(*it);
-    if (!serverIdRes.has_value())
+    if (it == view.end())
+        return;
+
+    const auto& localComponent = view.get<LocalComponent>(*it);
+    if (localComponent.OwnershipEpoch == 0)
     {
-        spdlog::error("{}: failed to find server id", __FUNCTION__);
+        spdlog::debug("{}: local player has no ownership epoch", __FUNCTION__);
         return;
     }
 
-    uint32_t serverId = serverIdRes.value();
+    const uint32_t serverId = localComponent.Id;
 
     RequestRespawn request;
     request.ActorId = serverId;
+    request.OwnershipEpoch = localComponent.OwnershipEpoch;
 
     Actor* pActor = Utils::GetByServerId<Actor>(serverId);
     if (!pActor)
@@ -990,7 +1072,7 @@ void CharacterService::OnInitPackageEvent(const InitPackageEvent& acEvent) const
     if (!m_transport.IsConnected())
         return;
 
-    auto view = m_world.view<FormIdComponent>();
+    auto view = m_world.view<FormIdComponent, LocalComponent>();
 
     const auto actorIt = std::find_if(std::begin(view), std::end(view), [id = acEvent.ActorId, view](auto entity) { return view.get<FormIdComponent>(entity).Id == id; });
 
@@ -999,15 +1081,16 @@ void CharacterService::OnInitPackageEvent(const InitPackageEvent& acEvent) const
 
     const entt::entity cActorEntity = *actorIt;
 
-    std::optional<uint32_t> actorServerIdRes = Utils::GetServerId(cActorEntity);
-    if (!actorServerIdRes.has_value())
+    const auto& localComponent = view.get<LocalComponent>(cActorEntity);
+    if (localComponent.OwnershipEpoch == 0)
     {
-        spdlog::error("{}: failed to find server id", __FUNCTION__);
+        spdlog::debug("{}: local actor has no ownership epoch", __FUNCTION__);
         return;
     }
 
     NewPackageRequest request;
-    request.ActorId = actorServerIdRes.value();
+    request.ActorId = localComponent.Id;
+    request.OwnershipEpoch = localComponent.OwnershipEpoch;
     if (!m_world.GetModSystem().GetServerModId(acEvent.PackageId, request.PackageId.ModId, request.PackageId.BaseId))
         return;
 
@@ -1017,7 +1100,11 @@ void CharacterService::OnInitPackageEvent(const InitPackageEvent& acEvent) const
 void CharacterService::OnNotifyNewPackage(const NotifyNewPackage& acMessage) const noexcept
 {
     auto remoteView = m_world.view<RemoteComponent, FormIdComponent>();
-    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, Id = acMessage.ActorId](auto entity) { return remoteView.get<RemoteComponent>(entity).Id == Id; });
+    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [remoteView, &acMessage](auto entity)
+    {
+        const auto& remoteComponent = remoteView.get<RemoteComponent>(entity);
+        return remoteComponent.Id == acMessage.ActorId && remoteComponent.OwnershipEpoch == acMessage.OwnershipEpoch;
+    });
 
     if (remoteIt == std::end(remoteView))
     {
@@ -1041,21 +1128,6 @@ void CharacterService::OnNotifyNewPackage(const NotifyNewPackage& acMessage) con
     TESPackage* pPackage = Cast<TESPackage>(pPackageForm);
 
     pActor->SetPackage(pPackage);
-}
-
-void CharacterService::OnAddExperienceEvent(const AddExperienceEvent& acEvent) noexcept
-{
-    m_cachedExperience += acEvent.Experience;
-}
-
-void CharacterService::OnNotifySyncExperience(const NotifySyncExperience& acMessage) noexcept
-{
-    PlayerCharacter* pPlayer = PlayerCharacter::Get();
-
-    if (PlayerCharacter::LastUsedCombatSkill == -1)
-        return;
-
-    pPlayer->AddSkillExperience(PlayerCharacter::LastUsedCombatSkill, acMessage.Experience);
 }
 
 void CharacterService::OnDialogueEvent(const DialogueEvent& acEvent) noexcept
@@ -1150,10 +1222,171 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
     spdlog::info("Successfully teleported actor, form id: {:X}, world space: {:X}, cell: {:X}, position: ({}, {}, {})", pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
 }
 
-void CharacterService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept
+void CharacterService::ApplyPhysicalPopulationSuppression(
+    const entt::entity aEntity, const CharacterAssignmentRejectReason aReason, const bool aAssignmentWasCancelled) const noexcept
 {
-    // Takes ownership of all actors
-    if (acEvent.IsLeader)
+    if (!PopulationSuppressionPolicy::ShouldPhysicallySuppress(aReason, aAssignmentWasCancelled))
+        return;
+
+    const auto* const pFormIdComponent = m_world.try_get<FormIdComponent>(aEntity);
+    if (!pFormIdComponent)
+    {
+        spdlog::warn("Cannot physically suppress population actor without a form id component.");
+        return;
+    }
+
+    const uint32_t cFormId = pFormIdComponent->Id;
+    Actor* const pActor = Cast<Actor>(TESForm::GetById(cFormId));
+    if (!pActor)
+    {
+        spdlog::debug("Cannot physically suppress population actor {:X}: local actor is unavailable.", cFormId);
+        return;
+    }
+
+    const auto* const pExtension = pActor->GetExtension();
+    const bool isPlayer = cFormId == PopulationSuppressionPolicy::kPlayerFormId || (pExtension && pExtension->IsPlayer());
+    if (isPlayer)
+    {
+        spdlog::error("Refused to physically suppress player population actor {:X}.", cFormId);
+        return;
+    }
+
+    if (m_populationDisableTracker.OwnsDisable(cFormId))
+    {
+        EnsureOwnedPopulationDisable(cFormId);
+        return;
+    }
+
+    const bool isTemporary = pActor->IsTemporary();
+    const bool isDeleted = pActor->IsDeleted();
+    const bool wasAlreadyDisabled = pActor->IsDisabled();
+    if (!PopulationSuppressionPolicy::ShouldOwnDisable(aReason, cFormId, isPlayer, isTemporary, isDeleted, wasAlreadyDisabled))
+    {
+        spdlog::debug(
+            "Did not claim population disable for actor {:X}: temporary {}, deleted {}, already disabled {}",
+            cFormId,
+            isTemporary,
+            isDeleted,
+            wasAlreadyDisabled);
+        return;
+    }
+
+    // Record ownership before the asynchronous engine call can cause discovery
+    // to report this reference as removed.
+    if (!m_populationDisableTracker.OwnDisable(cFormId))
+        return;
+
+    pActor->DisableImpl();
+    spdlog::debug("Physically suppressed humanoid population actor {:X} for this multiplayer session.", cFormId);
+}
+
+void CharacterService::EnsureOwnedPopulationDisable(const uint32_t aFormId) const noexcept
+{
+    if (aFormId == PopulationSuppressionPolicy::kPlayerFormId)
+    {
+        spdlog::error("Refused to re-suppress player population actor {:X}.", aFormId);
+        return;
+    }
+
+    Actor* const pActor = Cast<Actor>(TESForm::GetById(aFormId));
+    if (!pActor)
+    {
+        spdlog::debug("Tracked population actor {:X} is unavailable for re-suppression.", aFormId);
+        return;
+    }
+
+    const auto* const pExtension = pActor->GetExtension();
+    if (pActor->IsTemporary() || pActor->IsDeleted() || (pExtension && pExtension->IsPlayer()))
+    {
+        spdlog::debug("Tracked population actor {:X} is no longer eligible for re-suppression.", aFormId);
+        return;
+    }
+
+    if (pActor->IsDisabled())
+        return;
+
+    pActor->DisableImpl();
+    spdlog::debug("Re-suppressed tracked humanoid population actor {:X}.", aFormId);
+}
+
+void CharacterService::RestoreOwnedPopulationDisable(const uint32_t aFormId) const noexcept
+{
+    if (aFormId == PopulationSuppressionPolicy::kPlayerFormId)
+    {
+        spdlog::error("Refused to restore player population actor {:X}.", aFormId);
+        return;
+    }
+
+    Actor* const pActor = Cast<Actor>(TESForm::GetById(aFormId));
+    if (!pActor)
+    {
+        spdlog::debug("Could not resolve tracked population actor {:X} during disconnect restoration.", aFormId);
+        return;
+    }
+
+    const auto* const pExtension = pActor->GetExtension();
+    if (pActor->IsTemporary() || (pExtension && pExtension->IsPlayer()))
+    {
+        spdlog::debug("Skipped restoration for ineligible tracked population actor {:X}.", aFormId);
+        return;
+    }
+
+    if (pActor->IsDeleted())
+    {
+        spdlog::debug("Skipped restoration for deleted tracked population actor {:X}.", aFormId);
+        return;
+    }
+
+    // Do not require IsDisabled(): DisableImpl is asynchronous and disconnect
+    // may race the engine's disabled-flag update.
+    pActor->EnableImpl();
+    spdlog::debug("Restored population actor {:X} after multiplayer disconnect.", aFormId);
+}
+
+void CharacterService::OnCharacterAssignmentRejected(const NotifyCharacterAssignmentRejected& acMessage) noexcept
+{
+    auto view = m_world.view<WaitingForAssignmentComponent>();
+    const auto itor = std::find_if(
+        std::begin(view), std::end(view), [view, cookie = acMessage.Cookie](auto aEntity) { return view.get<WaitingForAssignmentComponent>(aEntity).Cookie == cookie; });
+
+    if (itor == std::end(view))
+    {
+        spdlog::debug("Received character assignment rejection for unknown cookie {:X}", acMessage.Cookie);
+        return;
+    }
+
+    const auto cEntity = *itor;
+    const bool isCancelled = view.get<WaitingForAssignmentComponent>(cEntity).Cancelled;
+
+    m_world.remove<WaitingForAssignmentComponent>(cEntity);
+#if (!IS_MASTER)
+    m_world.remove<ReplayedActionsDebugComponent>(cEntity);
+#endif
+
+    if (PopulationSuppressionPolicy::GetRejectionAction(isCancelled) == PopulationAssignmentRejectionAction::kDestroyCancelledEntity)
+    {
+        if (m_world.valid(cEntity))
+            m_world.destroy(cEntity);
+
+        spdlog::debug("Discarded cancelled character assignment entity for cookie {:X}", acMessage.Cookie);
+        return;
+    }
+
+    // The actor remains alive in Skyrim, but it is no longer eligible for STR
+    // assignment. Assignment-only cache and early animation data must not keep
+    // accumulating for a suppressed actor that will never become managed.
+    m_world.remove<CacheComponent>(cEntity);
+    m_world.remove<EarlyAnimationBufferComponent>(cEntity);
+    m_world.emplace_or_replace<PopulationSuppressedComponent>(cEntity, acMessage.Reason);
+    ApplyPhysicalPopulationSuppression(cEntity, acMessage.Reason, isCancelled);
+
+    spdlog::debug("Suppressed local population actor after assignment rejection for cookie {:X}, reason {}", acMessage.Cookie, static_cast<unsigned>(acMessage.Reason));
+}
+
+void CharacterService::OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept
+{
+    // Reprocess actors when this client becomes eligible to drive actor authority.
+    if (acEvent.HasLocalActorAuthority)
     {
         auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
         Vector<entt::entity> entities(view.begin(), view.end());
@@ -1194,10 +1427,20 @@ void CharacterService::MoveActor(const Actor* apActor, const GameId& acWorldSpac
 
 void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
 {
-    if (!m_transport.IsOnline())
+    const auto& formIdComponent = m_world.get<FormIdComponent>(aEntity);
+    if (m_populationDisableTracker.OwnsDisable(formIdComponent.Id))
+    {
+        m_world.remove<CacheComponent, EarlyAnimationBufferComponent>(aEntity);
+        m_world.emplace_or_replace<PopulationSuppressedComponent>(aEntity, CharacterAssignmentRejectReason::kPopulationHumanoidDenied);
+        EnsureOwnedPopulationDisable(formIdComponent.Id);
+        return;
+    }
+
+    if (PopulationSuppressionPolicy::ShouldSkipAssignment(m_world.all_of<PopulationSuppressedComponent>(aEntity)))
         return;
 
-    auto& formIdComponent = m_world.get<FormIdComponent>(aEntity);
+    if (!m_transport.IsOnline() || !m_world.GetCharacterSessionService().IsGameplayActive())
+        return;
 
     Actor* const pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
     if (!pActor)
@@ -1210,7 +1453,7 @@ void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
     {
         // TODO(cosideci): don't just take all actors (i.e. from other parties),
         // maybe check it server side, add a variable to the request.
-        if (m_world.GetPartyService().IsLeader() && !pActor->IsTemporary() && !pActor->IsMount())
+        if (m_world.GetAuthorityService().HasLocalActorAuthority() && !pActor->IsTemporary() && !pActor->IsMount())
         {
             spdlog::info("Sending ownership claim for actor {:X} with server id {:X}", pActor->formID, pRemoteComponent->Id);
 
@@ -1846,6 +2089,9 @@ void CharacterService::RunFactionsUpdates() const noexcept
         auto& localComponent = factionedActors.get<LocalComponent>(entity);
         auto& cacheComponent = factionedActors.get<CacheComponent>(entity);
 
+        if (localComponent.OwnershipEpoch == 0)
+            continue;
+
         const auto* pForm = TESForm::GetById(formIdComponent.Id);
         const auto* pActor = Cast<Actor>(pForm);
         if (!pActor)
@@ -1860,7 +2106,9 @@ void CharacterService::RunFactionsUpdates() const noexcept
         cacheComponent.FactionsContent = factions;
 
         // If not send the current factions and replace the cached factions
-        message.Changes[localComponent.Id] = factions;
+        auto& change = message.Changes[localComponent.Id];
+        change.OwnershipEpoch = localComponent.OwnershipEpoch;
+        change.FactionsContent = factions;
     }
 
     if (!message.Changes.empty())
@@ -1902,33 +2150,6 @@ void CharacterService::RunSpawnUpdates() const noexcept
             }
         }
     }
-}
-
-void CharacterService::RunExperienceUpdates() noexcept
-{
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenSnapshots = 1000ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenSnapshots)
-        return;
-
-    lastSendTimePoint = now;
-
-    if (m_cachedExperience == 0.f)
-        return;
-
-    if (!World::Get().GetPartyService().IsInParty())
-        return;
-
-    SyncExperienceRequest message;
-    message.Experience = m_cachedExperience;
-
-    m_cachedExperience = 0.f;
-
-    m_transport.Send(message);
-
-    spdlog::debug("Sending over experience {}", message.Experience);
 }
 
 void CharacterService::ApplyCachedWeaponDraws(const UpdateEvent& acUpdateEvent) noexcept

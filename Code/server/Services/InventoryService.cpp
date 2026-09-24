@@ -3,6 +3,8 @@
 #include <Components.h>
 #include <World.h>
 #include <GameServer.h>
+#include <Services/InventoryInteractionPolicy.h>
+#include <Services/ObjectInteractionPolicy.h>
 
 #include <Messages/NotifyObjectInventoryChanges.h>
 #include <Messages/RequestInventoryChanges.h>
@@ -29,6 +31,12 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
 {
     auto& message = acMessage.Packet;
 
+    if (!InventoryInteractionPolicy::HasValidItemPayload(message.Item))
+    {
+        spdlog::debug("Rejected malformed inventory change from player {:X} for entity {:X}", acMessage.pPlayer->GetId(), message.ServerId);
+        return;
+    }
+
     auto view = m_world.view<InventoryComponent>();
 
     const auto it = view.find(static_cast<entt::entity>(message.ServerId));
@@ -36,52 +44,56 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     if (it == view.end())
         return;
 
-    bool isRemoteNpcInteraction = false;
-
     const auto* pOwnerComponent = m_world.try_get<OwnerComponent>(*it);
-    if (pOwnerComponent)
-    {
-        const auto* pOwner = pOwnerComponent->GetOwner();
-        if (pOwnerComponent->OwnershipEpoch != message.OwnershipEpoch)
-        {
-            const uint32_t ownerId = pOwner ? pOwner->GetId() : 0;
-            spdlog::debug(
-                "Rejected inventory change from player {:X} for actor {:X} at stale epoch {}; current owner is {:X} at epoch {}",
-                acMessage.pPlayer->GetId(), message.ServerId, message.OwnershipEpoch, ownerId, pOwnerComponent->OwnershipEpoch);
-            return;
-        }
+    const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(*it);
+    const auto* pCellComponent = m_world.try_get<CellIdComponent>(*it);
+    const auto* pPersistentCharacterComponent = m_world.try_get<PersistentCharacterComponent>(*it);
+    const auto* pObjectComponent = m_world.try_get<ObjectComponent>(*it);
+    const bool isObject = pObjectComponent != nullptr;
+    const bool hasTrustedObjectState = pObjectComponent && pObjectComponent->HasTrustedState;
+    const bool hasOwner = pOwnerComponent && pOwnerComponent->GetOwner();
+    const bool isCurrentOwner = pOwnerComponent && pOwnerComponent->IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch);
+    const bool ownershipEpochMatches = pOwnerComponent
+        ? message.OwnershipEpoch != 0 && pOwnerComponent->OwnershipEpoch == message.OwnershipEpoch
+        : message.OwnershipEpoch == 0;
+    const auto& senderCell = acMessage.pPlayer->GetCellComponent();
+    const bool isInRange = hasOwner && pCharacterComponent && pCellComponent && senderCell.IsInRange(*pCellComponent, pCharacterComponent->IsDragon());
+    const bool isObjectInRange = isObject && pCellComponent && ObjectInteractionPolicy::CanInteract(
+        pCellComponent->Cell, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+        pCellComponent->Cell, pCellComponent->WorldSpaceId, pCellComponent->CenterCoords);
+    const bool isInAuthorizedRange = isInRange || isObjectInRange;
 
-        if (pOwner != acMessage.pPlayer)
-        {
-            const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(*it);
-            const auto* pCellComponent = m_world.try_get<CellIdComponent>(*it);
-            // A non-owner may still change an NPC's inventory through normal gameplay interactions
-            // such as pickpocketing or looting. The epoch and range checks keep the interaction tied
-            // to the currently visible incarnation of that NPC.
-            isRemoteNpcInteraction = pOwner && pCharacterComponent && pCellComponent && !pCharacterComponent->IsPlayer()
-                && acMessage.pPlayer->GetCellComponent().IsInRange(*pCellComponent, pCharacterComponent->IsDragon());
-
-            if (!isRemoteNpcInteraction)
-            {
-                const uint32_t ownerId = pOwner ? pOwner->GetId() : 0;
-                spdlog::debug(
-                    "Rejected inventory change from player {:X} for actor {:X} because it is owned by player {:X}", acMessage.pPlayer->GetId(), message.ServerId, ownerId);
-                return;
-            }
-        }
-    }
-    else if (message.OwnershipEpoch != 0)
+    if (!InventoryInteractionPolicy::IsAuthorized(
+            hasOwner,
+            isCurrentOwner,
+            ownershipEpochMatches,
+            isObject,
+            hasTrustedObjectState,
+            pCharacterComponent != nullptr,
+            pCharacterComponent && pCharacterComponent->IsPlayer(),
+            pPersistentCharacterComponent != nullptr,
+            isInAuthorizedRange))
     {
-        spdlog::warn(
-            "Rejected inventory change from player {:X} because object {:X} unexpectedly carried ownership epoch {}",
-            acMessage.pPlayer->GetId(), message.ServerId, message.OwnershipEpoch);
+        const uint32_t ownerId = pOwnerComponent && pOwnerComponent->GetOwner() ? pOwnerComponent->GetOwner()->GetId() : 0;
+        spdlog::debug(
+            "Rejected inventory change from player {:X} for entity {:X}; owner {:X}, epoch {} (current {}), object {} (trusted {}), character {}, persistent {}, in range {}",
+            acMessage.pPlayer->GetId(), message.ServerId, ownerId, message.OwnershipEpoch, pOwnerComponent ? pOwnerComponent->OwnershipEpoch : 0,
+            isObject, hasTrustedObjectState, pCharacterComponent != nullptr, pPersistentCharacterComponent != nullptr, isInAuthorizedRange);
         return;
     }
 
+    const bool isRemoteNpcInteraction = hasOwner && !isCurrentOwner;
+
     auto& inventoryComponent = view.get<InventoryComponent>(*it);
+    if (!InventoryInteractionPolicy::CanApplyItem(inventoryComponent.Content, message.Item))
+    {
+        spdlog::debug("Rejected inventory change from player {:X} for entity {:X}: item cannot be applied to the current inventory", acMessage.pPlayer->GetId(), message.ServerId);
+        return;
+    }
+
     inventoryComponent.Content.AddOrRemoveEntry(message.Item);
 
-    if (!message.UpdateClients && !isRemoteNpcInteraction)
+    if (!InventoryInteractionPolicy::ShouldNotifyClients(message.UpdateClients, isRemoteNpcInteraction))
         return;
 
     NotifyInventoryChanges notify;
@@ -89,7 +101,7 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     notify.OwnershipEpoch = message.OwnershipEpoch;
     notify.Item = message.Item;
 
-    notify.Drop = bEnableItemDrops && !isRemoteNpcInteraction ? message.Drop : false;
+    notify.Drop = InventoryInteractionPolicy::ShouldRelayDrop(message.Drop, bEnableItemDrops, isRemoteNpcInteraction);
 
     const entt::entity cOrigin = static_cast<entt::entity>(message.ServerId);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cOrigin, acMessage.GetSender()))
@@ -108,22 +120,19 @@ void InventoryService::OnEquipmentChanges(const PacketEvent<RequestEquipmentChan
         return;
 
     const auto* pOwnerComponent = m_world.try_get<OwnerComponent>(*it);
-    if (pOwnerComponent)
+    const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(*it);
+    const bool hasOwner = pOwnerComponent && pOwnerComponent->GetOwner();
+    const bool isOwnedBySender = hasOwner && pOwnerComponent->GetOwner() == acMessage.pPlayer;
+    const uint32_t currentEpoch = pOwnerComponent ? pOwnerComponent->OwnershipEpoch : 0;
+    if (!InventoryInteractionPolicy::CanChangeEquipment(
+            pCharacterComponent != nullptr, hasOwner, isOwnedBySender,
+            message.OwnershipEpoch, currentEpoch))
     {
-        if (pOwnerComponent->GetOwner() != acMessage.pPlayer || pOwnerComponent->OwnershipEpoch != message.OwnershipEpoch)
-        {
-            const uint32_t ownerId = pOwnerComponent->GetOwner() ? pOwnerComponent->GetOwner()->GetId() : 0;
-            spdlog::debug(
-                "Rejected equipment change from player {:X} for actor {:X}; current owner is {:X} and requested epoch {} does not match {}",
-                acMessage.pPlayer->GetId(), message.ServerId, ownerId, message.OwnershipEpoch, pOwnerComponent->OwnershipEpoch);
-            return;
-        }
-    }
-    else if (message.OwnershipEpoch != 0)
-    {
-        spdlog::warn(
-            "Rejected equipment change from player {:X} because object {:X} unexpectedly carried ownership epoch {}",
-            acMessage.pPlayer->GetId(), message.ServerId, message.OwnershipEpoch);
+        const uint32_t ownerId = hasOwner ? pOwnerComponent->GetOwner()->GetId() : 0;
+        spdlog::debug(
+            "Rejected equipment change from player {:X} for entity {:X}; character {}, owner {:X}, requested epoch {} (current {})",
+            acMessage.pPlayer->GetId(), message.ServerId, pCharacterComponent != nullptr,
+            ownerId, message.OwnershipEpoch, currentEpoch);
         return;
     }
 
@@ -152,10 +161,19 @@ void InventoryService::OnWeaponDrawnRequest(const PacketEvent<DrawWeaponRequest>
     auto characterView = m_world.view<CharacterComponent, OwnerComponent>();
     const auto it = characterView.find(static_cast<entt::entity>(message.Id));
 
-    if (it != std::end(characterView) && characterView.get<OwnerComponent>(*it).GetOwner() == acMessage.pPlayer)
+    if (it == std::end(characterView))
+        return;
+
+    auto& ownerComponent = characterView.get<OwnerComponent>(*it);
+    if (!ownerComponent.IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
     {
-        auto& characterComponent = characterView.get<CharacterComponent>(*it);
-        characterComponent.SetWeaponDrawn(message.IsWeaponDrawn);
-        spdlog::debug("Updating weapon drawn state {:x}:{}", message.Id, message.IsWeaponDrawn);
+        spdlog::debug(
+            "Rejected weapon drawn update from player {:X} for actor {:X}; requested epoch {} does not match current epoch {}",
+            acMessage.pPlayer->GetId(), message.Id, message.OwnershipEpoch, ownerComponent.OwnershipEpoch);
+        return;
     }
+
+    auto& characterComponent = characterView.get<CharacterComponent>(*it);
+    characterComponent.SetWeaponDrawn(message.IsWeaponDrawn);
+    spdlog::debug("Updating weapon drawn state {:x}:{} at epoch {}", message.Id, message.IsWeaponDrawn, message.OwnershipEpoch);
 }

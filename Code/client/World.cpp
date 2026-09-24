@@ -11,6 +11,8 @@
 #include <Services/DiscordService.h>
 #include <Services/ObjectService.h>
 #include <Services/QuestService.h>
+#include <Services/PresenceService.h>
+#include <Services/AuthorityService.h>
 #include <Services/ActorValueService.h>
 #include <Services/InventoryService.h>
 #include <Services/MagicService.h>
@@ -21,6 +23,7 @@
 #include <Services/CombatService.h>
 #include <Services/WeatherService.h>
 #include <Services/MapService.h>
+#include <Services/CharacterApplyService.h>
 
 #include <Events/PreUpdateEvent.h>
 #include <Events/UpdateEvent.h>
@@ -34,6 +37,9 @@ World::World()
     , m_lastFrameTime{std::chrono::high_resolution_clock::now()}
 {
     ctx().emplace<ImguiService>();
+    ctx().emplace<CharacterSessionService>(m_transport, m_dispatcher);
+    ctx().emplace<ProgressionService>(*this, m_dispatcher);
+    ctx().emplace<CharacterApplyService>(*this, m_dispatcher);
     ctx().emplace<DiscoveryService>(*this, m_dispatcher);
     ctx().emplace<OverlayService>(*this, m_transport, m_dispatcher);
     ctx().emplace<InputService>(ctx().at<OverlayService>());
@@ -45,6 +51,8 @@ World::World()
     ctx().emplace<CalendarService>(*this, m_dispatcher, m_transport);
     ctx().emplace<QuestService>(*this, m_dispatcher);
     ctx().emplace<PartyService>(*this, m_dispatcher, m_transport);
+    ctx().emplace<PresenceService>(m_dispatcher);
+    ctx().emplace<AuthorityService>(*this, m_dispatcher);
     ctx().emplace<ActorValueService>(*this, m_dispatcher, m_transport);
     ctx().emplace<InventoryService>(*this, m_dispatcher, m_transport);
     ctx().emplace<MagicService>(*this, m_dispatcher, m_transport);

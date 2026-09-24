@@ -3,13 +3,24 @@
 #include "Services/AdminService.h"
 
 #include <Services/PlayerService.h>
+#include <Services/PresenceService.h>
 #include <Services/PartyService.h>
+#include <Services/AuthorityService.h>
+#include <Services/CharacterSaveService.h>
+#include <Persistence/PersistenceService.h>
 #include <Services/CharacterService.h>
+#include <Services/ProgressionService.h>
+#include <Services/ActorPopulationPolicy.h>
+#include <Services/ActorPopulationIdentityResolver.h>
+#include <Services/ActorPopulationAssignmentPolicy.h>
+#include <Services/SessionService.h>
 #include <Services/CalendarService.h>
 #include <Services/QuestService.h>
 #include <Services/ScriptService.h>
 
 #include "Game/PlayerManager.h"
+
+#include <filesystem>
 
 namespace ESLoader
 {
@@ -18,7 +29,9 @@ struct RecordCollection;
 
 struct World : entt::registry
 {
-    World();
+    explicit World(
+        std::filesystem::path aDatabasePath = PersistenceService::DefaultDatabasePath(), bool aEnableActorRecordLoading = false,
+        bool aEnableHumanoidAssignmentGate = false, bool aAllowUnknownActorAssignments = true);
     ~World() noexcept;
 
     TP_NOCOPYMOVE(World);
@@ -27,10 +40,28 @@ struct World : entt::registry
     const entt::dispatcher& GetDispatcher() const noexcept { return m_dispatcher; }
     CharacterService& GetCharacterService() noexcept { return ctx().at<CharacterService>(); }
     const CharacterService& GetCharacterService() const noexcept { return ctx().at<const CharacterService>(); }
+    CharacterSaveService& GetCharacterSaveService() noexcept { return ctx().at<CharacterSaveService>(); }
+    const CharacterSaveService& GetCharacterSaveService() const noexcept { return ctx().at<const CharacterSaveService>(); }
     PlayerService& GetPlayerService() noexcept { return ctx().at<PlayerService>(); }
     const PlayerService& GetPlayerService() const noexcept { return ctx().at<const PlayerService>(); }
+    PresenceService& GetPresenceService() noexcept { return ctx().at<PresenceService>(); }
+    const PresenceService& GetPresenceService() const noexcept { return ctx().at<const PresenceService>(); }
     PartyService& GetPartyService() noexcept { return ctx().at<PartyService>(); }
     const PartyService& GetPartyService() const noexcept { return ctx().at<const PartyService>(); }
+    AuthorityService& GetAuthorityService() noexcept { return ctx().at<AuthorityService>(); }
+    const AuthorityService& GetAuthorityService() const noexcept { return ctx().at<const AuthorityService>(); }
+    PersistenceService& GetPersistenceService() noexcept { return ctx().at<PersistenceService>(); }
+    const PersistenceService& GetPersistenceService() const noexcept { return ctx().at<const PersistenceService>(); }
+    SessionService& GetSessionService() noexcept { return ctx().at<SessionService>(); }
+    const SessionService& GetSessionService() const noexcept { return ctx().at<const SessionService>(); }
+    ProgressionService& GetProgressionService() noexcept { return ctx().at<ProgressionService>(); }
+    const ProgressionService& GetProgressionService() const noexcept { return ctx().at<const ProgressionService>(); }
+    ActorPopulationPolicy& GetActorPopulationPolicy() noexcept { return ctx().at<ActorPopulationPolicy>(); }
+    const ActorPopulationPolicy& GetActorPopulationPolicy() const noexcept { return ctx().at<const ActorPopulationPolicy>(); }
+    ActorPopulationIdentityResolver& GetActorPopulationIdentityResolver() noexcept { return ctx().at<ActorPopulationIdentityResolver>(); }
+    const ActorPopulationIdentityResolver& GetActorPopulationIdentityResolver() const noexcept { return ctx().at<const ActorPopulationIdentityResolver>(); }
+    ActorPopulationAssignmentPolicy& GetActorPopulationAssignmentPolicy() noexcept { return ctx().at<ActorPopulationAssignmentPolicy>(); }
+    const ActorPopulationAssignmentPolicy& GetActorPopulationAssignmentPolicy() const noexcept { return ctx().at<const ActorPopulationAssignmentPolicy>(); }
     CalendarService& GetCalendarService() noexcept { return ctx().at<CalendarService>(); }
     const CalendarService& GetCalendarService() const noexcept { return ctx().at<const CalendarService>(); }
     QuestService& GetQuestService() noexcept { return ctx().at<QuestService>(); }

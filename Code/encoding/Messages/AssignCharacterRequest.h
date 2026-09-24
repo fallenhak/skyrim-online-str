@@ -29,11 +29,12 @@ struct AssignCharacterRequest final : ClientMessage
 
     bool operator==(const AssignCharacterRequest& acRhs) const noexcept
     {
-        return GetOpcode() == acRhs.GetOpcode() && Cookie == acRhs.Cookie && ReferenceId == acRhs.ReferenceId && FormId == acRhs.FormId && CellId == acRhs.CellId && WorldSpaceId == acRhs.WorldSpaceId && Position == acRhs.Position && Rotation == acRhs.Rotation && ChangeFlags == acRhs.ChangeFlags &&
+        return GetOpcode() == acRhs.GetOpcode() && IsValid == acRhs.IsValid && Cookie == acRhs.Cookie && ReferenceId == acRhs.ReferenceId && FormId == acRhs.FormId && CellId == acRhs.CellId && WorldSpaceId == acRhs.WorldSpaceId && Position == acRhs.Position && Rotation == acRhs.Rotation && ChangeFlags == acRhs.ChangeFlags &&
                AppearanceBuffer == acRhs.AppearanceBuffer && FactionsContent == acRhs.FactionsContent && LatestAction == acRhs.LatestAction && FaceTints == acRhs.FaceTints && QuestContent == acRhs.QuestContent && IsDragon == acRhs.IsDragon && IsMount == acRhs.IsMount && IsPlayerSummon == acRhs.IsPlayerSummon && LeveledNpcPickId == acRhs.LeveledNpcPickId;
     }
 
     uint32_t Cookie{};
+    bool IsValid{true};
     GameId ReferenceId{};
     GameId FormId{};
     GameId LeveledNpcPickId{};
