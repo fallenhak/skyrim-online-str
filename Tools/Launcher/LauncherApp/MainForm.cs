@@ -92,6 +92,7 @@ internal sealed class MainForm : Form
         AppendLog("Skyrim Online STR launcher hazır.");
         AppendLog($"Hedef Skyrim SE sürümü: {RequiredGameVersion}; Stock Game kopyası sürüm ve SkyrimSE.exe SHA-256 değeriyle kilitlenir.");
         UpdateAuthUi();
+        Shown += async (_, _) => await CheckForUpdateAsync();
         FormClosing += (_, e) =>
         {
             if (!_gameRunning) return;
@@ -121,6 +122,7 @@ internal sealed class MainForm : Form
         _avatar.Location = new Point(24, 496); Controls.Add(_avatar);
         _steamPath.Visible = false; _findSteamButton.Visible = false; _findSteamButton.Click += (_, _) => FindSteamGame();
         var actions = new FlowLayoutPanel { Location = new Point(58, 580), AutoSize = true, BackColor = Color.Transparent };
+        actions.Controls.Add(LinkLabel("⟳ Güncelle", async () => { if (_busy) return; await InstallOrUpdateAsync(); UpdatePrimaryAction(); }));
         actions.Controls.Add(LinkLabel("Hata raporu", async () => await SendErrorReportAsync()));
         actions.Controls.Add(LinkLabel("Klas\u00f6r\u00fc a\u00e7", () => Process.Start("explorer.exe", AppContext.BaseDirectory)));
         actions.Controls.Add(LinkLabel("\u2699 Steam yolu", () => ChangeSteamGamePath())); Controls.Add(actions);
@@ -223,6 +225,25 @@ internal sealed class MainForm : Form
         }
         _steamPath.Text = dialog.SelectedPath;
         SaveSettings();
+    }
+
+    // The cached manifest marks an install current, so a newer server manifest must demote it back to Kur / Güncelle.
+    private async Task CheckForUpdateAsync()
+    {
+        if (!_isInstalled || _busy) return;
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var response = await Http.GetAsync(_config.ManifestUrl, timeout.Token);
+            response.EnsureSuccessStatusCode();
+            var manifest = ManifestReader.ParseAndValidate(await response.Content.ReadAsStringAsync(timeout.Token));
+            if (_busy || string.Equals(manifest.ManifestVersion, _manifestVersion, StringComparison.Ordinal)) return;
+            _isInstalled = false;
+            UpdatePrimaryAction();
+            SetStatus($"Yeni sürüm var: {manifest.ManifestVersion}. Kur / Güncelle'ye basın.");
+            AppendLog($"Sunucuda yeni manifest {manifest.ManifestVersion} (kurulu {_manifestVersion}).");
+        }
+        catch (Exception ex) { AppendLog("Güncelleme denetlenemedi: " + ex.Message); }
     }
 
     private async Task InstallOrUpdateAsync()
