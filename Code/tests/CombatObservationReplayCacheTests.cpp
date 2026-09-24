@@ -40,7 +40,7 @@ TEST_CASE("Combat observation replay cache rejects malformed identity without co
 
     REQUIRE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 3, 4, 5, 6}));
     REQUIRE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 3, 5, 6, 6}));
-    REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 3, 6, 7, 6}));
+    REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 3, 0, 7, 6}));
     REQUIRE(cache.Size() == 2);
 }
 
