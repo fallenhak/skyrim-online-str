@@ -12,7 +12,7 @@ namespace Persistence
 {
 namespace
 {
-constexpr int kCurrentSchemaVersion = 1;
+constexpr int kCurrentSchemaVersion = 2;
 
 [[noreturn]] void ThrowSqliteError(sqlite3* apDatabase, const int aResult, const std::string_view acOperation)
 {
@@ -230,6 +230,24 @@ void Database::Migrate()
         )sql");
         Execute("CREATE INDEX IF NOT EXISTS idx_characters_owner_profile_id ON characters (owner_profile_id, id);");
         Execute("UPDATE schema_version SET version = 1 WHERE id = 1;");
+    }
+
+    if (schemaVersion < 2)
+    {
+        // Renewable encounter restart state (world roadmap W08): only the
+        // minimum a restart needs, no tick-absolute values.
+        Execute(R"sql(
+            CREATE TABLE IF NOT EXISTS renewable_encounters (
+                cell_form_id INTEGER NOT NULL CHECK (cell_form_id > 0 AND cell_form_id <= 4294967295),
+                group_index INTEGER NOT NULL CHECK (group_index >= 0 AND group_index <= 4294967295),
+                epoch INTEGER NOT NULL CHECK (epoch >= 0),
+                cleared INTEGER NOT NULL CHECK (cleared IN (0, 1)),
+                cooldown_remaining_ticks INTEGER NOT NULL CHECK (cooldown_remaining_ticks >= 0),
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (cell_form_id, group_index)
+            ) WITHOUT ROWID;
+        )sql");
+        Execute("UPDATE schema_version SET version = 2 WHERE id = 1;");
     }
 
     transaction.Commit();

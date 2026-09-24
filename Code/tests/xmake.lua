@@ -5,7 +5,7 @@ target("TPTests")
     add_includedirs(
         ".", "../encoding", "../client", "../server")
     add_headerfiles("**.h")
-    add_files("*.cpp|PersistenceTests.cpp|SessionServiceTests.cpp|ActorPopulationTests.cpp")
+    add_files("*.cpp|PersistenceTests.cpp|RenewableEncounterRepositoryTests.cpp|SessionServiceTests.cpp|ActorPopulationTests.cpp")
     add_deps("SkyrimEncoding")
     add_packages(
         "tiltedcore",
@@ -19,7 +19,7 @@ target("PersistenceTests")
     set_group("Tests")
     add_includedirs(
         ".", "../encoding", "../server")
-    add_files("PersistenceTests.cpp", "../TestMain.cpp")
+    add_files("PersistenceTests.cpp", "RenewableEncounterRepositoryTests.cpp", "../TestMain.cpp")
     add_files("../server/Persistence/*.cpp")
     add_deps("SkyrimEncoding")
     add_packages(

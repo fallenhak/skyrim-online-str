@@ -1,0 +1,57 @@
+# Renewable encounter configuration (roadmap W12).
+# Copy to Data/renewable_encounters.txt next to the server executable.
+# Form ids are hexadecimal load-order form ids; group and cooldown are decimal.
+#
+#   encounter <cell> <group> [cooldown=<seconds>]   default cooldown: 1800 s
+#   cell      <cell> <group> <extra cell>           another interior of the same dungeon
+#   slot      <cell> <group> <placed ref>           one spawn point (placed actor reference)
+#
+# Real ids from Skyrim.esm (load order index 00), extracted from the vanilla
+# plugin. Bleak Falls Barrow: 000371DE BleakFallsBarrow01, 000371DD BleakFallsBarrow02.
+# Slots are the non-persistent hostile actors (draugr, skeevers). Persistent
+# quest actors (Arvel, Thomas, the frost troll, the named
+# draugr), the MS13 campfire bandits and treasure corpses are left out: respawning them would break
+# Bleak Falls Barrow quests or duplicate static dressing.
+# cooldown=60 matches the runtime test plan; use the 1800 s default in play.
+
+encounter 000371DE 0 cooldown=60
+cell      000371DE 0 000371DD
+
+slot      000371DE 0 0001D219   # BleakFallsBarrow01 LvlDraugrMelee2HMale
+slot      000371DE 0 000380B3   # BleakFallsBarrow01 LvlDraugrAmbushMelee2HHelmetMale
+slot      000371DE 0 000380B4   # BleakFallsBarrow01 EncDraugr01AmbushMelee2HHeadM06
+slot      000371DE 0 000380B5   # BleakFallsBarrow01 LvlDraugrAmbushMelee1HMale
+slot      000371DE 0 000380B7   # BleakFallsBarrow01 LvlDraugrAmbushMelee1HDefenderFemale
+slot      000371DE 0 000380B8   # BleakFallsBarrow01 LvlDraugrAmbushMissileMale
+slot      000371DE 0 000380B9   # BleakFallsBarrow01 LvlDraugrAmbushMelee1HHelmetMale
+slot      000371DE 0 000380BB   # BleakFallsBarrow01 LvlDraugrAmbushMelee1HHelmetMale
+slot      000371DE 0 000383EC   # BleakFallsBarrow01 EncDraugr01AmbushMelee1HHeadM01
+slot      000371DE 0 000383F7   # BleakFallsBarrow01 EncDraugr01AmbushMelee2HHeadM06
+slot      000371DE 0 000383F8   # BleakFallsBarrow01 EncDraugr01AmbushMelee2HHeadM08
+slot      000371DE 0 0003B9E6   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 0003B9E7   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 0003B9E9   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 0003B9EA   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 0003B9EB   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 0003B9EC   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 0003B9ED   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 0003B9EE   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 0003B9F7   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 0003B9F8   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 0003B9F9   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 00040D8D   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 00040D8E   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 00040D8F   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 0004FD0B   # BleakFallsBarrow01 EncSkeever
+slot      000371DE 0 00080097   # BleakFallsBarrow01 EncDraugr01AmbushMelee2HHeadM08
+slot      000371DE 0 0008009E   # BleakFallsBarrow01 LvlDraugrAmbushWarlock
+slot      000371DE 0 000800A3   # BleakFallsBarrow01 EncDraugr02AmbushMelee2HHeadM01
+slot      000371DE 0 000800A6   # BleakFallsBarrow01 EncDraugr01AmbushMelee2HHeadM09
+slot      000371DE 0 000800A9   # BleakFallsBarrow01 EncDraugr02AmbushMagicHeadF01
+slot      000371DE 0 000E9986   # BleakFallsBarrow01 LvlDraugrAmbushMelee2HMale
+slot      000371DE 0 000F4A39   # BleakFallsBarrow01 LvlDraugrMelee1HFemale
+slot      000371DE 0 00038E5D   # BleakFallsBarrow02 LvlDraugrMeleeHelmet2HMale
+slot      000371DE 0 00038E5F   # BleakFallsBarrow02 LvlDraugrMissileMaleHoldPosition256
+slot      000371DE 0 0009B0F9   # BleakFallsBarrow02 LvlDraugrMelee2HMale
+slot      000371DE 0 0009BCB9   # BleakFallsBarrow02 LvlDraugrAmbushMelee1HHelmetMale
+slot      000371DE 0 0009BCD6   # BleakFallsBarrow02 LvlDraugrAmbushBossMale
