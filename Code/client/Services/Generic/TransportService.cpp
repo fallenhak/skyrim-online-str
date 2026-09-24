@@ -10,6 +10,7 @@
 #include <Games/TES.h>
 #include <Forms/TESWorldSpace.h>
 #include <Forms/TESObjectCELL.h>
+#include <Forms/TESRace.h>
 
 #include <TimeManager.h>
 
