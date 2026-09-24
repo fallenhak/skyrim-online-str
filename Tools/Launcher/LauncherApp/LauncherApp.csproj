@@ -14,5 +14,6 @@
   <ItemGroup>
     <ProjectReference Include="..\InstallerCore\InstallerCore.csproj" />
     <None Update="launcher.config.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Data\renewable_encounters.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
