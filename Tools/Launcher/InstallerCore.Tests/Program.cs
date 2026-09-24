@@ -19,7 +19,10 @@ var tests = new (string Name, Func<Task> Run)[]
     ("mod kök/Data dağıtımı ve eski dosyaları geri alma", ModDeployment),
     ("plugins.txt oyun oturumunda uygulanır ve geri yüklenir", PluginProfileBackupAndRestore),
     ("hata raporu ZIP'i ve Bearer token yüklemesi", ErrorReportBundleAndUpload),
-    ("zip traversal reddi", ZipTraversalRejected)
+    ("zip traversal reddi", ZipTraversalRejected),
+    ("Discord token talepleri ve sÃ¼re sonu", AuthTokenClaimsValidation),
+    ("Discord oturumu DPAPI ile saklanÄ±r", AuthSessionDpapiRoundTrip),
+    ("oyun yapÄ±landÄ±rmasÄ± token'Ä± DPAPI ile korur", NativeAuthConfigurationProtectsToken)
 };
 
 var failures = new List<string>();
@@ -190,6 +193,58 @@ static async Task ZipTraversalRejected()
     var mod = Mod("bad", "data", 0, archive, "");
     await Assert.ThrowsAsync<InvalidDataException>(() => new ModDeploymentService().ApplyAsync(game, Path.Combine(temp.Path, "state"), [mod], new Dictionary<string, string> { ["bad"] = archive }));
     Assert.False(File.Exists(Path.Combine(temp.Path, "escape.txt")));
+}
+
+static Task AuthTokenClaimsValidation()
+{
+    var current = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    var token = CreateTestAuthToken("discord:123456789", "Kerim", current + 3600);
+    var session = AuthTokenClaims.Read(token, current);
+    Assert.Equal("Kerim", session.DisplayName);
+    Assert.Equal(current + 3600, session.ExpiresAt);
+    Assert.Throws<InvalidDataException>(() => AuthTokenClaims.Read(CreateTestAuthToken("discord:123", "Kerim", current - 1), current));
+    Assert.Throws<InvalidDataException>(() => AuthTokenClaims.Read(CreateTestAuthToken("not-discord", "Kerim", current + 3600), current));
+    return Task.CompletedTask;
+}
+
+static Task AuthSessionDpapiRoundTrip()
+{
+    using var temp = new TempDirectory();
+    var store = new AuthSessionStore(Path.Combine(temp.Path, "auth-session.json"));
+    var token = CreateTestAuthToken("discord:123456789", "Burak", DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 3600);
+    store.Save(AuthTokenClaims.Read(token));
+    var savedText = File.ReadAllText(Path.Combine(temp.Path, "auth-session.json"));
+    Assert.False(savedText.Contains(token, StringComparison.Ordinal));
+    Assert.Equal("Burak", store.Load()?.DisplayName);
+    return Task.CompletedTask;
+}
+
+static Task NativeAuthConfigurationProtectsToken()
+{
+    using var temp = new TempDirectory();
+    var store = new AuthSessionStore(Path.Combine(temp.Path, "auth-session.json"));
+    var token = CreateTestAuthToken("discord:123456789", "Burak", DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 3600);
+    var session = AuthTokenClaims.Read(token);
+    var path = Path.Combine(temp.Path, "game-auth.json");
+    store.WriteRuntimeConfiguration(session, "198.51.100.7", 10578, path);
+    var json = File.ReadAllText(path);
+    Assert.False(json.Contains(token, StringComparison.Ordinal));
+    var config = System.Text.Json.JsonSerializer.Deserialize<NativeAuthConfiguration>(json)!;
+    Assert.Equal("198.51.100.7", config.ServerAddress);
+    Assert.Equal(10578, config.ServerPort);
+    Assert.True(Convert.FromBase64String(config.ProtectedToken).Length > token.Length / 2);
+    return Task.CompletedTask;
+}
+
+static string CreateTestAuthToken(string subject, string name, long expires)
+{
+    static string Encode(byte[] data) => Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    var header = Encode(Encoding.UTF8.GetBytes("{\"alg\":\"HS256\",\"typ\":\"JWT\"}"));
+    var payload = Encode(Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(new
+    {
+        iss = "sos-auth", sub = subject, name, avatar = "https://cdn.example/avatar.png", exp = expires
+    })));
+    return $"{header}.{payload}.{Encode(RandomNumberGenerator.GetBytes(32))}";
 }
 
 static async Task PluginProfileBackupAndRestore()

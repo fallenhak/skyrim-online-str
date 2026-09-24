@@ -66,6 +66,20 @@ export class ClientService implements OnDestroy {
       'disconnected',
     );
 
+  /** Launcher and server authentication status. */
+  public authStateChange = new BehaviorSubject<{
+    state: SkyrimTogetherTypes.AuthState;
+    displayName: string;
+    avatarUrl: string;
+    errorKey: string;
+  }>({ state: 'connecting', displayName: '', avatarUrl: '', errorKey: '' });
+
+  /** Loading progress for the native connection and character-fetch stages. */
+  public loadingStageChange = new BehaviorSubject<{
+    stage: SkyrimTogetherTypes.LoadingStage;
+    progress: number;
+  }>({ stage: 'connecting', progress: 0 });
+
   /** Character ID for the outstanding selection request, if any. */
   public characterSelectionPendingIdChange =
     new BehaviorSubject<SkyrimTogetherTypes.CharacterId | null>(null);
@@ -160,6 +174,8 @@ export class ClientService implements OnDestroy {
       'characterSessionState',
       this.onCharacterSessionState.bind(this),
     );
+    skyrimtogether.on('authState', this.onAuthState.bind(this));
+    skyrimtogether.on('loadingStage', this.onLoadingStage.bind(this));
     skyrimtogether.on('setName', this.onSetName.bind(this)); //not wanted, we dont sync name changes
     skyrimtogether.on('setVersion', this.onSetVersion.bind(this));
     skyrimtogether.on('debug', this.onDebug.bind(this)); //not needed anymore
@@ -205,6 +221,8 @@ export class ClientService implements OnDestroy {
     skyrimtogether.off('characterList');
     skyrimtogether.off('characterSelectionResult');
     skyrimtogether.off('characterSessionState');
+    skyrimtogether.off('authState');
+    skyrimtogether.off('loadingStage');
     skyrimtogether.off('setName');
     skyrimtogether.off('setVersion');
     skyrimtogether.off('debug');
@@ -267,6 +285,16 @@ export class ClientService implements OnDestroy {
 
     this.characterSelectionPendingIdChange.next(characterId);
     skyrimtogether.selectCharacter(characterId);
+  }
+
+  /** Retry the automatic launcher-configured connection. */
+  public retryConnect(): void {
+    skyrimtogether.retryConnect();
+  }
+
+  /** Quit the game from the native overlay. */
+  public quitGame(): void {
+    skyrimtogether.quitGame();
   }
 
   /**
@@ -506,6 +534,29 @@ export class ClientService implements OnDestroy {
   ): void {
     this.zone.run(() => {
       this.characterSessionStateChange.next(state);
+    });
+  }
+
+  private onAuthState(
+    state: SkyrimTogetherTypes.AuthState,
+    displayName: string,
+    avatarUrl: string,
+    errorKey: string,
+  ): void {
+    this.zone.run(() => {
+      this.authStateChange.next({ state, displayName, avatarUrl, errorKey });
+    });
+  }
+
+  private onLoadingStage(
+    stage: SkyrimTogetherTypes.LoadingStage,
+    progress: number,
+  ): void {
+    this.zone.run(() => {
+      this.loadingStageChange.next({
+        stage,
+        progress: Math.max(0, Math.min(1, progress)),
+      });
     });
   }
 

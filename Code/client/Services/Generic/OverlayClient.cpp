@@ -72,6 +72,10 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
         }
         else if (eventName == "selectCharacter")
             ProcessSelectCharacterMessage(eventArgs);
+        else if (eventName == "retryConnect")
+            ProcessRetryConnectMessage();
+        else if (eventName == "quitGame")
+            ProcessQuitGameMessage();
         else if (eventName == "revealPlayers")
             ProcessRevealPlayersMessage();
         else if (eventName == "sendMessage")
@@ -149,6 +153,20 @@ void OverlayClient::ProcessSelectCharacterMessage(CefRefPtr<CefListValue> aEvent
         if (!World::Get().GetCharacterSessionService().SelectCharacter(characterId))
             spdlog::debug("Character selection request was rejected by the current client session state.");
     });
+}
+
+void OverlayClient::ProcessRetryConnectMessage()
+{
+    m_transport.RetryLauncherSession();
+}
+
+void OverlayClient::ProcessQuitGameMessage()
+{
+    const HWND gameWindow = GetForegroundWindow();
+    if (gameWindow)
+        PostMessageW(gameWindow, WM_CLOSE, 0, 0);
+    else
+        PostQuitMessage(0);
 }
 
 void OverlayClient::ProcessRevealPlayersMessage()

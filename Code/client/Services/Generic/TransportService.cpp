@@ -1,5 +1,6 @@
 
 #include <Services/TransportService.h>
+#include <Services/OverlayService.h>
 
 #include <Events/ConnectedEvent.h>
 #include <Events/ConnectionErrorEvent.h>
@@ -28,6 +29,15 @@
 
 #include <ScriptExtender.h>
 #include <Services/DiscordService.h>
+
+#include <cryptopp/base64.h>
+#include <cryptopp/filters.h>
+#include <include/rapidjson/document.h>
+
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <wincrypt.h>
 
 // #include <imgui_internal.h>
 
@@ -67,6 +77,129 @@ TransportService::TransportService(World& aWorld, entt::dispatcher& aDispatcher)
         const auto pRealMessage = TiltedPhoques::CastUnique<AuthenticationResponse>(std::move(apMessage));
         HandleAuthenticationResponse(*pRealMessage);
     };
+
+    LoadLauncherSessionConfig();
+}
+
+void TransportService::LoadLauncherSessionConfig() noexcept
+{
+    const DWORD pathLength = GetEnvironmentVariableW(L"SOS_AUTH_CONFIG_PATH", nullptr, 0);
+    if (!pathLength)
+        return;
+
+    m_launcherConfigPresent = true;
+    std::wstring path(pathLength, L'\0');
+    const DWORD copied = GetEnvironmentVariableW(L"SOS_AUTH_CONFIG_PATH", path.data(), pathLength);
+    if (!copied || copied >= pathLength)
+    {
+        m_launcherConfigErrorKey = "auth.launcher_config_invalid";
+        return;
+    }
+    path.resize(copied);
+
+    try
+    {
+        std::ifstream file(std::filesystem::path(path), std::ios::binary);
+        if (!file)
+        {
+            m_launcherConfigErrorKey = "auth.launcher_config_missing";
+            return;
+        }
+        std::string json((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        if (json.empty() || json.size() > 16 * 1024)
+        {
+            m_launcherConfigErrorKey = "auth.launcher_config_invalid";
+            return;
+        }
+
+        rapidjson::Document document;
+        document.Parse(json.c_str());
+        if (document.HasParseError() || !document.IsObject() || !document.HasMember("ServerAddress") || !document["ServerAddress"].IsString() ||
+            !document.HasMember("ServerPort") || !document["ServerPort"].IsInt() || !document.HasMember("ProtectedToken") || !document["ProtectedToken"].IsString())
+        {
+            m_launcherConfigErrorKey = "auth.launcher_config_invalid";
+            return;
+        }
+
+        const std::string host = document["ServerAddress"].GetString();
+        const int port = document["ServerPort"].GetInt();
+        const std::string protectedToken64 = document["ProtectedToken"].GetString();
+        if (host.empty() || host.size() > 255 || host.find_first_of(":/\\ \t\r\n") != std::string::npos || port < 1 || port > 65535 || protectedToken64.empty() || protectedToken64.size() > 16384)
+        {
+            m_launcherConfigErrorKey = "auth.launcher_config_invalid";
+            return;
+        }
+
+        std::string protectedToken;
+        CryptoPP::StringSource decode(protectedToken64, true, new CryptoPP::Base64Decoder(new CryptoPP::StringSink(protectedToken)));
+        DATA_BLOB input{};
+        input.cbData = static_cast<DWORD>(protectedToken.size());
+        input.pbData = reinterpret_cast<BYTE*>(protectedToken.data());
+        DATA_BLOB decrypted{};
+        if (!CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &decrypted))
+        {
+            m_launcherConfigErrorKey = "auth.launcher_token_unavailable";
+            return;
+        }
+        m_launcherAuthToken.assign(reinterpret_cast<const char*>(decrypted.pbData), decrypted.cbData);
+        SecureZeroMemory(decrypted.pbData, decrypted.cbData);
+        LocalFree(decrypted.pbData);
+        if (m_launcherAuthToken.size() < 32 || m_launcherAuthToken.size() > 8192 || std::count(m_launcherAuthToken.begin(), m_launcherAuthToken.end(), '.') != 2)
+        {
+            m_launcherAuthToken.clear();
+            m_launcherConfigErrorKey = "auth.launcher_token_invalid";
+            return;
+        }
+        m_launcherEndpoint = host + ":" + std::to_string(port);
+    }
+    catch (const CryptoPP::Exception&)
+    {
+        m_launcherConfigErrorKey = "auth.launcher_config_invalid";
+    }
+    catch (...)
+    {
+        m_launcherConfigErrorKey = "auth.launcher_config_invalid";
+    }
+}
+
+void TransportService::StartLauncherSession() noexcept
+{
+    if (!m_launcherConfigPresent)
+        return;
+    if (!m_launcherConfigErrorKey.empty())
+    {
+        m_world.GetOverlayService().EmitAuthState("failed", "", "", m_launcherConfigErrorKey);
+        return;
+    }
+
+    m_launcherAuthenticated = false;
+    m_world.GetOverlayService().EmitAuthState("connecting");
+    m_world.GetOverlayService().EmitLoadingStage("connecting", 0.05f);
+    const auto endpoint = m_launcherEndpoint;
+    m_world.GetRunner().Queue([this, endpoint]() { Connect(endpoint); });
+}
+
+void TransportService::RetryLauncherSession() noexcept
+{
+    if (!m_launcherConfigPresent)
+    {
+        m_world.GetOverlayService().EmitAuthState("failed", "", "", "auth.launcher_config_missing");
+        return;
+    }
+    if (!m_launcherConfigErrorKey.empty())
+    {
+        m_world.GetOverlayService().EmitAuthState("failed", "", "", m_launcherConfigErrorKey);
+        return;
+    }
+
+    m_launcherAuthenticated = false;
+    m_world.GetOverlayService().EmitAuthState("connecting");
+    m_world.GetOverlayService().EmitLoadingStage("connecting", 0.05f);
+    const auto endpoint = m_launcherEndpoint;
+    m_world.GetRunner().Queue([this, endpoint]() {
+        Close();
+        Connect(endpoint);
+    });
 }
 
 bool TransportService::Send(const ClientMessage& acMessage) const noexcept
@@ -154,6 +287,12 @@ void TransportService::OnConsume(const void* apData, uint32_t aSize)
 
 void TransportService::OnConnected()
 {
+    if (m_launcherConfigPresent)
+    {
+        m_world.GetOverlayService().EmitAuthState("authenticating");
+        m_world.GetOverlayService().EmitLoadingStage("authenticating", 0.15f);
+    }
+
     AuthenticationRequest request{};
     request.Version = BUILD_COMMIT;
     request.SKSEActive = IsScriptExtenderLoaded();
@@ -161,6 +300,7 @@ void TransportService::OnConnected()
 
     request.Token = m_serverPassword;
     m_serverPassword = "";
+    request.AuthToken = m_launcherAuthToken;
 
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
 
@@ -242,6 +382,13 @@ void TransportService::HandleAuthenticationResponse(const AuthenticationResponse
     if (acMessage.Type == AR::kAccepted)
     {
         m_connected = true;
+        m_launcherAuthenticated = m_launcherConfigPresent && !m_launcherAuthToken.empty();
+
+        if (m_launcherAuthenticated)
+        {
+            m_world.GetOverlayService().EmitAuthState("authenticated", acMessage.DisplayName.c_str(), acMessage.AvatarUrl.c_str());
+            m_world.GetOverlayService().EmitLoadingStage("fetchingCharacters", 0.35f);
+        }
 
         m_world.SetServerSettings(acMessage.Settings);
 
@@ -249,6 +396,13 @@ void TransportService::HandleAuthenticationResponse(const AuthenticationResponse
         m_dispatcher.trigger(acMessage.Settings);
         m_dispatcher.trigger(ConnectedEvent(acMessage.PlayerId));
         return; // quit the function here.
+    }
+
+    m_launcherAuthenticated = false;
+    if (m_launcherConfigPresent)
+    {
+        const std::string errorKey = acMessage.AuthErrorKey.empty() ? "auth.server_rejected" : acMessage.AuthErrorKey.c_str();
+        m_world.GetOverlayService().EmitAuthState("failed", "", "", errorKey);
     }
 
     // error finding
@@ -300,6 +454,9 @@ void TransportService::HandleAuthenticationResponse(const AuthenticationResponse
         ErrorInfo += "\"error\": \"server_full\"";
         break;
     }
+    case AR::kInvalidAuthToken:
+        ErrorInfo += "\"error\": \"invalid_auth_token\"";
+        break;
     default: ErrorInfo += "\"error\": \"no_reason\""; break;
     }
 

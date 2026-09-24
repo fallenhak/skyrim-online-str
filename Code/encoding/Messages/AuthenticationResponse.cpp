@@ -9,6 +9,9 @@ void AuthenticationResponse::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter
     UserMods.Serialize(aWriter);
     Settings.Serialize(aWriter);
     Serialization::WriteVarInt(aWriter, PlayerId);
+    Serialization::WriteString(aWriter, AuthErrorKey);
+    Serialization::WriteString(aWriter, DisplayName);
+    Serialization::WriteString(aWriter, AvatarUrl);
 }
 
 void AuthenticationResponse::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept
@@ -20,4 +23,7 @@ void AuthenticationResponse::DeserializeRaw(TiltedPhoques::Buffer::Reader& aRead
     UserMods.Deserialize(aReader);
     Settings.Deserialize(aReader);
     PlayerId = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
+    AuthErrorKey = Serialization::ReadString(aReader);
+    DisplayName = Serialization::ReadString(aReader);
+    AvatarUrl = Serialization::ReadString(aReader);
 }

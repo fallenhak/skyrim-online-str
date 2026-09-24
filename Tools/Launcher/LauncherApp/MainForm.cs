@@ -11,6 +11,9 @@ internal sealed class LauncherConfig
     public string StrLauncherPath { get; set; } = "SkyrimTogether.exe";
     public string ErrorReportEndpoint { get; set; } = "";
     public string ErrorReportToken { get; set; } = "";
+    public string AuthBaseUrl { get; set; } = "";
+    public string ServerAddress { get; set; } = "";
+    public int ServerPort { get; set; } = 10578;
 }
 
 internal sealed class UserSettings
@@ -28,7 +31,11 @@ internal sealed class MainForm : Form
     private readonly string _stateDirectory;
     private readonly string _profileDirectory;
     private readonly string _logPath;
+    private readonly AuthSessionStore _authSessionStore;
+    private AuthSession? _authSession;
     private readonly TextBox _steamPath = new() { ReadOnly = true, Anchor = AnchorStyles.Left | AnchorStyles.Right };
+    private readonly Button _discordLoginButton = new() { Text = "Discord ile giris", Width = 145, Height = 32 };
+    private readonly Label _authStatus = new() { AutoSize = true, Text = "Discord girisi yapilmadi." };
     private readonly Button _installButton = new() { Text = "Kur / Güncelle", Width = 140, Height = 36 };
     private readonly Button _launchButton = new() { Text = "Oyunu başlat", Width = 140, Height = 36, Enabled = false };
     private readonly Button _reportButton = new() { Text = "Hata raporu gönder", Width = 170, Height = 36 };
@@ -55,6 +62,8 @@ internal sealed class MainForm : Form
         _profileDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Skyrim Special Edition");
         _logPath = Path.Combine(_localData, "launcher.log");
         Directory.CreateDirectory(_localData);
+        _authSessionStore = new AuthSessionStore(Path.Combine(_localData, "auth-session.json"));
+        _authSession = _authSessionStore.Load();
         new PluginProfileService().RecoverInterruptedSession(_profileDirectory, _stateDirectory);
         LoadCachedManifest();
         try
@@ -67,7 +76,7 @@ internal sealed class MainForm : Form
         LoadSettings();
         AppendLog("Skyrim Online STR launcher hazır.");
         AppendLog($"Hedef Skyrim SE sürümü: {RequiredGameVersion}; Stock Game kopyası sürüm ve SkyrimSE.exe SHA-256 değeriyle kilitlenir.");
-        _launchButton.Enabled = _isInstalled;
+        UpdateAuthUi();
         FormClosing += (_, e) =>
         {
             if (!_gameRunning) return;
@@ -79,7 +88,8 @@ internal sealed class MainForm : Form
 
     private void BuildUi()
     {
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), ColumnCount = 1, RowCount = 6 };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), ColumnCount = 1, RowCount = 7 };
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -93,6 +103,12 @@ internal sealed class MainForm : Form
         var version = new Label { Text = $"Skyrim SE {RequiredGameVersion} • Steam'den bağımsız Stock Game kopyası", AutoSize = true, Margin = new Padding(0, 5, 0, 10) };
         root.Controls.Add(version, 0, 1);
 
+        var authRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 0, 0, 8) };
+        _discordLoginButton.Click += async (_, _) => await AuthenticateWithDiscordAsync();
+        authRow.Controls.Add(_discordLoginButton);
+        authRow.Controls.Add(_authStatus);
+        root.Controls.Add(authRow, 0, 2);
+
         var pathRow = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true };
         pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -100,19 +116,20 @@ internal sealed class MainForm : Form
         _findSteamButton.Click += (_, _) => FindSteamGame();
         pathRow.Controls.Add(_steamPath, 0, 0);
         pathRow.Controls.Add(_findSteamButton, 1, 0);
-        root.Controls.Add(pathRow, 0, 2);
+        root.Controls.Add(pathRow, 0, 3);
 
-        root.Controls.Add(_progress, 0, 3);
-        root.Controls.Add(_status, 0, 4);
-        root.Controls.Add(_log, 0, 5);
+        root.Controls.Add(_progress, 0, 4);
+        root.Controls.Add(_status, 0, 5);
+        root.Controls.Add(_log, 0, 6);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 48, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(0, 4, 0, 0) };
         _installButton.Click += async (_, _) => await InstallOrUpdateAsync();
-        _launchButton.Click += async (_, _) => await LaunchStrAsync();
+        _launchButton.Text = "Oyna";
+        _launchButton.Click += async (_, _) => await PlayAsync();
         _reportButton.Click += async (_, _) => await SendErrorReportAsync();
         buttons.Controls.AddRange([_installButton, _launchButton, _reportButton]);
-        root.Controls.Add(buttons, 0, 5);
-        root.SetRow(_log, 5);
+        root.Controls.Add(buttons, 0, 6);
+        root.SetRow(_log, 6);
         root.Controls.Remove(buttons);
         Controls.Add(buttons);
         buttons.BringToFront();
@@ -145,6 +162,8 @@ internal sealed class MainForm : Form
             MessageBox.Show(this, "Önce Steam oyun klasörünüzü bulun.", "Kurulum", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
+        var wasInstalled = _isInstalled;
+        var previousManifestVersion = _manifestVersion;
         _isInstalled = false;
         SetBusy(true);
         _operation = new CancellationTokenSource();
@@ -160,6 +179,17 @@ internal sealed class MainForm : Form
             if (GameVersion.Normalize(manifest.RequiredGameVersion) != RequiredGameVersion)
                 throw new InvalidDataException($"Sunucu manifesti {RequiredGameVersion} hedefinden farklı. Kurulum durduruldu.");
             AppendLog($"Manifest {manifest.ManifestVersion} alındı.");
+
+            if (wasInstalled && string.Equals(previousManifestVersion, manifest.ManifestVersion, StringComparison.Ordinal) &&
+                new StockGameService().IsLockedCopyValid(_stockGame, RequiredGameVersion) &&
+                new ModDeploymentService().IsCurrentInstall(_stockGame, _stateDirectory, manifest.Mods))
+            {
+                _isInstalled = true;
+                _progress.Value = 100;
+                SetStatus("Kurulum güncel; oyun başlatılmaya hazır.");
+                UpdateAuthUi();
+                return;
+            }
 
             SetStatus("Steam oyunu Stock Game klasörüne kopyalanıyor…");
             var copyProgress = new Progress<(int Percent, string Message)>(x => { _progress.Value = x.Percent; SetStatus(x.Message); });
@@ -191,7 +221,7 @@ internal sealed class MainForm : Form
                 throw new InvalidDataException("Mod kurulumu SkyrimSE.exe sürüm kilidini değiştirdi. Stock Game kurulumu doğrulanamadı.");
             _progress.Value = 100;
             _isInstalled = true;
-            _launchButton.Enabled = true;
+            UpdateAuthUi();
             SetStatus("Kurulum tamamlandı.");
             AppendLog($"Stock Game hazır: {RequiredGameVersion}; {manifest.Mods.Count} paket uygulandı.");
         }
@@ -209,13 +239,18 @@ internal sealed class MainForm : Form
             return;
         }
         IDisposable? profile = null;
+        string? authConfigPath = null;
         try
         {
+            var session = _authSessionStore.Load() ?? throw new InvalidOperationException("Discord ile giris yapin.");
             if (!new StockGameService().IsLockedCopyValid(_stockGame, RequiredGameVersion))
                 throw new InvalidDataException($"Stock Game sürüm veya SHA-256 doğrulaması başarısız. Gerekli Skyrim SE sürümü: {RequiredGameVersion}. Kur / Güncelle adımını yeniden çalıştırın.");
             var manifest = _manifest ?? throw new InvalidOperationException("Önce Kur / Güncelle adımını tamamlayın.");
             profile = new PluginProfileService().ApplyForSession(_stockGame, _profileDirectory, _stateDirectory, manifest.Mods);
             var info = new ProcessStartInfo(launcher) { WorkingDirectory = _stockGame, UseShellExecute = false };
+            authConfigPath = Path.Combine(_localData, "runtime-auth-" + Guid.NewGuid().ToString("N") + ".json");
+            _authSessionStore.WriteRuntimeConfiguration(session, _config.ServerAddress, _config.ServerPort, authConfigPath);
+            info.Environment["SOS_AUTH_CONFIG_PATH"] = authConfigPath;
             info.ArgumentList.Add("--exePath");
             info.ArgumentList.Add(Path.Combine(_stockGame, "SkyrimSE.exe"));
             using var process = Process.Start(info) ?? throw new InvalidOperationException("STR başlatıcısı başlatılamadı.");
@@ -233,10 +268,61 @@ internal sealed class MainForm : Form
         {
             try { profile?.Dispose(); }
             catch (Exception ex) { AppendLog("UYARI: Kullanıcının plugins.txt geri yüklenemedi: " + ex.Message); }
+            if (authConfigPath is not null)
+            {
+                try { File.Delete(authConfigPath); }
+                catch (Exception ex) { AppendLog("Runtime auth config silinemedi: " + ex.Message); }
+            }
             _gameRunning = false;
             _installButton.Enabled = true;
             _findSteamButton.Enabled = true;
-            _launchButton.Enabled = _isInstalled && _manifest is not null && File.Exists(Path.Combine(_stockGame, "SkyrimSE.exe"));
+            UpdateAuthUi();
+        }
+    }
+
+    private async Task PlayAsync()
+    {
+        _authSession = _authSessionStore.Load();
+        if (_authSession is null)
+        {
+            UpdateAuthUi();
+            MessageBox.Show(this, "Oyuna baslamak icin once Discord ile giris yapin.", "Discord girisi gerekli", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        await InstallOrUpdateAsync();
+        if (!_isInstalled) return;
+        await LaunchStrAsync();
+    }
+
+    private async Task AuthenticateWithDiscordAsync()
+    {
+        _discordLoginButton.Enabled = false;
+        SetStatus("Discord servisi denetleniyor...");
+        try
+        {
+            if (!Uri.TryCreate(_config.AuthBaseUrl, UriKind.Absolute, out var authBase) || authBase.Scheme != Uri.UriSchemeHttps)
+                throw new InvalidOperationException("launcher.config.json icindeki authBaseUrl HTTPS olmali.");
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            using var health = await Http.GetAsync(new Uri(authBase, "/auth/healthz"), timeout.Token);
+            if (!health.IsSuccessStatusCode)
+                throw new InvalidOperationException("Discord kimlik servisi hazir degil. VDS'te /etc/sos-auth.env ve Discord uygulama ayarlari yapilandirilmali.");
+
+            SetStatus("Tarayicida Discord girisi bekleniyor...");
+            _authSession = await new DiscordLoopbackLogin().SignInAsync(_config.AuthBaseUrl, _authSessionStore);
+            _authStatus.Text = "Discord: " + _authSession.DisplayName;
+            SetStatus("Discord girisi tamamlandi.");
+            AppendLog("Discord girisi tamamlandi: " + _authSession.DisplayName);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("Discord girisi tamamlanamadi.");
+            AppendLog("Discord auth hatasi: " + ex.Message);
+            MessageBox.Show(this, ex.Message, "Discord girisi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _discordLoginButton.Enabled = true;
+            UpdateAuthUi();
         }
     }
 
@@ -326,9 +412,23 @@ internal sealed class MainForm : Form
     {
         _installButton.Enabled = !busy && !_gameRunning;
         _findSteamButton.Enabled = !busy && !_gameRunning;
-        _launchButton.Enabled = !busy && !_gameRunning && _isInstalled && _manifest is not null && File.Exists(Path.Combine(_stockGame, "SkyrimSE.exe"));
+        _launchButton.Enabled = !busy && !_gameRunning && _authSession is not null;
+        _discordLoginButton.Enabled = !busy && !_gameRunning;
         _reportButton.Enabled = !busy;
         UseWaitCursor = busy;
+    }
+
+    private void UpdateAuthUi()
+    {
+        if (_authSession is null)
+        {
+            _authStatus.Text = "Discord girisi yapilmadi.";
+            _launchButton.Enabled = false;
+            return;
+        }
+
+        _authStatus.Text = "Discord: " + _authSession.DisplayName;
+        _launchButton.Enabled = !_gameRunning && !UseWaitCursor;
     }
 
     private void SetStatus(string message) { _status.Text = message; }

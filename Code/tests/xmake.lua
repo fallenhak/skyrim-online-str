@@ -34,13 +34,15 @@ target("SessionTests")
     set_group("Tests")
     add_includedirs(
         ".", "../encoding", "../server")
-    add_files("SessionServiceTests.cpp", "../TestMain.cpp")
+    add_files("SessionServiceTests.cpp", "AuthTokenVerifierTests.cpp", "../TestMain.cpp")
     add_files("../server/Services/SessionService.cpp")
+    add_files("../server/Services/AuthTokenVerifier.cpp")
     add_files("../server/Persistence/*.cpp")
     add_deps("SkyrimEncoding", "TiltedConnect")
     add_packages(
         "tiltedcore",
         "hopscotch-map",
+        "cryptopp",
         "gtest",
         "gamenetworkingsockets",
         "sqlite3",

@@ -160,6 +160,10 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
     );
   }
 
+  retryConnect(): void {}
+
+  quitGame(): void {}
+
   reconnect(): void {
     throw new Error('NOT YET IMPLEMENTED');
   }

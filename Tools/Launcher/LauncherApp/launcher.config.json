@@ -2,5 +2,8 @@
   "manifestUrl": "https://downloads.example.invalid/skyrim-online-str/manifest.json",
   "strLauncherPath": "SkyrimTogether.exe",
   "errorReportEndpoint": "https://reports.example.invalid/skyrim-online-str",
-  "errorReportToken": ""
+  "errorReportToken": "",
+  "authBaseUrl": "https://auth.example.invalid",
+  "serverAddress": "87.76.146.253",
+  "serverPort": 10578
 }

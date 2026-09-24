@@ -150,6 +150,26 @@ declare namespace SkyrimTogetherTypes {
   ) => void;
 
   type CharacterSessionStateCallback = (state: CharacterSessionState) => void;
+
+  type AuthState = 'connecting' | 'authenticating' | 'authenticated' | 'failed';
+  type LoadingStage =
+    | 'connecting'
+    | 'authenticating'
+    | 'fetchingCharacters'
+    | 'creatingCharacter'
+    | 'loadingWorld'
+    | 'applyingCharacter'
+    | 'raceMenu'
+    | 'enteringWorld'
+    | 'done';
+
+  type AuthStateCallback = (
+    state: AuthState,
+    displayName: string,
+    avatarUrl: string,
+    errorKey: string,
+  ) => void;
+  type LoadingStageCallback = (stage: LoadingStage, progress: number) => void;
 }
 
 /** Global Skyrim: Together object. */
@@ -204,6 +224,12 @@ interface SkyrimTogether {
     event: 'characterSessionState',
     callback: SkyrimTogetherTypes.CharacterSessionStateCallback,
   ): void;
+
+  /** Receive launcher-authentication state and the signed Discord profile. */
+  on(event: 'authState', callback: SkyrimTogetherTypes.AuthStateCallback): void;
+
+  /** Receive the current connection/loading stage. */
+  on(event: 'loadingStage', callback: SkyrimTogetherTypes.LoadingStageCallback): void;
 
   /** Add listener to when the player disconnects from a server. */
   on(
@@ -341,6 +367,10 @@ interface SkyrimTogether {
     callback?: SkyrimTogetherTypes.CharacterSessionStateCallback,
   ): void;
 
+  off(event: 'authState', callback?: SkyrimTogetherTypes.AuthStateCallback): void;
+
+  off(event: 'loadingStage', callback?: SkyrimTogetherTypes.LoadingStageCallback): void;
+
   /** Remove listener from when the player disconnects from a server. */
   off(
     event: 'disconnect',
@@ -457,6 +487,12 @@ interface SkyrimTogether {
 
   /** Ask the server to select a character by its opaque decimal ID. */
   selectCharacter(characterId: SkyrimTogetherTypes.CharacterId): void;
+
+  /** Retry the launcher-configured server connection. */
+  retryConnect(): void;
+
+  /** Close the game. */
+  quitGame(): void;
 
   /**
    * Reveal other players in the immediate area.

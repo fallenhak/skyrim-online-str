@@ -28,6 +28,11 @@ struct TransportService : Client
 
     bool Send(const ClientMessage& acMessage) const noexcept;
 
+    /** Start or retry the session described by the launcher auth config. */
+    void StartLauncherSession() noexcept;
+    void RetryLauncherSession() noexcept;
+    [[nodiscard]] bool HasLauncherAuthSession() const noexcept { return m_launcherConfigPresent; }
+
     void OnConsume(const void* apData, uint32_t aSize) override;
     void OnConnected() override;
     void OnDisconnected(EDisconnectReason aReason) override;
@@ -49,12 +54,18 @@ protected:
 
 private:
     [[nodiscard]] bool CanSendMessage(const ClientMessage& acMessage) const noexcept;
+    void LoadLauncherSessionConfig() noexcept;
 
     World& m_world;
     entt::dispatcher& m_dispatcher;
     bool m_connected;
     String m_serverPassword{};
     uint32_t m_localPlayerId;
+    std::string m_launcherEndpoint;
+    std::string m_launcherAuthToken;
+    std::string m_launcherConfigErrorKey;
+    bool m_launcherConfigPresent{};
+    bool m_launcherAuthenticated{};
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_sendServerMessageConnection;

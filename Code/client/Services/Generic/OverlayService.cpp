@@ -154,6 +154,7 @@ void OverlayService::Create(RenderSystemD3D11* apRenderSystem) noexcept
     }
 
     m_pOverlay->GetClient()->Create();
+    m_transport.StartLauncherSession();
 }
 
 void OverlayService::Render() noexcept
@@ -251,6 +252,31 @@ void OverlayService::SendSystemMessage(const std::string& acMessage)
     pArguments->SetString(1, acMessage);
 
     m_pOverlay->ExecuteAsync("message", pArguments);
+}
+
+void OverlayService::EmitAuthState(const std::string& acState, const std::string& acDisplayName,
+    const std::string& acAvatarUrl, const std::string& acErrorKey)
+{
+    if (!m_pOverlay)
+        return;
+
+    auto pArguments = CefListValue::Create();
+    pArguments->SetString(0, acState);
+    pArguments->SetString(1, acDisplayName);
+    pArguments->SetString(2, acAvatarUrl);
+    pArguments->SetString(3, acErrorKey);
+    m_pOverlay->ExecuteAsync("authState", pArguments);
+}
+
+void OverlayService::EmitLoadingStage(const std::string& acStage, const float aProgress)
+{
+    if (!m_pOverlay)
+        return;
+
+    auto pArguments = CefListValue::Create();
+    pArguments->SetString(0, acStage);
+    pArguments->SetDouble(1, std::clamp(aProgress, 0.f, 1.f));
+    m_pOverlay->ExecuteAsync("loadingStage", pArguments);
 }
 
 void OverlayService::SetPlayerHealthPercentage(uint32_t aFormId) const noexcept
@@ -368,11 +394,16 @@ void OverlayService::OnPlayerDialogue(const NotifyPlayerDialogue& acMessage) noe
     m_pOverlay->ExecuteAsync("message", pArguments);
 }
 
-void OverlayService::OnConnectionError(const ConnectionErrorEvent& acConnectedEvent) const noexcept
+void OverlayService::OnConnectionError(const ConnectionErrorEvent& acConnectedEvent) noexcept
 {
     auto pArgs = CefListValue::Create();
     pArgs->SetString(0, acConnectedEvent.ErrorDetail.c_str());
     m_pOverlay->ExecuteAsync("triggerError", pArgs);
+    if (m_transport.HasLauncherAuthSession())
+    {
+        EmitAuthState("failed", "", "", "auth.connection_failed");
+        EmitLoadingStage("connecting", 0.f);
+    }
 }
 
 void OverlayService::OnPlayerJoined(const NotifyPlayerJoined& acMessage) noexcept

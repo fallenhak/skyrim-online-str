@@ -25,6 +25,8 @@ private:
     void ProcessConnectMessage(CefRefPtr<CefListValue> aEventArgs);
     void ProcessDisconnectMessage();
     void ProcessSelectCharacterMessage(CefRefPtr<CefListValue> aEventArgs);
+    void ProcessRetryConnectMessage();
+    void ProcessQuitGameMessage();
     void ProcessRevealPlayersMessage();
     void ProcessChatMessage(CefRefPtr<CefListValue> aEventArgs);
     void ProcessSetTimeCommand(CefRefPtr<CefListValue> aEventArgs);

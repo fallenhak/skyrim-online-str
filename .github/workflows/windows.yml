@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - master
+      - feature/discord-auth
   workflow_call:
     inputs:
       build-mode:
@@ -77,6 +78,24 @@ jobs:
         run: |
           xmake -y
           echo "STR_BUILD_DIR=build/windows/${{ matrix.arch }}/${BUILD_MODE}/" >> "$GITHUB_ENV"
+
+      - name: Run session and HMAC auth tests
+        run: xmake run SessionTests
+
+      - name: Setup .NET and Python test runtimes
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test launcher auth and installation services
+        run: dotnet run --project Tools/Launcher/InstallerCore.Tests/InstallerCore.Tests.csproj --configuration Release
+
+      - name: Test Discord auth service
+        run: python -m unittest discover -s Tools/AuthService -v
 
       # Create distrib
       - name: Output distrib binaries via xmake
