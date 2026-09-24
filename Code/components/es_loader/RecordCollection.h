@@ -4,6 +4,7 @@
 #include "Records/CLMT.h"
 #include "Records/CONT.h"
 #include "Records/GMST.h"
+#include "Records/LVLN.h"
 #include "Records/NAVM.h"
 #include "Records/NPC.h"
 #include "Records/RACE.h"
@@ -69,6 +70,12 @@ struct RecordCollection
         return it == m_races.end() ? nullptr : &it.value();
     }
 
+    [[nodiscard]] const LVLN* FindLeveledNpcById(uint32_t aFormId) const noexcept
+    {
+        const auto it = m_leveledNpcs.find(aFormId);
+        return it == m_leveledNpcs.end() ? nullptr : &it->second;
+    }
+
     CONT& GetContainerById(uint32_t aFormId) noexcept { return m_containers[aFormId]; }
     GMST& GetGameSettingById(uint32_t aFormId) noexcept { return m_gameSettings[aFormId]; }
     WRLD& GetWorldById(uint32_t aFormId) noexcept { return m_worlds[aFormId]; }
@@ -83,6 +90,7 @@ private:
     Map<uint32_t, CLMT> m_climates{};
     Map<uint32_t, NPC> m_npcs{};
     Map<uint32_t, RACE> m_races{};
+    Map<uint32_t, LVLN> m_leveledNpcs{};
     Map<uint32_t, CONT> m_containers{};
     Map<uint32_t, GMST> m_gameSettings{};
     Map<uint32_t, WRLD> m_worlds{};

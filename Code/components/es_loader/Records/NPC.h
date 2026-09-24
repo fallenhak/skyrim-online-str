@@ -11,6 +11,10 @@ public:
 
     String m_editorId = "";
     uint32_t m_raceId{};
+    // Resolved TPLT target (NPC_ or LVLN); zero when absent or unresolved.
+    uint32_t m_templateId{};
+    // ACBS template data flags; Chunks::ACBS::kTraits means the race comes from m_templateId.
+    uint16_t m_templateDataFlags{};
     Chunks::ACBS m_baseStats{};
     Chunks::DOFT m_defaultOutfit{};
     Chunks::VMAD m_scriptData{};

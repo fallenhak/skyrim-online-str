@@ -1,6 +1,7 @@
 #include "ActorPopulationPolicy.h"
 
 #include <RecordCollection.h>
+#include <Records/LVLN.h>
 #include <Records/NPC.h>
 #include <Records/RACE.h>
 
@@ -70,6 +71,25 @@ void ActorPopulationPolicy::InstallVanillaHumanoidRules()
     SetRaceClassification("BretonRaceChildVampire", ActorPopulationClass::kHumanoidNpc);
     SetRaceClassification("ElderRace", ActorPopulationClass::kHumanoidNpc);
     SetRaceClassification("NordRaceAstrid", ActorPopulationClass::kHumanoidNpc);
+
+    // Vampire NPCs use humanoid bodies and are part of the humanoid population too.
+    SetRaceClassification("NordRaceVampire", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("BretonRaceVampire", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("ImperialRaceVampire", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("RedguardRaceVampire", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("HighElfRaceVampire", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("WoodElfRaceVampire", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("DarkElfRaceVampire", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("OrcRaceVampire", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("ArgonianRaceVampire", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("KhajiitRaceVampire", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("ElderRaceVampire", ActorPopulationClass::kHumanoidNpc);
+
+    // DLC humanoid races (Dawnguard, Dragonborn).
+    SetRaceClassification("DLC1NordRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("SnowElfRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("DLC1VampireBeastRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("DLC2MiraakRace", ActorPopulationClass::kHumanoidNpc);
 }
 
 void ActorPopulationPolicy::SetRaceClassification(TiltedPhoques::String aRaceEditorId, ActorPopulationClass aClassification)
@@ -152,16 +172,61 @@ ActorPopulationClassification ActorPopulationPolicy::ClassifyActor(const GameId&
 
 ActorPopulationClassification ActorPopulationPolicy::ClassifyNpcBase(uint32_t aResolvedNpcBaseFormId) const noexcept
 {
-    ActorPopulationClassification classification;
+    ActorPopulationClassification classification = ClassifyTemplateTarget(aResolvedNpcBaseFormId, 0);
     classification.NpcFormId = aResolvedNpcBaseFormId;
+    return classification;
+}
+
+ActorPopulationClassification ActorPopulationPolicy::ClassifyTemplateTarget(uint32_t aFormId, uint32_t aDepth) const noexcept
+{
+    ActorPopulationClassification classification;
 
     // Zero is the Form ID null sentinel used when a referenced prefix cannot
     // be resolved. Never let an invalid record at zero turn that into a class.
-    if (aResolvedNpcBaseFormId == 0 || m_recordCollection == nullptr)
+    // The depth bound also terminates template/leveled-list cycles.
+    if (aFormId == 0 || m_recordCollection == nullptr || aDepth > kMaxTemplateDepth)
         return classification;
 
-    const NPC* const pNpc = m_recordCollection->FindNpcById(aResolvedNpcBaseFormId);
-    if (pNpc == nullptr || pNpc->m_raceId == 0)
+    if (const LVLN* const pLeveledNpc = m_recordCollection->FindLeveledNpcById(aFormId))
+    {
+        // A leveled list only has a class when every possible pick agrees; a mixed
+        // or partly unresolved list stays Unknown.
+        bool first = true;
+        for (const uint32_t entryId : pLeveledNpc->m_entryIds)
+        {
+            const ActorPopulationClassification entry = ClassifyTemplateTarget(entryId, aDepth + 1);
+            if (entry.Class == ActorPopulationClass::kUnknown)
+                return {};
+
+            if (first)
+            {
+                classification = entry;
+                first = false;
+                continue;
+            }
+
+            if (entry.Class != classification.Class)
+                return {};
+
+            if (entry.RaceFormId != classification.RaceFormId)
+            {
+                classification.RaceFormId = 0;
+                classification.RaceEditorId.clear();
+            }
+        }
+        return classification;
+    }
+
+    const NPC* const pNpc = m_recordCollection->FindNpcById(aFormId);
+    if (pNpc == nullptr)
+        return classification;
+
+    // With the Traits template flag the engine takes the race from TPLT, and
+    // RNAM is only a placeholder (DefaultRace, FoxRace, ...).
+    if ((pNpc->m_templateDataFlags & Chunks::ACBS::kTraits) != 0 && pNpc->m_templateId != 0)
+        return ClassifyTemplateTarget(pNpc->m_templateId, aDepth + 1);
+
+    if (pNpc->m_raceId == 0)
         return classification;
 
     classification.RaceFormId = pNpc->m_raceId;

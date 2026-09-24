@@ -264,7 +264,7 @@ bool TESFile::ReadGroupOrRecord(
     const bool hasOutOfRangeLightLocalId =
         parentFormIdPrefix != std::end(m_parentToFormIdPrefix) &&
         (parentFormIdPrefix->second & 0xFF000000u) == 0xFE000000u && (formId & 0x00FFFFFFu) > 0x00000FFFu;
-    const bool isActorPopulationRecord = formType == FormEnum::ACHR || formType == FormEnum::NPC_ || formType == FormEnum::RACE;
+    const bool isActorPopulationRecord = formType == FormEnum::ACHR || formType == FormEnum::NPC_ || formType == FormEnum::RACE || formType == FormEnum::LVLN;
 
     if (hasOutOfRangeLightLocalId || (isActorPopulationRecord && !formIdPrefix))
     {
@@ -339,6 +339,21 @@ bool TESFile::ReadGroupOrRecord(
             }
             else
                 aRecordCollection.m_races.erase(resolvedFormIdPrefix + (formId & 0x00FFFFFFu));
+            break;
+        }
+        case FormEnum::LVLN:
+        {
+            LVLN parsedRecord;
+            parsedRecord.CopyRecordData(pRecord);
+            parsedRecord.SetBaseId(resolvedFormIdPrefix);
+            actorRecordValid = parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix);
+            if (actorRecordValid)
+            {
+                const uint32_t resolvedFormId = parsedRecord.GetFormId();
+                aRecordCollection.m_leveledNpcs.insert_or_assign(resolvedFormId, std::move(parsedRecord));
+            }
+            else
+                aRecordCollection.m_leveledNpcs.erase(resolvedFormIdPrefix + (formId & 0x00FFFFFFu));
             break;
         }
         case FormEnum::CONT:

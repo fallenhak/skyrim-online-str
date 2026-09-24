@@ -116,6 +116,13 @@ constexpr uint32_t kMasterNpcRawId = 0x01002700;
 constexpr uint32_t kBretonNpcRawId = 0x01002800;
 constexpr uint32_t kNordChildNpcRawId = 0x01002900;
 constexpr uint32_t kElderNpcRawId = 0x01002A00;
+constexpr uint32_t kTemplatedGuardNpcRawId = 0x01002B00;
+constexpr uint32_t kTemplateOnlyStatsNpcRawId = 0x01002C00;
+constexpr uint32_t kLeveledGuardNpcRawId = 0x01002D00;
+constexpr uint32_t kMixedLeveledNpcRawId = 0x01002E00;
+constexpr uint32_t kCyclicTemplateNpcRawId = 0x01002F00;
+constexpr uint32_t kHumanoidLeveledListRawId = 0x01004000;
+constexpr uint32_t kMixedLeveledListRawId = 0x01004100;
 
 constexpr uint32_t kNordActorReferenceRawId = 0x01003000;
 constexpr uint32_t kWolfActorReferenceRawId = 0x01003100;
@@ -140,6 +147,11 @@ constexpr uint32_t kMasterNpcId = kMasterNpcRawId;
 constexpr uint32_t kBretonNpcId = kBretonNpcRawId;
 constexpr uint32_t kNordChildNpcId = kNordChildNpcRawId;
 constexpr uint32_t kElderNpcId = kElderNpcRawId;
+constexpr uint32_t kTemplatedGuardNpcId = kTemplatedGuardNpcRawId;
+constexpr uint32_t kTemplateOnlyStatsNpcId = kTemplateOnlyStatsNpcRawId;
+constexpr uint32_t kLeveledGuardNpcId = kLeveledGuardNpcRawId;
+constexpr uint32_t kMixedLeveledNpcId = kMixedLeveledNpcRawId;
+constexpr uint32_t kCyclicTemplateNpcId = kCyclicTemplateNpcRawId;
 constexpr uint32_t kNordActorReferenceId = kNordActorReferenceRawId;
 constexpr uint32_t kWolfActorReferenceId = kWolfActorReferenceRawId;
 constexpr uint32_t kMissingNpcActorReferenceId = kMissingNpcActorReferenceRawId;
@@ -187,6 +199,40 @@ Bytes MakeNpcData(const char* apEditorId, const uint32_t* apRaceRawId)
         AppendChunk(data, ChunkId::RNAM_ID, payload);
     }
 
+    return data;
+}
+
+// Mirrors a vanilla templated NPC: RNAM holds a placeholder race and the real
+// race comes from TPLT when the ACBS Traits template flag is set.
+Bytes MakeTemplatedNpcData(const char* apEditorId, const uint32_t aPlaceholderRaceRawId, const uint32_t aTemplateRawId,
+                           const uint16_t aTemplateDataFlags)
+{
+    Bytes data = MakeNpcData(apEditorId, &aPlaceholderRaceRawId);
+
+    Bytes acbs(0x18, 0);
+    std::memcpy(acbs.data() + 0x10, &aTemplateDataFlags, sizeof(aTemplateDataFlags));
+    AppendChunk(data, ChunkId::ACBS_ID, acbs);
+
+    Bytes payload;
+    AppendValue(payload, aTemplateRawId);
+    AppendChunk(data, ChunkId::TPLT_ID, payload);
+    return data;
+}
+
+Bytes MakeLeveledNpcData(const char* apEditorId, std::initializer_list<uint32_t> acEntryRawIds)
+{
+    Bytes data;
+    AppendEditorId(data, apEditorId);
+    for (const uint32_t entryRawId : acEntryRawIds)
+    {
+        Bytes payload;
+        AppendValue(payload, uint16_t{1}); // level
+        AppendValue(payload, uint16_t{});
+        AppendValue(payload, entryRawId);
+        AppendValue(payload, uint16_t{1}); // count
+        AppendValue(payload, uint16_t{});
+        AppendChunk(data, ChunkId::LVLO_ID, payload);
+    }
     return data;
 }
 
@@ -284,6 +330,19 @@ Bytes MakePluginData()
     AppendRecord(data, FormEnum::NPC_, kBretonNpcRawId, MakeNpcData("BretonNpc", &kBretonRaceRawId));
     AppendRecord(data, FormEnum::NPC_, kNordChildNpcRawId, MakeNpcData("NordChildNpc", &kNordChildRaceRawId));
     AppendRecord(data, FormEnum::NPC_, kElderNpcRawId, MakeNpcData("ElderNpc", &kElderRaceRawId));
+    AppendRecord(data, FormEnum::NPC_, kTemplatedGuardNpcRawId,
+                 MakeTemplatedNpcData("TemplatedGuardNpc", kWolfRaceRawId, kNordNpcRawId, Chunks::ACBS::kTraits | Chunks::ACBS::kStats));
+    AppendRecord(data, FormEnum::NPC_, kTemplateOnlyStatsNpcRawId,
+                 MakeTemplatedNpcData("TemplateOnlyStatsNpc", kWolfRaceRawId, kNordNpcRawId, Chunks::ACBS::kStats));
+    AppendRecord(data, FormEnum::NPC_, kLeveledGuardNpcRawId,
+                 MakeTemplatedNpcData("LeveledGuardNpc", kWolfRaceRawId, kHumanoidLeveledListRawId, Chunks::ACBS::kTraits));
+    AppendRecord(data, FormEnum::NPC_, kMixedLeveledNpcRawId,
+                 MakeTemplatedNpcData("MixedLeveledNpc", kNordRaceRawId, kMixedLeveledListRawId, Chunks::ACBS::kTraits));
+    AppendRecord(data, FormEnum::NPC_, kCyclicTemplateNpcRawId,
+                 MakeTemplatedNpcData("CyclicTemplateNpc", kNordRaceRawId, kCyclicTemplateNpcRawId, Chunks::ACBS::kTraits));
+    AppendRecord(data, FormEnum::LVLN, kHumanoidLeveledListRawId,
+                 MakeLeveledNpcData("HumanoidLeveledList", {kNordNpcRawId, kBretonNpcRawId, kTemplatedGuardNpcRawId}));
+    AppendRecord(data, FormEnum::LVLN, kMixedLeveledListRawId, MakeLeveledNpcData("MixedLeveledList", {kNordNpcRawId, kWolfNpcRawId}));
 
     AppendRecord(data, FormEnum::ACHR, kNordActorReferenceRawId, MakeActorReferenceData(kNordNpcRawId));
     AppendRecord(data, FormEnum::ACHR, kWolfActorReferenceRawId, MakeActorReferenceData(kWolfNpcRawId));
@@ -405,6 +464,30 @@ TEST_F(ActorPopulationTests, InstallsConservativeVanillaHumanoidRules)
     EXPECT_EQ(policy.ClassifyNpcBase(kWolfNpcId).Class, ActorPopulationClass::kUnknown);
     EXPECT_EQ(policy.ClassifyNpcBase(kDraugrNpcId).Class, ActorPopulationClass::kUnknown);
     EXPECT_EQ(policy.ClassifyNpcBase(kEdgeNpcId).Class, ActorPopulationClass::kUnknown);
+}
+
+TEST_F(ActorPopulationTests, ResolvesTemplatedAndLeveledNpcRaces)
+{
+    ActorPopulationPolicy policy(&m_records);
+    policy.SetRaceClassification("WolfRace", ActorPopulationClass::kCreature);
+
+    // Traits flag: the race comes from the template, not the placeholder RNAM.
+    const auto templated = policy.ClassifyNpcBase(kTemplatedGuardNpcId);
+    EXPECT_EQ(templated.Class, ActorPopulationClass::kHumanoidNpc);
+    EXPECT_EQ(templated.NpcFormId, kTemplatedGuardNpcId);
+    EXPECT_EQ(templated.RaceEditorId, "NordRace");
+
+    // Without the Traits flag RNAM stays authoritative.
+    EXPECT_EQ(policy.ClassifyNpcBase(kTemplateOnlyStatsNpcId).Class, ActorPopulationClass::kCreature);
+
+    // A leveled list whose every pick is humanoid is humanoid, even with mixed races.
+    const auto leveled = policy.ClassifyNpcBase(kLeveledGuardNpcId);
+    EXPECT_EQ(leveled.Class, ActorPopulationClass::kHumanoidNpc);
+    EXPECT_TRUE(leveled.RaceEditorId.empty());
+
+    // Mixed humanoid/creature lists and template cycles stay Unknown.
+    EXPECT_EQ(policy.ClassifyNpcBase(kMixedLeveledNpcId).Class, ActorPopulationClass::kUnknown);
+    EXPECT_EQ(policy.ClassifyNpcBase(kCyclicTemplateNpcId).Class, ActorPopulationClass::kUnknown);
 }
 
 TEST_F(ActorPopulationTests, AppliesExplicitRaceRulesAndUnknownOverridesAtomically)
