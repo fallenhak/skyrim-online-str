@@ -22,6 +22,9 @@ struct CharacterApplyService final
 
     TP_NOCOPYMOVE(CharacterApplyService);
 
+    // The title-menu entry flow runs before Papyrus ticks, so World::UpdateNetworkOnly drives it directly.
+    void UpdateWithoutVm(double aDelta) noexcept { OnUpdate(UpdateEvent(aDelta)); }
+
 private:
     enum class EntryPhase : std::uint8_t
     {

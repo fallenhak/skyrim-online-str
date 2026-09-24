@@ -91,6 +91,7 @@ void World::UpdateNetworkOnly() noexcept
 
     m_runner.OnUpdate(UpdateEvent(cDeltaSeconds));
     m_transport.Update();
+    GetCharacterApplyService().UpdateWithoutVm(cDeltaSeconds);
 }
 
 bool World::IsCreated() noexcept

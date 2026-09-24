@@ -56,7 +56,8 @@ export class EntryService {
     this.client.authStateChange.subscribe(auth => this.auth$.next(auth));
     this.client.loadingStageChange.subscribe(({ stage, progress }) => {
       this.stage$.next({ stage, progress });
-      if (stage === 'done') {
+      // RaceMenu is a native Skyrim menu; the entry overlay must not cover it.
+      if (stage === 'done' || stage === 'raceMenu') {
         this.active$.next(false);
       }
     });

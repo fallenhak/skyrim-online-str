@@ -63,6 +63,11 @@ struct OverlayService
     void SetInGame(bool aInGame) noexcept;
     [[nodiscard]] bool GetInGame() const noexcept;
 
+    // Title-menu entry screen: the overlay must take input before a player exists.
+    void SetEntryActive(bool aActive) noexcept;
+    // Hands mouse/keyboard back to Skyrim once the entry flow reaches a native menu or the world.
+    void ReleaseEntryInput() noexcept;
+
     void SetVersion(const std::string& acVersion);
 
     OverlayApp* GetOverlayApp() const noexcept { return m_pOverlay.get(); }
@@ -110,6 +115,8 @@ private:
 
     bool m_active = false;
     bool m_inGame = false;
+    bool m_entryActive = false;
+    bool m_entryInputApplied = false;
     std::uint32_t m_characterConnectionGeneration = 0;
 
     entt::scoped_connection m_updateConnection;

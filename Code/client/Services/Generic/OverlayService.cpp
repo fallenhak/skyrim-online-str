@@ -5,6 +5,7 @@
 #include <OverlayApp.hpp>
 
 #include <D3D11Hook.hpp>
+#include <DInputHook.hpp>
 #include <OverlayRenderHandlerD3D11.hpp>
 
 #include <Systems/RenderSystemD3D11.h>
@@ -160,6 +161,7 @@ void OverlayService::Create(RenderSystemD3D11* apRenderSystem) noexcept
     }
 
     m_pOverlay->GetClient()->Create();
+    SetEntryActive(true);
     m_transport.StartLauncherSession();
 }
 
@@ -171,6 +173,18 @@ void OverlayService::Render() noexcept
         SetInGame(true);
     else if (!inGame && m_inGame)
         SetInGame(false);
+
+    // The render handler may not exist when the entry screen is activated, so apply input capture lazily.
+    if (m_entryActive && !m_entryInputApplied)
+    {
+        if (auto pRenderer = m_pOverlay->GetClient()->GetOverlayRenderHandler())
+        {
+            TiltedPhoques::DInputHook::Get().SetEnabled(true);
+            pRenderer->SetCursorVisible(true);
+            m_entryInputApplied = true;
+            spdlog::info("[UI] entry screen input captured");
+        }
+    }
 
     m_pOverlay->GetClient()->Render();
 }
@@ -196,9 +210,37 @@ void OverlayService::Initialize() noexcept
     m_pOverlay->ExecuteAsync("init");
 }
 
+void OverlayService::SetEntryActive(bool aActive) noexcept
+{
+    if (m_entryActive == aActive)
+        return;
+    m_entryActive = aActive;
+    m_entryInputApplied = false;
+    if (aActive)
+    {
+        m_active = true;
+        m_pOverlay->ExecuteAsync("activate");
+    }
+}
+
+void OverlayService::ReleaseEntryInput() noexcept
+{
+    m_entryActive = false;
+    m_entryInputApplied = false;
+    if (m_active)
+    {
+        m_active = false;
+        m_pOverlay->ExecuteAsync("deactivate");
+    }
+    TiltedPhoques::DInputHook::Get().SetEnabled(false);
+    if (auto pRenderer = m_pOverlay->GetClient()->GetOverlayRenderHandler())
+        pRenderer->SetCursorVisible(false);
+    spdlog::info("[UI] entry input released to the game");
+}
+
 void OverlayService::SetActive(bool aActive) noexcept
 {
-    if (!m_inGame)
+    if (!m_inGame && !m_entryActive)
         return;
     if (m_active == aActive)
         return;
@@ -221,6 +263,8 @@ void OverlayService::SetInGame(bool aInGame) noexcept
 
     if (m_inGame)
     {
+        // World entry owns input from here; CharacterApplyService decides visibility.
+        m_entryActive = false;
         SetVersion(BUILD_COMMIT);
         m_pOverlay->ExecuteAsync("enterGame");
     }

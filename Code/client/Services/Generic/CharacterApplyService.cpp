@@ -158,6 +158,7 @@ void CharacterApplyService::OnWorldSyncStarted(const CharacterWorldSyncStartedEv
 
     if (!m_pendingSnapshot->NeedsRaceMenu)
     {
+        m_world.GetOverlayService().ReleaseEntryInput();
         EmitLoadingStage(LoadingStage::kEnteringWorld, 0.9f);
         EmitLoadingStage(LoadingStage::kDone, 1.f);
         m_pendingSnapshot.reset();
@@ -165,8 +166,7 @@ void CharacterApplyService::OnWorldSyncStarted(const CharacterWorldSyncStartedEv
     }
 
     EmitLoadingStage(LoadingStage::kRaceMenu, 0.82f);
-    m_world.GetOverlayService().SetActive(false);
-    TiltedPhoques::DInputHook::Get().SetEnabled(false);
+    m_world.GetOverlayService().ReleaseEntryInput();
     m_entryPhase = EntryPhase::kOpeningRaceMenuConsole;
     ConsoleCommand::QueueConsole(UIMessage::kShow);
 }
@@ -333,8 +333,6 @@ void CharacterApplyService::FinishRaceMenu() noexcept
         spdlog::error("Could not persist the RaceMenu race and sex for character {}.", m_pendingSnapshot->CharacterId);
     }
 
-    TiltedPhoques::DInputHook::Get().SetEnabled(true);
-    m_world.GetOverlayService().SetActive(true);
     EmitLoadingStage(LoadingStage::kEnteringWorld, 0.9f);
     EmitLoadingStage(LoadingStage::kDone, 1.f);
     m_pendingSnapshot.reset();
