@@ -32,7 +32,7 @@
 
 #include <cryptopp/base64.h>
 #include <cryptopp/filters.h>
-#include <include/rapidjson/document.h>
+#include <rapidjson/document.h>
 
 #include <filesystem>
 #include <fstream>

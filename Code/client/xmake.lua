@@ -46,6 +46,7 @@ target(name)
         "spdlog",
         "hopscotch-map",
         "cryptopp",
+        "rapidjson",
         "gamenetworkingsockets",
         "discord",
         "imgui",
@@ -74,5 +75,6 @@ target(name)
 end
 
 add_requires("tiltedcore")
+add_requires("rapidjson")
 
 build_client("SkyrimTogetherClient")
