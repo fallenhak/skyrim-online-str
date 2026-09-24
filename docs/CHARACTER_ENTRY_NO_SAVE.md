@@ -9,6 +9,9 @@ SkyMP'nin Skyrim Platform örneği ana menüden konsol açıp `coc riverwood` il
 - [SkyMP plugin örneği: ana menüden `coc riverwood`](https://github.com/skyrim-multiplayer/skymp/blob/main/skyrim-platform/tools/plugin-example/README.md)
 - [CommonLib: native konsol komut çağrısı](https://github.com/libxse/commonlibsse/blob/main/src/RE/C/Console.cpp)
 - [WhiterunTempleofKynareth hücre kaydı ve FormID](https://steamcommunity.com/app/489830/discussions/0/4339861173664120302/?l=german)
+- [Alternate Start - Live Another Life: kurulum dosyaları ve alternatif başlangıç akışı](https://www.nexusmods.com/skyrimspecialedition/mods/272)
+
+Alternate Start bir Helgen'siz başlangıç sunuyor; ancak kendi ESP/BSA/INI dosyaları ve quest/script akışıyla dağıtılıyor. STR'ye özel küçük bir ESP de istemci başına yeni plugin ve yükleme sırası gerektirir. SkyMP'nin ana menüden COC örneği doğrudan kullanılabildiği için V1'de bu bağımlılıklar eklenmedi. COC'nin MQ101'i hiç başlatmadığı ve vanilla başlangıç scriptleriyle etkileşimi oyun içinde doğrulanmalı.
 
 Başlangıç konumu sabit tahmin koordinatları değildir: COC tamamlandıktan sonra istemci hücrenin vanilla COC marker konumunu `TESObjectCELL::GetCOCPlacementInfo` ile alır. Yeni karakterde bu konum `CharacterReadyRequest` üzerinden gönderilir ve sunucu assignment'tan önce DB'ye yazar. Bundan sonraki normal runtime save-back, Skyrim save dosyasına değil owner-scoped karakter DB kaydına cell/konum/vital değerleri yazar.
 
