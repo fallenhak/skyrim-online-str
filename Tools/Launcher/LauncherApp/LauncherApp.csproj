@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>SkyrimOnlineSTR.Launcher</AssemblyName>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType Condition="'$(PublishSingleFile)' == 'true'">none</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\InstallerCore\InstallerCore.csproj" />
+    <None Update="launcher.config.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
