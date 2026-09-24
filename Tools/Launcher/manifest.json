@@ -79,6 +79,21 @@
       "target": "data",
       "order": 50,
       "stripPrefix": "Data"
+    },
+    {
+      "id": "str-client",
+      "name": "Skyrim Online STR client (integration 4b1a4f93)",
+      "version": "4b1a4f93",
+      "url": "https://87-76-146-253.sslip.io/skyrim-online-str/assets/str-client-4b1a4f93.zip",
+      "sha256": "8b8ae67c697e9c501c3695901f7e80d551d81ca42e02da1b6dfce941ccf251a3",
+      "size": 171587147,
+      "target": "data",
+      "order": 60,
+      "stripPrefix": "Data",
+      "plugins": [
+        "SkyrimTogether.esp",
+        "SkyrimTogetherQuestPatches.esp"
+      ]
     }
   ]
 }
