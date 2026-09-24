@@ -47,7 +47,7 @@ The client service exposes the request methods and dispatcher events consumed by
 
 ## Local development identity binding
 
-For local development only, the server can explicitly bind a live player session to a persistence owner profile. The console command is disabled by default and must be enabled with `Identity:bEnableDevelopmentIdentityBinding true` in `config/Settings.ini`. The automatic two-player bootstrap is separately disabled by default and must be enabled with `Identity:bDevTestMode true`. Enabling either development path logs a warning.
+For local development only, the server can explicitly bind a live player session to a persistence owner profile. The console command is disabled by default and must be enabled with `Identity:bEnableDevelopmentIdentityBinding true` in `config/STServer.ini`. The automatic two-player bootstrap is separately disabled by default and must be enabled with `Identity:bDevTestMode true`. Enabling either development path logs a warning.
 
 The dedicated server console requires the leading `/`; with the command setting enabled, use `/DevBindIdentity <PlayerId> <OwnerProfileId>`. The registered command name is `DevBindIdentity`. It resolves the active `PlayerId` to its live connection and calls the existing server-internal `SessionService::BindIdentity` transition. It only accepts sessions awaiting identity, requires a non-empty manually supplied profile ID, and refuses to overwrite an existing binding. In `bDevTestMode`, accepted sessions use that same transition automatically; the temporary profile is derived from the submitted Discord ID when present, otherwise from the save name.
 
