@@ -114,6 +114,7 @@ declare namespace SkyrimTogetherTypes {
     race: CharacterGameId;
     sex: number;
     level: number;
+    slotIndex: number;
   }
 
   /** Positional CefListValue row used to preserve uint64 and uint32 precision. */
@@ -124,7 +125,26 @@ declare namespace SkyrimTogetherTypes {
     raceModId: string,
     sex: number,
     level: number,
+    slotIndex: number,
   ];
+
+  type CharacterCreateStatus = 0 | 1 | 2 | 3 | 4 | 5;
+  type CharacterSlotsCallback = (total: number, unlocked: number) => void;
+  type CharacterCreateResultCallback = (
+    status: CharacterCreateStatus,
+    characterId: CharacterId,
+  ) => void;
+  type LoadingStage =
+    | 'connecting'
+    | 'authenticating'
+    | 'fetchingCharacters'
+    | 'creatingCharacter'
+    | 'loadingWorld'
+    | 'applyingCharacter'
+    | 'raceMenu'
+    | 'enteringWorld'
+    | 'done';
+  type LoadingStageCallback = (stage: LoadingStage, progress: number) => void;
 
   /** Numeric CharacterSelectionStatus values from the existing protocol. */
   type CharacterSelectionStatus = 0 | 1 | 2 | 3;
@@ -191,6 +211,21 @@ interface SkyrimTogether {
   on(
     event: 'characterList',
     callback: SkyrimTogetherTypes.CharacterListCallback,
+  ): void;
+
+  on(
+    event: 'characterSlots',
+    callback: SkyrimTogetherTypes.CharacterSlotsCallback,
+  ): void;
+
+  on(
+    event: 'characterCreateResult',
+    callback: SkyrimTogetherTypes.CharacterCreateResultCallback,
+  ): void;
+
+  on(
+    event: 'loadingStage',
+    callback: SkyrimTogetherTypes.LoadingStageCallback,
   ): void;
 
   /** Receive the server's character-selection result status. */
@@ -332,6 +367,21 @@ interface SkyrimTogether {
   ): void;
 
   off(
+    event: 'characterSlots',
+    callback?: SkyrimTogetherTypes.CharacterSlotsCallback,
+  ): void;
+
+  off(
+    event: 'characterCreateResult',
+    callback?: SkyrimTogetherTypes.CharacterCreateResultCallback,
+  ): void;
+
+  off(
+    event: 'loadingStage',
+    callback?: SkyrimTogetherTypes.LoadingStageCallback,
+  ): void;
+
+  off(
     event: 'characterSelectionResult',
     callback?: SkyrimTogetherTypes.CharacterSelectionResultCallback,
   ): void;
@@ -457,6 +507,9 @@ interface SkyrimTogether {
 
   /** Ask the server to select a character by its opaque decimal ID. */
   selectCharacter(characterId: SkyrimTogetherTypes.CharacterId): void;
+
+  /** Create a server-owned character in an unlocked slot. */
+  createCharacter(slotIndex: number, name: string): void;
 
   /**
    * Reveal other players in the immediate area.

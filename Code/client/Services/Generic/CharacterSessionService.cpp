@@ -13,10 +13,15 @@
 #include <Messages/NotifyCharacterReadyResult.h>
 #include <Messages/CharacterReadyRequest.h>
 #include <Messages/NotifyCharacterList.h>
+#include <Messages/NotifyCharacterSlots.h>
+#include <Messages/NotifyCharacterCreateResult.h>
 #include <Messages/NotifyCharacterSelectionResult.h>
 #include <Messages/RequestCharacterList.h>
 #include <Messages/SelectCharacterRequest.h>
+#include <Messages/CreateCharacterRequest.h>
+#include <Messages/UpdateCharacterAppearanceRequest.h>
 #include <Services/TransportService.h>
+#include <PlayerCharacter.h>
 
 CharacterSessionService::CharacterSessionService(TransportService& aTransport, entt::dispatcher& aDispatcher) noexcept
     : m_transport(aTransport)
@@ -24,6 +29,8 @@ CharacterSessionService::CharacterSessionService(TransportService& aTransport, e
     , m_connectedConnection(aDispatcher.sink<ConnectedEvent>().connect<&CharacterSessionService::HandleConnected>(this))
     , m_disconnectedConnection(aDispatcher.sink<DisconnectedEvent>().connect<&CharacterSessionService::HandleDisconnected>(this))
     , m_characterListConnection(aDispatcher.sink<NotifyCharacterList>().connect<&CharacterSessionService::HandleCharacterList>(this))
+    , m_characterSlotsConnection(aDispatcher.sink<NotifyCharacterSlots>().connect<&CharacterSessionService::HandleCharacterSlots>(this))
+    , m_characterCreateResultConnection(aDispatcher.sink<NotifyCharacterCreateResult>().connect<&CharacterSessionService::HandleCharacterCreateResult>(this))
     , m_characterSelectionResultConnection(aDispatcher.sink<NotifyCharacterSelectionResult>().connect<&CharacterSessionService::HandleCharacterSelectionResult>(this))
     , m_characterLoadSnapshotConnection(aDispatcher.sink<NotifyCharacterLoadSnapshot>().connect<&CharacterSessionService::HandleCharacterLoadSnapshot>(this))
     , m_characterSnapshotAppliedConnection(aDispatcher.sink<CharacterSnapshotAppliedEvent>().connect<&CharacterSessionService::HandleCharacterSnapshotApplied>(this))
@@ -36,6 +43,17 @@ CharacterSessionService::CharacterSessionService(TransportService& aTransport, e
 bool CharacterSessionService::RequestCharacterList() const noexcept
 {
     ::RequestCharacterList request{};
+    return m_transport.Send(request);
+}
+
+bool CharacterSessionService::CreateCharacter(const std::uint32_t aSlotIndex, const std::string_view acName) const noexcept
+{
+    if (acName.size() > 24 * 4)
+        return false;
+
+    CreateCharacterRequest request{};
+    request.SlotIndex = aSlotIndex;
+    request.Name.assign(acName.data(), acName.size());
     return m_transport.Send(request);
 }
 
@@ -58,9 +76,30 @@ bool CharacterSessionService::SelectCharacter(const std::uint64_t aCharacterId) 
     return m_transport.Send(request);
 }
 
+bool CharacterSessionService::UpdateCharacterAppearance(const GameId aRace, const std::int32_t aSex) const noexcept
+{
+    UpdateCharacterAppearanceRequest request{};
+    request.Race = aRace;
+    request.Sex = aSex;
+    return m_transport.Send(request);
+}
+
 void CharacterSessionService::HandleCharacterList(const NotifyCharacterList& acMessage) const noexcept
 {
     m_dispatcher.trigger(CharacterListReceivedEvent{acMessage.Characters});
+}
+
+void CharacterSessionService::HandleCharacterSlots(const NotifyCharacterSlots& acMessage) const noexcept
+{
+    m_dispatcher.trigger(CharacterSlotsReceivedEvent{acMessage.Total, acMessage.Unlocked});
+}
+
+void CharacterSessionService::HandleCharacterCreateResult(const NotifyCharacterCreateResult& acMessage) noexcept
+{
+    if (acMessage.Status == CharacterCreateStatus::kSuccess && m_state == ClientCharacterSessionState::kAwaitingCharacterSelection)
+        SetState(ClientCharacterSessionState::kCharacterSelected);
+
+    m_dispatcher.trigger(CharacterCreateResultEvent{acMessage.Status, acMessage.CharacterId});
 }
 
 void CharacterSessionService::HandleCharacterSelectionResult(const NotifyCharacterSelectionResult& acMessage) noexcept
@@ -89,6 +128,12 @@ void CharacterSessionService::HandleCharacterSnapshotApplied(const CharacterSnap
     SetState(ClientCharacterSessionState::kAwaitingClientReady);
     CharacterReadyRequest request{};
     request.CharacterId = acEvent.Snapshot.CharacterId;
+    if (const auto* pPlayer = PlayerCharacter::Get())
+    {
+        request.PositionX = pPlayer->position.x;
+        request.PositionY = pPlayer->position.y;
+        request.PositionZ = pPlayer->position.z;
+    }
     if (!m_transport.Send(request))
         spdlog::error("Failed to send CharacterReadyRequest for character {}.", request.CharacterId);
 }

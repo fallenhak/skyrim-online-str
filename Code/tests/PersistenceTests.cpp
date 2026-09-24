@@ -34,6 +34,8 @@ void CheckCharacterValues(const Persistence::CharacterRecord& acExpected, const 
 {
     EXPECT_EQ(acActual.OwnerProfileId, acExpected.OwnerProfileId);
     EXPECT_EQ(acActual.Name, acExpected.Name);
+    EXPECT_EQ(acActual.SlotIndex, acExpected.SlotIndex);
+    EXPECT_EQ(acActual.NeedsRaceMenu, acExpected.NeedsRaceMenu);
     EXPECT_EQ(acActual.Race, acExpected.Race);
     EXPECT_EQ(acActual.Sex, acExpected.Sex);
     EXPECT_EQ(acActual.Level, acExpected.Level);
@@ -91,6 +93,7 @@ TEST(PersistenceCharacterRepository, InitializesAndPersistsOwnerScopedRecords)
     Persistence::CharacterRepository repository(database);
 
     auto character = MakeCharacter("profile-' OR 1=1 --", "O'Reilly'); DROP TABLE characters; --");
+    character.SlotIndex = 0;
     const auto characterId = repository.CreateCharacter(character);
     ASSERT_GT(characterId, 0);
 
@@ -102,6 +105,7 @@ TEST(PersistenceCharacterRepository, InitializesAndPersistsOwnerScopedRecords)
     EXPECT_FALSE(repository.GetCharacterForOwner(characterId, "profile-' OR 1=1 --' OR 'x'='x").has_value());
 
     auto secondCharacter = MakeCharacter(character.OwnerProfileId, "Second Character");
+    secondCharacter.SlotIndex = 1;
     secondCharacter.Level = 18;
     const auto secondCharacterId = repository.CreateCharacter(secondCharacter);
 
@@ -224,4 +228,57 @@ TEST(PersistenceCharacterRuntimeState, ValidatesOnlySafeFiniteV1RuntimeValues)
     invalidState = validState;
     invalidState.Cell = {};
     EXPECT_FALSE(Persistence::IsValidCharacterRuntimeState(1, "owner", invalidState));
+}
+
+TEST(PersistenceCharacterRepository, EnforcesOwnerScopedSlotAndCaseInsensitiveNameUniqueness)
+{
+    Persistence::Database database(":memory:");
+    database.Migrate();
+    Persistence::CharacterRepository repository(database);
+
+    auto first = MakeCharacter("profile-a", "Arin Stone");
+    first.SlotIndex = 0;
+    first.NeedsRaceMenu = true;
+    const auto firstResult = repository.CreateCharacterInSlot(first);
+    ASSERT_EQ(firstResult.Status, Persistence::CharacterRepositoryCreateStatus::kCreated);
+    ASSERT_GT(firstResult.CharacterId, 0);
+
+    auto occupiedSlot = first;
+    occupiedSlot.Name = "Different Name";
+    EXPECT_EQ(repository.CreateCharacterInSlot(occupiedSlot).Status, Persistence::CharacterRepositoryCreateStatus::kSlotOccupied);
+
+    auto duplicateName = first;
+    duplicateName.SlotIndex = 1;
+    duplicateName.Name = "arin stone";
+    EXPECT_EQ(repository.CreateCharacterInSlot(duplicateName).Status, Persistence::CharacterRepositoryCreateStatus::kNameTaken);
+
+    auto otherOwner = first;
+    otherOwner.OwnerProfileId = "profile-b";
+    EXPECT_EQ(repository.CreateCharacterInSlot(otherOwner).Status, Persistence::CharacterRepositoryCreateStatus::kCreated);
+}
+
+TEST(PersistenceDatabase, AssignsLegacyCharactersStableOwnerScopedSlots)
+{
+    Persistence::Database database(":memory:");
+    database.Execute("CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);");
+    database.Execute("INSERT INTO schema_version (id, version) VALUES (1, 2);");
+    database.Execute("CREATE TABLE characters (id INTEGER PRIMARY KEY, owner_profile_id TEXT NOT NULL);");
+    database.Execute("INSERT INTO characters (id, owner_profile_id) VALUES (9, 'owner-b'), (4, 'owner-a'), (7, 'owner-a');");
+
+    database.Migrate();
+
+    auto statement = database.Prepare("SELECT id, slot_index, needs_race_menu FROM characters ORDER BY owner_profile_id, id;");
+    ASSERT_TRUE(statement.Step());
+    EXPECT_EQ(statement.ColumnInt64(0), 4);
+    EXPECT_EQ(statement.ColumnInt64(1), 0);
+    EXPECT_EQ(statement.ColumnInt64(2), 0);
+    ASSERT_TRUE(statement.Step());
+    EXPECT_EQ(statement.ColumnInt64(0), 7);
+    EXPECT_EQ(statement.ColumnInt64(1), 1);
+    EXPECT_EQ(statement.ColumnInt64(2), 0);
+    ASSERT_TRUE(statement.Step());
+    EXPECT_EQ(statement.ColumnInt64(0), 9);
+    EXPECT_EQ(statement.ColumnInt64(1), 0);
+    EXPECT_EQ(statement.ColumnInt64(2), 0);
+    EXPECT_FALSE(statement.Step());
 }

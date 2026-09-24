@@ -4,6 +4,7 @@
 
 #include <Structs/CharacterLoadSnapshot.h>
 #include <Structs/CharacterLoadSnapshotValidation.h>
+#include <Structs/CharacterCreateStatus.h>
 #include <Structs/CharacterReadyStatus.h>
 #include <Structs/CharacterSelectionStatus.h>
 #include <Structs/CharacterSummary.h>
@@ -38,6 +39,18 @@ struct CharacterSession final
     std::optional<Persistence::CharacterId> SelectedCharacterId;
 };
 
+struct CharacterSlotConfiguration final
+{
+    std::uint32_t Total{3};
+    std::uint32_t Unlocked{1};
+};
+
+struct CharacterCreateResult final
+{
+    CharacterCreateStatus Status{CharacterCreateStatus::kError};
+    std::uint64_t CharacterId{};
+};
+
 /**
  * @brief Owns the connection-to-verified-identity session state used by character selection.
  *
@@ -64,9 +77,13 @@ struct SessionService final
     [[nodiscard]] const CharacterSession* Get(ConnectionId_t aConnectionId) const noexcept;
 
     [[nodiscard]] std::optional<std::vector<CharacterSummary>> ListCharacters(ConnectionId_t aConnectionId) const;
+    [[nodiscard]] CharacterSlotConfiguration GetCharacterSlotConfiguration() const noexcept { return m_characterSlots; }
+    void SetCharacterSlotConfiguration(std::uint32_t aTotal, std::uint32_t aUnlocked) noexcept;
+    [[nodiscard]] CharacterCreateResult CreateCharacter(ConnectionId_t aConnectionId, std::uint32_t aSlotIndex, std::string_view acName);
+    [[nodiscard]] bool UpdateSelectedCharacterAppearance(ConnectionId_t aConnectionId, GameId aRace, std::int32_t aSex);
     [[nodiscard]] CharacterSelectionStatus SelectCharacter(ConnectionId_t aConnectionId, std::uint64_t aCharacterId);
     [[nodiscard]] std::optional<CharacterLoadSnapshot> PrepareCharacterLoadSnapshot(ConnectionId_t aConnectionId);
-    [[nodiscard]] CharacterReadyStatus AcceptCharacterReady(ConnectionId_t aConnectionId, std::uint64_t aCharacterId);
+    [[nodiscard]] CharacterReadyStatus AcceptCharacterReady(ConnectionId_t aConnectionId, std::uint64_t aCharacterId, float aPositionX, float aPositionY, float aPositionZ);
     [[nodiscard]] bool CanAssignPlayer(ConnectionId_t aConnectionId) const noexcept;
     [[nodiscard]] std::optional<Persistence::CharacterRecord> GetSelectedCharacterForAssignment(ConnectionId_t aConnectionId);
     [[nodiscard]] bool CompletePlayerAssignment(ConnectionId_t aConnectionId, Persistence::CharacterId aCharacterId) noexcept;
@@ -77,5 +94,6 @@ private:
     void ResetCharacterSelection(CharacterSession& aSession) noexcept;
 
     Persistence::CharacterRepository& m_characterRepository;
+    CharacterSlotConfiguration m_characterSlots{};
     std::unordered_map<ConnectionId_t, CharacterSession> m_sessions;
 };

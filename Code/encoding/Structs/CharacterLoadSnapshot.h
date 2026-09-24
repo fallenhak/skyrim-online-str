@@ -34,4 +34,5 @@ struct CharacterLoadSnapshot final
     float Health{};
     float Magicka{};
     float Stamina{};
+    bool NeedsRaceMenu{};
 };

@@ -8,6 +8,7 @@ bool CanSendCharacterProtocolMessage(const ClientOpcode aOpcode, const Character
         return true;
     case kRequestCharacterList:
     case kSelectCharacterRequest:
+    case kCreateCharacterRequest:
         return aPhase == CharacterClientSessionPhase::kAwaitingCharacterSelection;
     case kCharacterReadyRequest:
         return aPhase == CharacterClientSessionPhase::kAwaitingClientReady;

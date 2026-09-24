@@ -20,4 +20,5 @@ struct CharacterSummary final
     GameId Race{};
     std::int32_t Sex{};
     std::int32_t Level{};
+    std::uint8_t SlotIndex{};
 };

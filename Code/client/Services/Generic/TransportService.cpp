@@ -167,7 +167,7 @@ void TransportService::OnConnected()
     // null if discord is not active
     // TODO: think about user opt out
     request.DiscordId = m_world.ctx().at<DiscordService>().GetUser().id;
-    auto* pNpc = Cast<TESNPC>(pPlayer->baseForm);
+    auto* pNpc = pPlayer ? Cast<TESNPC>(pPlayer->baseForm) : nullptr;
     if (pNpc)
     {
         request.Username = pNpc->fullName.value.AsAscii();
@@ -191,19 +191,26 @@ void TransportService::OnConnected()
     }
 
     auto& modSystem = m_world.GetModSystem();
-    if (pPlayer->GetWorldSpace())
-        modSystem.GetServerModId(pPlayer->GetWorldSpace()->formID, request.WorldSpaceId);
+    if (pPlayer)
+    {
+        if (const auto* pWorldSpace = pPlayer->GetWorldSpace())
+            modSystem.GetServerModId(pWorldSpace->formID, request.WorldSpaceId);
 
-    modSystem.GetServerModId(pPlayer->parentCell->formID, request.CellId);
+        if (pPlayer->parentCell)
+            modSystem.GetServerModId(pPlayer->parentCell->formID, request.CellId);
 
-    request.Level = pPlayer->GetLevel();
+        request.Level = pPlayer->GetLevel();
+    }
 
     auto* pGameTime = TimeData::Get();
-    request.PlayerTime.TimeScale = pGameTime->TimeScale->f;
-    request.PlayerTime.Time = pGameTime->GameHour->f;
-    request.PlayerTime.Year = pGameTime->GameYear->f;
-    request.PlayerTime.Month = pGameTime->GameMonth->f;
-    request.PlayerTime.Day = pGameTime->GameDay->f;
+    if (pGameTime && pGameTime->TimeScale && pGameTime->GameHour && pGameTime->GameYear && pGameTime->GameMonth && pGameTime->GameDay)
+    {
+        request.PlayerTime.TimeScale = pGameTime->TimeScale->f;
+        request.PlayerTime.Time = pGameTime->GameHour->f;
+        request.PlayerTime.Year = pGameTime->GameYear->f;
+        request.PlayerTime.Month = pGameTime->GameMonth->f;
+        request.PlayerTime.Day = pGameTime->GameDay->f;
+    }
 
     Send(request);
 }

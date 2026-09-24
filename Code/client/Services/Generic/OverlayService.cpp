@@ -33,7 +33,10 @@
 #include <Events/UpdateEvent.h>
 #include <Events/PartyJoinedEvent.h>
 #include <Events/PartyLeftEvent.h>
+#include <Events/LoadingStageEvent.h>
 #include <Events/CharacterListReceivedEvent.h>
+#include <Events/CharacterSlotsReceivedEvent.h>
+#include <Events/CharacterCreateResultEvent.h>
 #include <Events/CharacterSelectionResultEvent.h>
 #include <Events/CharacterSessionStateChangedEvent.h>
 
@@ -129,8 +132,11 @@ OverlayService::OverlayService(World& aWorld, TransportService& transport, entt:
     m_teleportConnection = aDispatcher.sink<NotifyTeleport>().connect<&OverlayService::OnNotifyTeleport>(this);
     m_playerHealthConnection = aDispatcher.sink<NotifyPlayerHealthUpdate>().connect<&OverlayService::OnNotifyPlayerHealthUpdate>(this);
     m_characterListConnection = aDispatcher.sink<CharacterListReceivedEvent>().connect<&OverlayService::OnCharacterListReceived>(this);
+    m_characterSlotsConnection = aDispatcher.sink<CharacterSlotsReceivedEvent>().connect<&OverlayService::OnCharacterSlotsReceived>(this);
+    m_characterCreateResultConnection = aDispatcher.sink<CharacterCreateResultEvent>().connect<&OverlayService::OnCharacterCreateResult>(this);
     m_characterSelectionResultConnection = aDispatcher.sink<CharacterSelectionResultEvent>().connect<&OverlayService::OnCharacterSelectionResult>(this);
     m_characterSessionStateConnection = aDispatcher.sink<CharacterSessionStateChangedEvent>().connect<&OverlayService::OnCharacterSessionStateChanged>(this);
+    m_loadingStageConnection = aDispatcher.sink<LoadingStageEvent>().connect<&OverlayService::OnLoadingStage>(this);
     m_partyJoinedConnection = aDispatcher.sink<PartyJoinedEvent>().connect<&OverlayService::OnPartyJoinedEvent>(this);
     m_partyLeftConnection = aDispatcher.sink<PartyLeftEvent>().connect<&OverlayService::OnPartyLeftEvent>(this);
 }
@@ -468,12 +474,35 @@ void OverlayService::OnCharacterListReceived(const CharacterListReceivedEvent& a
         pCharacter->SetString(3, std::to_string(character.Race.ModId));
         pCharacter->SetInt(4, character.Sex);
         pCharacter->SetInt(5, character.Level);
+        pCharacter->SetInt(6, character.SlotIndex);
         pCharacters->SetList(index, pCharacter);
     }
 
     pArguments->SetList(0, pCharacters);
     pArguments->SetDouble(1, static_cast<double>(m_characterConnectionGeneration));
     m_pOverlay->ExecuteAsync("characterList", pArguments);
+}
+
+void OverlayService::OnCharacterSlotsReceived(const CharacterSlotsReceivedEvent& acEvent) noexcept
+{
+    if (!m_pOverlay)
+        return;
+
+    auto pArguments = CefListValue::Create();
+    pArguments->SetInt(0, static_cast<int>(acEvent.Total));
+    pArguments->SetInt(1, static_cast<int>(acEvent.Unlocked));
+    m_pOverlay->ExecuteAsync("characterSlots", pArguments);
+}
+
+void OverlayService::OnCharacterCreateResult(const CharacterCreateResultEvent& acEvent) noexcept
+{
+    if (!m_pOverlay)
+        return;
+
+    auto pArguments = CefListValue::Create();
+    pArguments->SetInt(0, static_cast<int>(acEvent.Status));
+    pArguments->SetString(1, std::to_string(acEvent.CharacterId));
+    m_pOverlay->ExecuteAsync("characterCreateResult", pArguments);
 }
 
 void OverlayService::OnCharacterSelectionResult(const CharacterSelectionResultEvent& acEvent) noexcept
@@ -521,6 +550,31 @@ void OverlayService::OnCharacterSessionStateChanged(const CharacterSessionStateC
     auto pArguments = CefListValue::Create();
     pArguments->SetString(0, state);
     m_pOverlay->ExecuteAsync("characterSessionState", pArguments);
+}
+
+void OverlayService::OnLoadingStage(const LoadingStageEvent& acEvent) noexcept
+{
+    if (!m_pOverlay)
+        return;
+
+    const char* stage = "done";
+    switch (acEvent.Stage)
+    {
+    case LoadingStage::kConnecting: stage = "connecting"; break;
+    case LoadingStage::kAuthenticating: stage = "authenticating"; break;
+    case LoadingStage::kFetchingCharacters: stage = "fetchingCharacters"; break;
+    case LoadingStage::kCreatingCharacter: stage = "creatingCharacter"; break;
+    case LoadingStage::kLoadingWorld: stage = "loadingWorld"; break;
+    case LoadingStage::kApplyingCharacter: stage = "applyingCharacter"; break;
+    case LoadingStage::kRaceMenu: stage = "raceMenu"; break;
+    case LoadingStage::kEnteringWorld: stage = "enteringWorld"; break;
+    case LoadingStage::kDone: stage = "done"; break;
+    }
+
+    auto pArguments = CefListValue::Create();
+    pArguments->SetString(0, stage);
+    pArguments->SetDouble(1, std::clamp(acEvent.Progress, 0.f, 1.f));
+    m_pOverlay->ExecuteAsync("loadingStage", pArguments);
 }
 
 void OverlayService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept

@@ -28,8 +28,11 @@ struct NotifyPlayerCellChanged;
 struct NotifyTeleport;
 struct NotifyPlayerHealthUpdate;
 struct CharacterListReceivedEvent;
+struct CharacterSlotsReceivedEvent;
+struct CharacterCreateResultEvent;
 struct CharacterSelectionResultEvent;
 struct CharacterSessionStateChangedEvent;
+struct LoadingStageEvent;
 enum ChatMessageTypes;
 struct PartyJoinedEvent;
 struct PartyLeftEvent;
@@ -84,8 +87,11 @@ protected:
     void OnNotifyTeleport(const NotifyTeleport& acMessage) noexcept;
     void OnNotifyPlayerHealthUpdate(const NotifyPlayerHealthUpdate& acMessage) noexcept;
     void OnCharacterListReceived(const CharacterListReceivedEvent& acEvent) noexcept;
+    void OnCharacterSlotsReceived(const CharacterSlotsReceivedEvent& acEvent) noexcept;
+    void OnCharacterCreateResult(const CharacterCreateResultEvent& acEvent) noexcept;
     void OnCharacterSelectionResult(const CharacterSelectionResultEvent& acEvent) noexcept;
     void OnCharacterSessionStateChanged(const CharacterSessionStateChangedEvent& acEvent) noexcept;
+    void OnLoadingStage(const LoadingStageEvent& acEvent) noexcept;
     void OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept;
     void OnPartyLeftEvent(const PartyLeftEvent& acEvent) noexcept;
 
@@ -119,8 +125,11 @@ private:
     entt::scoped_connection m_teleportConnection;
     entt::scoped_connection m_playerHealthConnection;
     entt::scoped_connection m_characterListConnection;
+    entt::scoped_connection m_characterSlotsConnection;
+    entt::scoped_connection m_characterCreateResultConnection;
     entt::scoped_connection m_characterSelectionResultConnection;
     entt::scoped_connection m_characterSessionStateConnection;
+    entt::scoped_connection m_loadingStageConnection;
     entt::scoped_connection m_partyJoinedConnection;
     entt::scoped_connection m_partyLeftConnection;
 };

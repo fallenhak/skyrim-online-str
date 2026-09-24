@@ -1,5 +1,8 @@
 #include <Services/SessionService.h>
+#include <Services/CharacterNamePolicy.h>
 
+#include <algorithm>
+#include <cmath>
 #include <limits>
 #include <spdlog/spdlog.h>
 #include <utility>
@@ -14,6 +17,7 @@ CharacterSummary MakeCharacterSummary(const Persistence::CharacterRecord& acChar
     summary.Race = acCharacter.Race;
     summary.Sex = acCharacter.Sex;
     summary.Level = acCharacter.Level;
+    summary.SlotIndex = static_cast<std::uint8_t>(acCharacter.SlotIndex);
     return summary;
 }
 
@@ -33,6 +37,7 @@ CharacterLoadSnapshot MakeCharacterLoadSnapshot(const Persistence::CharacterReco
     snapshot.Health = acCharacter.Health;
     snapshot.Magicka = acCharacter.Magicka;
     snapshot.Stamina = acCharacter.Stamina;
+    snapshot.NeedsRaceMenu = acCharacter.NeedsRaceMenu;
     return snapshot;
 }
 } // namespace
@@ -102,11 +107,85 @@ std::optional<std::vector<CharacterSummary>> SessionService::ListCharacters(cons
     const auto records = m_characterRepository.ListCharactersForOwner(*pSession->OwnerProfileId);
 
     std::vector<CharacterSummary> summaries;
-    summaries.reserve(records.size());
+    summaries.reserve(std::min(records.size(), static_cast<std::size_t>(m_characterSlots.Total)));
     for (const auto& record : records)
+    {
+        if (record.SlotIndex < 0 || static_cast<std::uint32_t>(record.SlotIndex) >= m_characterSlots.Total)
+            continue;
         summaries.push_back(MakeCharacterSummary(record));
+    }
 
     return summaries;
+}
+
+void SessionService::SetCharacterSlotConfiguration(const std::uint32_t aTotal, const std::uint32_t aUnlocked) noexcept
+{
+    constexpr std::uint32_t kMaximumCharacterSlots = 3;
+    m_characterSlots.Total = std::clamp(aTotal, 1u, kMaximumCharacterSlots);
+    m_characterSlots.Unlocked = std::min(aUnlocked, m_characterSlots.Total);
+}
+
+CharacterCreateResult SessionService::CreateCharacter(const ConnectionId_t aConnectionId, const std::uint32_t aSlotIndex, const std::string_view acName)
+{
+    auto* pSession = Get(aConnectionId);
+    if (!pSession || !pSession->OwnerProfileId.has_value() || pSession->State != SessionState::kAwaitingCharacterSelection)
+        return {CharacterCreateStatus::kError, 0};
+
+    if (aSlotIndex >= m_characterSlots.Total || aSlotIndex >= m_characterSlots.Unlocked)
+        return {CharacterCreateStatus::kSlotLocked, 0};
+
+    if (!CharacterNamePolicy::IsValid(acName))
+        return {CharacterCreateStatus::kNameInvalid, 0};
+
+    Persistence::CharacterRecord character{};
+    character.OwnerProfileId = *pSession->OwnerProfileId;
+    character.Name.assign(acName.data(), acName.size());
+    character.SlotIndex = static_cast<std::int32_t>(aSlotIndex);
+    character.NeedsRaceMenu = true;
+    character.Race = GameId(0, 0x00013746); // Skyrim.esm NordRace, replaced after RaceMenu.
+    character.Sex = 0;
+    character.Level = 1;
+    character.WorldSpace = {}; // Interior cells have no worldspace form.
+    character.Cell = GameId(0, 0x000165A7); // Skyrim.esm WhiterunTempleofKynareth.
+    character.PositionX = 0.f;
+    character.PositionY = 0.f;
+    character.PositionZ = 0.f;
+    character.Health = 100.f;
+    character.Magicka = 100.f;
+    character.Stamina = 100.f;
+
+    try
+    {
+        const auto result = m_characterRepository.CreateCharacterInSlot(character);
+        if (result.Status == Persistence::CharacterRepositoryCreateStatus::kSlotOccupied)
+            return {CharacterCreateStatus::kSlotOccupied, 0};
+        if (result.Status == Persistence::CharacterRepositoryCreateStatus::kNameTaken)
+            return {CharacterCreateStatus::kNameTaken, 0};
+        if (result.CharacterId <= 0)
+            return {CharacterCreateStatus::kError, 0};
+
+        pSession->SelectedCharacterId = result.CharacterId;
+        pSession->State = SessionState::kCharacterSelected;
+        return {CharacterCreateStatus::kSuccess, static_cast<std::uint64_t>(result.CharacterId)};
+    }
+    catch (const std::exception& exception)
+    {
+        spdlog::error("Failed to create a character for the authenticated profile: {}", exception.what());
+        return {CharacterCreateStatus::kError, 0};
+    }
+}
+
+bool SessionService::UpdateSelectedCharacterAppearance(const ConnectionId_t aConnectionId, const GameId aRace, const std::int32_t aSex)
+{
+    auto* pSession = Get(aConnectionId);
+    if (!pSession || pSession->State != SessionState::kInWorld || !pSession->OwnerProfileId.has_value() || !pSession->SelectedCharacterId.has_value() || !aRace || (aSex != 0 && aSex != 1))
+        return false;
+
+    const auto character = m_characterRepository.GetCharacterForOwner(*pSession->SelectedCharacterId, *pSession->OwnerProfileId);
+    if (!character.has_value() || !character->NeedsRaceMenu)
+        return false;
+
+    return m_characterRepository.UpdateCharacterAppearance(character->Id, *pSession->OwnerProfileId, aRace, aSex);
 }
 
 CharacterSelectionStatus SessionService::SelectCharacter(const ConnectionId_t aConnectionId, const std::uint64_t aCharacterId)
@@ -155,7 +234,8 @@ std::optional<CharacterLoadSnapshot> SessionService::PrepareCharacterLoadSnapsho
     return snapshot;
 }
 
-CharacterReadyStatus SessionService::AcceptCharacterReady(const ConnectionId_t aConnectionId, const std::uint64_t aCharacterId)
+CharacterReadyStatus SessionService::AcceptCharacterReady(const ConnectionId_t aConnectionId, const std::uint64_t aCharacterId, const float aPositionX, const float aPositionY,
+                                                          const float aPositionZ)
 {
     auto* pSession = Get(aConnectionId);
     if (!pSession || pSession->State != SessionState::kAwaitingClientReady)
@@ -170,6 +250,19 @@ CharacterReadyStatus SessionService::AcceptCharacterReady(const ConnectionId_t a
     {
         ResetCharacterSelection(*pSession);
         return CharacterReadyStatus::kCharacterMismatchOrUnavailable;
+    }
+
+    if (character->NeedsRaceMenu && !character->WorldSpace && character->Cell == GameId(0, 0x000165A7))
+    {
+        if (!std::isfinite(aPositionX) || !std::isfinite(aPositionY) || !std::isfinite(aPositionZ) || std::abs(aPositionX) > 100000.f ||
+            std::abs(aPositionY) > 100000.f || std::abs(aPositionZ) > 100000.f)
+        {
+            ResetCharacterSelection(*pSession);
+            return CharacterReadyStatus::kCharacterMismatchOrUnavailable;
+        }
+
+        if (!m_characterRepository.UpdateCharacterSpawnPosition(character->Id, *pSession->OwnerProfileId, aPositionX, aPositionY, aPositionZ))
+            spdlog::warn("Could not store the COC marker position for new character {}.", character->Id);
     }
 
     pSession->State = SessionState::kAwaitingPlayerAssignment;

@@ -10,6 +10,8 @@
 #include <Events/CharacterPlayerAssignmentStartedEvent.h>
 #include <Events/CharacterWorldSyncStartedEvent.h>
 #include <Events/CharacterSessionStateChangedEvent.h>
+#include <Events/CharacterSlotsReceivedEvent.h>
+#include <Events/CharacterCreateResultEvent.h>
 
 #include <Structs/CharacterLoadSnapshot.h>
 #include <Structs/ProgressionAwardPolicy.h>
@@ -18,8 +20,11 @@
 
 #include <cstdint>
 #include <optional>
+#include <string_view>
 
 struct NotifyCharacterList;
+struct NotifyCharacterSlots;
+struct NotifyCharacterCreateResult;
 struct NotifyCharacterLoadSnapshot;
 struct NotifyCharacterSelectionResult;
 struct NotifyCharacterReadyResult;
@@ -42,7 +47,9 @@ struct CharacterSessionService final
     CharacterSessionService& operator=(CharacterSessionService&&) = delete;
 
     [[nodiscard]] bool RequestCharacterList() const noexcept;
+    [[nodiscard]] bool CreateCharacter(std::uint32_t aSlotIndex, std::string_view acName) const noexcept;
     [[nodiscard]] bool SelectCharacter(std::uint64_t aCharacterId) const noexcept;
+    [[nodiscard]] bool UpdateCharacterAppearance(GameId aRace, std::int32_t aSex) const noexcept;
     [[nodiscard]] bool IsProgressionServerControlled() const noexcept
     {
         return ShouldUseServerControlledProgression(m_state != ClientCharacterSessionState::kDisconnected);
@@ -55,6 +62,8 @@ private:
     void HandleConnected(const ConnectedEvent& acEvent) noexcept;
     void HandleDisconnected(const DisconnectedEvent& acEvent) noexcept;
     void HandleCharacterList(const NotifyCharacterList& acMessage) const noexcept;
+    void HandleCharacterSlots(const NotifyCharacterSlots& acMessage) const noexcept;
+    void HandleCharacterCreateResult(const NotifyCharacterCreateResult& acMessage) noexcept;
     void HandleCharacterSelectionResult(const NotifyCharacterSelectionResult& acMessage) noexcept;
     void HandleCharacterLoadSnapshot(const NotifyCharacterLoadSnapshot& acMessage) noexcept;
     void HandleCharacterSnapshotApplied(const CharacterSnapshotAppliedEvent& acEvent) noexcept;
@@ -70,6 +79,8 @@ private:
     entt::scoped_connection m_connectedConnection;
     entt::scoped_connection m_disconnectedConnection;
     entt::scoped_connection m_characterListConnection;
+    entt::scoped_connection m_characterSlotsConnection;
+    entt::scoped_connection m_characterCreateResultConnection;
     entt::scoped_connection m_characterSelectionResultConnection;
     entt::scoped_connection m_characterLoadSnapshotConnection;
     entt::scoped_connection m_characterSnapshotAppliedConnection;
