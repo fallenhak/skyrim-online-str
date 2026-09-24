@@ -17,3 +17,4 @@
 
 # Custom for the project to build
 *.sh text eol=lf
+ops/vds-orchestrator-review/source/management/skyrim-dev text eol=lf
