@@ -31,6 +31,8 @@ TEST_CASE("Combat observation replay cache rejects malformed identity without co
     REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 0, 4, 5, 6}));
     REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 3, 0, 5, 6}));
     REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 3, 4, 5, 0}));
+    REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, 1, 3, 4, 5, 6}));
+    REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 3, 4, 0, 6}));
     REQUIRE(cache.Size() == 0);
 
     REQUIRE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 3, 4, 5, 6}));
@@ -56,6 +58,19 @@ TEST_CASE("Combat observation replay cache evicts oldest keys within its fixed b
     cache.Clear();
     REQUIRE(cache.Size() == 0);
     REQUIRE(cache.TryRemember(first));
+}
+
+TEST_CASE("Combat observation replay cache remains bounded during sustained unique input", "[combat_authority]")
+{
+    CombatObservationReplayCache<8> cache;
+
+    for (std::uint64_t observationId = 1; observationId <= 4096; ++observationId)
+    {
+        REQUIRE(cache.TryRemember(ValidatedHitObservation{17, 4, 29, 81, observationId, observationId, 70}));
+        REQUIRE(cache.Size() <= CombatObservationReplayCache<8>::kCapacity);
+    }
+
+    REQUIRE(cache.Size() == CombatObservationReplayCache<8>::kCapacity);
 }
 
 TEST_CASE("Observation replay keys distinguish a replacement attacker incarnation", "[combat_authority]")

@@ -27,7 +27,14 @@ struct CombatHitObservationRequest final : ClientMessage
     {
         return AttackerServerId == acRhs.AttackerServerId && AttackerOwnershipEpoch == acRhs.AttackerOwnershipEpoch &&
                TargetServerId == acRhs.TargetServerId && TargetLifecycleGeneration == acRhs.TargetLifecycleGeneration &&
-               ObservationId == acRhs.ObservationId && GetOpcode() == acRhs.GetOpcode();
+               ObservationId == acRhs.ObservationId && m_hasValidWireEncoding == acRhs.m_hasValidWireEncoding &&
+               GetOpcode() == acRhs.GetOpcode();
+    }
+
+    [[nodiscard]] bool IsWellFormed() const noexcept
+    {
+        return m_hasValidWireEncoding && AttackerServerId != 0 && AttackerOwnershipEpoch != 0 && TargetServerId != 0 &&
+               TargetLifecycleGeneration != 0 && ObservationId != 0 && AttackerServerId != TargetServerId;
     }
 
     std::uint32_t AttackerServerId{};
@@ -35,4 +42,10 @@ struct CombatHitObservationRequest final : ClientMessage
     std::uint32_t TargetServerId{};
     std::uint64_t TargetLifecycleGeneration{};
     std::uint64_t ObservationId{};
+
+private:
+    // The three server identifiers and the ownership epoch are wire varints,
+    // but their protocol fields are 32-bit. Remember overflow so narrowing
+    // cannot silently alias a different server entity or owner epoch.
+    bool m_hasValidWireEncoding{true};
 };

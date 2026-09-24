@@ -112,7 +112,7 @@ void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservati
 {
     const auto& packet = acMessage.Packet;
     auto* const pPlayer = acMessage.GetSender();
-    if (!pPlayer || packet.AttackerServerId == packet.TargetServerId || !m_pendingObservations.CanAppend() ||
+    if (!pPlayer || !packet.IsWellFormed() || !m_pendingObservations.CanAppend() ||
         m_observationTick == std::numeric_limits<ValidatedHitObservation::ObservationTick>::max())
         return;
 

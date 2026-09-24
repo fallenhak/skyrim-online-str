@@ -16,6 +16,35 @@
 #include <limits>
 #include <utility>
 
+namespace
+{
+bool DecodeRawCombatHitObservationIsWellFormed(
+    const std::uint64_t aAttackerServerId,
+    const std::uint64_t aAttackerOwnershipEpoch,
+    const std::uint64_t aTargetServerId,
+    const std::uint64_t aTargetLifecycleGeneration,
+    const std::uint64_t aObservationId)
+{
+    TiltedPhoques::Buffer buffer(256);
+    TiltedPhoques::Buffer::Writer writer(&buffer);
+    writer.WriteBits(kCombatHitObservationRequest, sizeof(ClientOpcode) * 8);
+    Serialization::WriteVarInt(writer, aAttackerServerId);
+    Serialization::WriteVarInt(writer, aAttackerOwnershipEpoch);
+    Serialization::WriteVarInt(writer, aTargetServerId);
+    Serialization::WriteVarInt(writer, aTargetLifecycleGeneration);
+    Serialization::WriteVarInt(writer, aObservationId);
+
+    TiltedPhoques::Buffer::Reader reader(&buffer);
+    ClientMessageFactory factory;
+    auto message = factory.Extract(reader);
+    if (!message)
+        return false;
+
+    auto parsed = TiltedPhoques::CastUnique<CombatHitObservationRequest>(std::move(message));
+    return parsed && parsed->IsWellFormed();
+}
+} // namespace
+
 TEST_CASE("combat hit observation requests round-trip only server entity authority and lifecycle identity", "[combat_authority]")
 {
     CombatHitObservationRequest request{};
@@ -35,6 +64,25 @@ TEST_CASE("combat hit observation requests round-trip only server entity authori
     REQUIRE(message);
     auto parsed = TiltedPhoques::CastUnique<CombatHitObservationRequest>(std::move(message));
     REQUIRE(*parsed == request);
+}
+
+TEST_CASE("combat hit observation requests reject malformed identities and oversized 32-bit fields", "[combat_authority]")
+{
+    const auto maxServerField = std::numeric_limits<std::uint32_t>::max();
+    const auto max64BitField = std::numeric_limits<std::uint64_t>::max();
+    const auto overflowingServerField = static_cast<std::uint64_t>(maxServerField) + 1;
+
+    REQUIRE(DecodeRawCombatHitObservationIsWellFormed(
+        maxServerField, maxServerField, maxServerField - 1, max64BitField, max64BitField));
+
+    REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(overflowingServerField, 2, 3, 4, 5));
+    REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, overflowingServerField, 3, 4, 5));
+    REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, 2, overflowingServerField, 4, 5));
+    REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, 2, 1, 4, 5));
+    REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(0, 2, 3, 4, 5));
+    REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, 0, 3, 4, 5));
+    REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, 2, 3, 0, 5));
+    REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, 2, 3, 4, 0));
 }
 
 TEST_CASE("pending combat observations remain FIFO and reject input at the fixed capacity", "[combat_authority]")
@@ -72,6 +120,8 @@ TEST_CASE("pending combat observations reject malformed identities without consu
 
     REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{0, 1, 2, 3, 4, 5, 6}));
     REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{1, 1, 2, 3, 0, 5, 6}));
+    REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{1, 1, 1, 3, 4, 5, 6}));
+    REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{1, 1, 2, 3, 4, 0, 6}));
     REQUIRE(pending.Size() == 0);
     REQUIRE(pending.TryAppend(ValidatedHitObservation{1, 1, 2, 3, 4, 5, 6}));
 }

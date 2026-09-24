@@ -31,6 +31,8 @@ TEST_CASE("validated hit observations reject missing identity components", "[com
     REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 0, 4, 5, 6}.IsWellFormed());
     REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 3, 0, 5, 6}.IsWellFormed());
     REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 3, 4, 5, 0}.IsWellFormed());
+    REQUIRE_FALSE(ValidatedHitObservation{1, 1, 1, 3, 4, 5, 6}.IsWellFormed());
+    REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 3, 4, 0, 6}.IsWellFormed());
 }
 
 TEST_CASE("validated hit observations can be appended without overwriting prior records", "[combat_authority]")

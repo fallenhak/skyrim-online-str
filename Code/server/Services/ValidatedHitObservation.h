@@ -60,8 +60,9 @@ struct ValidatedHitObservation final
     [[nodiscard]] constexpr bool IsWellFormed() const noexcept
     {
         return AttackerServerId != kInvalidServerId && AttackerOwnershipEpoch != kInvalidOwnershipEpoch &&
-               TargetServerId != kInvalidServerId && TargetLifecycleGeneration != kInvalidLifecycleGeneration &&
-               ObservationId != kInvalidObservationId && AttackerLifecycleGeneration != kInvalidLifecycleGeneration;
+               TargetServerId != kInvalidServerId && AttackerServerId != TargetServerId &&
+               TargetLifecycleGeneration != kInvalidLifecycleGeneration && ObservationId != kInvalidObservationId &&
+               ObservedTick != 0 && AttackerLifecycleGeneration != kInvalidLifecycleGeneration;
     }
 
     [[nodiscard]] constexpr bool IsFromAttackerIncarnation(const LifecycleGeneration aCurrentGeneration) const noexcept
