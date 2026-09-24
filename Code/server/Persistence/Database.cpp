@@ -6,13 +6,15 @@
 
 #include <limits>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace Persistence
 {
 namespace
 {
-constexpr int kCurrentSchemaVersion = 2;
+constexpr int kCurrentSchemaVersion = 3;
 
 [[noreturn]] void ThrowSqliteError(sqlite3* apDatabase, const int aResult, const std::string_view acOperation)
 {
@@ -248,6 +250,38 @@ void Database::Migrate()
             ) WITHOUT ROWID;
         )sql");
         Execute("UPDATE schema_version SET version = 2 WHERE id = 1;");
+    }
+
+    if (schemaVersion < 3)
+    {
+        Execute("ALTER TABLE characters ADD COLUMN slot_index INTEGER NOT NULL DEFAULT 0;");
+        Execute("ALTER TABLE characters ADD COLUMN needs_race_menu INTEGER NOT NULL DEFAULT 0 CHECK (needs_race_menu IN (0, 1));");
+
+        struct ExistingCharacter final
+        {
+            std::int64_t Id{};
+            std::string OwnerProfileId;
+        };
+        std::vector<ExistingCharacter> existingCharacters;
+        {
+            auto statement = Prepare("SELECT id, owner_profile_id FROM characters ORDER BY owner_profile_id COLLATE BINARY ASC, id ASC;");
+            while (statement.Step())
+                existingCharacters.push_back({statement.ColumnInt64(0), statement.ColumnText(1)});
+        }
+
+        std::unordered_map<std::string, std::int64_t> nextSlotByOwner;
+        auto updateSlot = Prepare("UPDATE characters SET slot_index = ? WHERE id = ?;");
+        for (const auto& character : existingCharacters)
+        {
+            const std::int64_t slotIndex = nextSlotByOwner[character.OwnerProfileId]++;
+            updateSlot.Bind(1, slotIndex);
+            updateSlot.Bind(2, character.Id);
+            (void)updateSlot.Step();
+            updateSlot = Prepare("UPDATE characters SET slot_index = ? WHERE id = ?;");
+        }
+
+        Execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_characters_owner_slot ON characters (owner_profile_id, slot_index);");
+        Execute("UPDATE schema_version SET version = 3 WHERE id = 1;");
     }
 
     transaction.Commit();

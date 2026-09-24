@@ -28,6 +28,10 @@
 #include <Messages/SelectCharacterRequest.h>
 #include <Persistence/CharacterRecord.h>
 #include <Services/DevelopmentSaveFormId.h>
+#include <Messages/CreateCharacterRequest.h>
+#include <Messages/NotifyCharacterSlots.h>
+#include <Messages/NotifyCharacterCreateResult.h>
+#include <Messages/UpdateCharacterAppearanceRequest.h>
 #include <es_loader/PluginFilename.h>
 #include <console/ConsoleRegistry.h>
 #include <resources/ResourceCollection.h>
@@ -40,6 +44,8 @@ constexpr size_t kMaxServerNameLength = 128u;
 // -- Cvars --
 Console::Setting uServerPort{"GameServer:uPort", "Which port to host the server on", 10578u};
 Console::Setting uMaxPlayerCount{"GameServer:uMaxPlayerCount", "Maximum number of players allowed on the server (going over the default of 8 is not recommended)", 8u};
+Console::Setting uCharacterSlotTotal{"CharacterSlots:Total", "Total persistent character slots per authenticated profile (1 to 3)", 3u};
+Console::Setting uCharacterSlotUnlocked{"CharacterSlots:Unlocked", "Number of character slots unlocked per authenticated profile", 1u};
 Console::Setting bPremiumTickrate{"GameServer:bPremiumMode", "Use premium tick rate", true};
 
 Console::StringSetting sServerName{"GameServer:sServerName", "Name that shows up in the server list", "Dedicated Together Server"};
@@ -226,6 +232,7 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole)
 
     m_pWorld = MakeUnique<World>(std::filesystem::path(sPersistenceDatabasePath.value()), bEnableActorRecordLoading, bEnableHumanoidAssignmentGate,
         bAllowUnknownActorAssignments, sRaceClassificationOverrides.value());
+    m_pWorld->GetSessionService().SetCharacterSlotConfiguration(uCharacterSlotTotal.value_as<std::uint32_t>(), uCharacterSlotUnlocked.value_as<std::uint32_t>());
 
     if (bEnableDevelopmentIdentityBinding)
     {
@@ -354,7 +361,58 @@ void GameServer::BindMessageHandlers()
 
         NotifyCharacterList response{};
         response.Characters = *characters;
+
+        const auto slotConfiguration = m_pWorld->GetSessionService().GetCharacterSlotConfiguration();
+        NotifyCharacterSlots slots{};
+        slots.Total = slotConfiguration.Total;
+        slots.Unlocked = slotConfiguration.Unlocked;
+        pPlayer->Send(slots);
         pPlayer->Send(response);
+    };
+
+    m_messageHandlers[CreateCharacterRequest::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
+    {
+        auto* pPlayer = m_pWorld->GetPlayerManager().GetByConnectionId(aConnectionId);
+        if (!pPlayer)
+        {
+            spdlog::error("Connection {:x} is not associated with a player.", aConnectionId);
+            Kick(aConnectionId);
+            return;
+        }
+
+        const auto pRealMessage = CastUnique<CreateCharacterRequest>(std::move(apMessage));
+        const auto creation = m_pWorld->GetSessionService().CreateCharacter(aConnectionId, pRealMessage->SlotIndex, pRealMessage->Name);
+
+        NotifyCharacterCreateResult response{};
+        response.Status = creation.Status;
+        response.CharacterId = creation.CharacterId;
+
+        std::optional<CharacterLoadSnapshot> snapshot;
+        if (creation.Status == CharacterCreateStatus::kSuccess)
+        {
+            snapshot = m_pWorld->GetSessionService().PrepareCharacterLoadSnapshot(aConnectionId);
+            if (!snapshot.has_value())
+            {
+                response.Status = CharacterCreateStatus::kError;
+                response.CharacterId = 0;
+            }
+        }
+
+        pPlayer->Send(response);
+        if (snapshot.has_value())
+        {
+            NotifyCharacterLoadSnapshot snapshotMessage{};
+            snapshotMessage.Snapshot = *snapshot;
+            pPlayer->Send(snapshotMessage);
+        }
+    };
+
+    m_messageHandlers[UpdateCharacterAppearanceRequest::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
+    {
+        const auto pRealMessage = CastUnique<UpdateCharacterAppearanceRequest>(std::move(apMessage));
+        const auto updated = m_pWorld->GetSessionService().UpdateSelectedCharacterAppearance(aConnectionId, pRealMessage->Race, pRealMessage->Sex);
+        if (!updated)
+            spdlog::warn("Ignored an out-of-sequence or invalid character appearance update from connection {:x}.", aConnectionId);
     };
 
     m_messageHandlers[SelectCharacterRequest::Opcode] = [this](UniquePtr<ClientMessage>& apMessage, ConnectionId_t aConnectionId)
@@ -406,7 +464,8 @@ void GameServer::BindMessageHandlers()
 
         const auto pRealMessage = CastUnique<CharacterReadyRequest>(std::move(apMessage));
         NotifyCharacterReadyResult response{};
-        response.Status = m_pWorld->GetSessionService().AcceptCharacterReady(aConnectionId, pRealMessage->CharacterId);
+        response.Status = m_pWorld->GetSessionService().AcceptCharacterReady(
+            aConnectionId, pRealMessage->CharacterId, pRealMessage->PositionX, pRealMessage->PositionY, pRealMessage->PositionZ);
         pPlayer->Send(response);
     };
 

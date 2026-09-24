@@ -10,6 +10,7 @@
 
 #include <Messages/ClientMessageFactory.h>
 #include <Messages/CharacterReadyRequest.h>
+#include <Messages/CreateCharacterRequest.h>
 #include <Messages/NotifyCharacterLoadSnapshot.h>
 #include <Messages/NotifyCharacterEnteredWorld.h>
 #include <Messages/NotifyCharacterAssignmentRejected.h>
@@ -17,6 +18,9 @@
 #include <Messages/NotifyHealthChangeBroadcast.h>
 #include <Messages/NotifyCharacterReadyResult.h>
 #include <Messages/NotifyCharacterSelectionResult.h>
+#include <Messages/NotifyCharacterCreateResult.h>
+#include <Messages/NotifyCharacterSlots.h>
+#include <Messages/UpdateCharacterAppearanceRequest.h>
 #include <Messages/RequestCharacterList.h>
 #include <Messages/RequestHealthChangeBroadcast.h>
 #include <Messages/InterruptCastRequest.h>
@@ -105,8 +109,37 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         auto parsedSelectionRequest = TiltedPhoques::CastUnique<SelectCharacterRequest>(std::move(selectionMessage));
         REQUIRE(*parsedSelectionRequest == selectionRequest);
 
+        CreateCharacterRequest createRequest{};
+        createRequest.SlotIndex = 2;
+        createRequest.Name = "Ava O'Kynareth";
+        TiltedPhoques::Buffer createBuffer(256);
+        TiltedPhoques::Buffer::Writer createWriter(&createBuffer);
+        createRequest.Serialize(createWriter);
+
+        TiltedPhoques::Buffer::Reader createReader(&createBuffer);
+        auto createMessage = clientFactory.Extract(createReader);
+        REQUIRE(createMessage);
+        auto parsedCreateRequest = TiltedPhoques::CastUnique<CreateCharacterRequest>(std::move(createMessage));
+        REQUIRE(*parsedCreateRequest == createRequest);
+
+        UpdateCharacterAppearanceRequest appearanceRequest{};
+        appearanceRequest.Race = GameId(0x01020304, 0x05060708);
+        appearanceRequest.Sex = 1;
+        TiltedPhoques::Buffer appearanceBuffer(256);
+        TiltedPhoques::Buffer::Writer appearanceWriter(&appearanceBuffer);
+        appearanceRequest.Serialize(appearanceWriter);
+
+        TiltedPhoques::Buffer::Reader appearanceReader(&appearanceBuffer);
+        auto appearanceMessage = clientFactory.Extract(appearanceReader);
+        REQUIRE(appearanceMessage);
+        auto parsedAppearanceRequest = TiltedPhoques::CastUnique<UpdateCharacterAppearanceRequest>(std::move(appearanceMessage));
+        REQUIRE(*parsedAppearanceRequest == appearanceRequest);
+
         CharacterReadyRequest readyRequest{};
         readyRequest.CharacterId = std::numeric_limits<std::uint64_t>::max();
+        readyRequest.PositionX = -2048.5f;
+        readyRequest.PositionY = 1024.25f;
+        readyRequest.PositionZ = 128.f;
         TiltedPhoques::Buffer readyBuffer(256);
         TiltedPhoques::Buffer::Writer readyWriter(&readyBuffer);
         readyRequest.Serialize(readyWriter);
@@ -252,8 +285,8 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
     {
         NotifyCharacterList list{};
         list.Characters = {
-            CharacterSummary{42, "Aela", GameId(0x01, 0x00013746), 0, 18},
-            CharacterSummary{std::numeric_limits<std::uint64_t>::max(), "O'Reilly", GameId(0x02, 0x0000003c), 1, 27}};
+            CharacterSummary{42, "Aela", GameId(0x01, 0x00013746), 0, 18, 0},
+            CharacterSummary{std::numeric_limits<std::uint64_t>::max(), "O'Reilly", GameId(0x02, 0x0000003c), 1, 27, 2}};
 
         TiltedPhoques::Buffer listBuffer(1024);
         TiltedPhoques::Buffer::Writer listWriter(&listBuffer);
@@ -265,6 +298,32 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(listMessage);
         auto parsedList = TiltedPhoques::CastUnique<NotifyCharacterList>(std::move(listMessage));
         REQUIRE(*parsedList == list);
+
+        NotifyCharacterSlots slots{};
+        slots.Total = 3;
+        slots.Unlocked = 1;
+        TiltedPhoques::Buffer slotsBuffer(256);
+        TiltedPhoques::Buffer::Writer slotsWriter(&slotsBuffer);
+        slots.Serialize(slotsWriter);
+
+        TiltedPhoques::Buffer::Reader slotsReader(&slotsBuffer);
+        auto slotsMessage = serverFactory.Extract(slotsReader);
+        REQUIRE(slotsMessage);
+        auto parsedSlots = TiltedPhoques::CastUnique<NotifyCharacterSlots>(std::move(slotsMessage));
+        REQUIRE(*parsedSlots == slots);
+
+        NotifyCharacterCreateResult createResult{};
+        createResult.Status = CharacterCreateStatus::kSuccess;
+        createResult.CharacterId = std::numeric_limits<std::uint64_t>::max();
+        TiltedPhoques::Buffer createResultBuffer(256);
+        TiltedPhoques::Buffer::Writer createResultWriter(&createResultBuffer);
+        createResult.Serialize(createResultWriter);
+
+        TiltedPhoques::Buffer::Reader createResultReader(&createResultBuffer);
+        auto createResultMessage = serverFactory.Extract(createResultReader);
+        REQUIRE(createResultMessage);
+        auto parsedCreateResult = TiltedPhoques::CastUnique<NotifyCharacterCreateResult>(std::move(createResultMessage));
+        REQUIRE(*parsedCreateResult == createResult);
 
         NotifyCharacterSelectionResult result{};
         result.Status = CharacterSelectionStatus::kNotFoundOrNotOwned;
@@ -290,6 +349,7 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         snapshotMessage.Snapshot.Health = 100.0f;
         snapshotMessage.Snapshot.Magicka = 80.0f;
         snapshotMessage.Snapshot.Stamina = 60.0f;
+        snapshotMessage.Snapshot.NeedsRaceMenu = true;
 
         TiltedPhoques::Buffer snapshotBuffer(1024);
         TiltedPhoques::Buffer::Writer snapshotWriter(&snapshotBuffer);
@@ -455,7 +515,9 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(parsedRejection->Reason == CharacterAssignmentRejectReason::kPopulationHumanoidDenied);
 
         REQUIRE(static_cast<unsigned>(kNotifyCharacterAssignmentRejected) == static_cast<unsigned>(kNotifyProgressionAward) + 1);
-        REQUIRE(static_cast<unsigned>(kServerOpcodeMax) == static_cast<unsigned>(kNotifyCharacterAssignmentRejected) + 1);
+        REQUIRE(static_cast<unsigned>(kNotifyCharacterSlots) == static_cast<unsigned>(kNotifyCharacterAssignmentRejected) + 1);
+        REQUIRE(static_cast<unsigned>(kNotifyCharacterCreateResult) == static_cast<unsigned>(kNotifyCharacterSlots) + 1);
+        REQUIRE(static_cast<unsigned>(kServerOpcodeMax) == static_cast<unsigned>(kNotifyCharacterCreateResult) + 1);
     }
 }
 

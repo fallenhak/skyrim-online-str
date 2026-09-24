@@ -51,6 +51,24 @@ export class ClientService implements OnDestroy {
     SkyrimTogetherTypes.CharacterSummaryBridge[]
   >();
 
+  /** Character slot capacity delivered before the list. */
+  public characterSlotsChange = new Subject<{
+    total: number;
+    unlocked: number;
+  }>();
+
+  /** Server result for character creation. */
+  public characterCreateResultChange = new Subject<{
+    status: SkyrimTogetherTypes.CharacterCreateStatus;
+    characterId: SkyrimTogetherTypes.CharacterId;
+  }>();
+
+  /** Native world-entry stage and normalized progress. */
+  public loadingStageChange = new BehaviorSubject<{
+    stage: SkyrimTogetherTypes.LoadingStage;
+    progress: number;
+  }>({ stage: 'done', progress: 1 });
+
   /** Reset reason for character selection state local to the UI. */
   public characterUiResetChange = new Subject<
     'connecting' | 'disconnected' | 'error'
@@ -152,6 +170,12 @@ export class ClientService implements OnDestroy {
     skyrimtogether.on('connect', this.onConnect.bind(this));
     skyrimtogether.on('disconnect', this.onDisconnect.bind(this));
     skyrimtogether.on('characterList', this.onCharacterList.bind(this));
+    skyrimtogether.on('characterSlots', this.onCharacterSlots.bind(this));
+    skyrimtogether.on(
+      'characterCreateResult',
+      this.onCharacterCreateResult.bind(this),
+    );
+    skyrimtogether.on('loadingStage', this.onLoadingStage.bind(this));
     skyrimtogether.on(
       'characterSelectionResult',
       this.onCharacterSelectionResult.bind(this),
@@ -203,6 +227,9 @@ export class ClientService implements OnDestroy {
     skyrimtogether.off('connect');
     skyrimtogether.off('disconnect');
     skyrimtogether.off('characterList');
+    skyrimtogether.off('characterSlots');
+    skyrimtogether.off('characterCreateResult');
+    skyrimtogether.off('loadingStage');
     skyrimtogether.off('characterSelectionResult');
     skyrimtogether.off('characterSessionState');
     skyrimtogether.off('setName');
@@ -258,15 +285,18 @@ export class ClientService implements OnDestroy {
   }
 
   /** Send a selection request for a server-provided character ID. */
-  public selectCharacter(
-    characterId: SkyrimTogetherTypes.CharacterId,
-  ): void {
+  public selectCharacter(characterId: SkyrimTogetherTypes.CharacterId): void {
     if (this.characterSelectionPendingIdChange.value !== null) {
       return;
     }
 
     this.characterSelectionPendingIdChange.next(characterId);
     skyrimtogether.selectCharacter(characterId);
+  }
+
+  /** Create a character in an unlocked server slot. */
+  public createCharacter(slotIndex: number, name: string): void {
+    skyrimtogether.createCharacter(slotIndex, name);
   }
 
   /**
@@ -478,6 +508,40 @@ export class ClientService implements OnDestroy {
     this.zone.run(() => {
       this.characterListChange.next(characters);
     });
+  }
+
+  private onCharacterSlots(total: number, unlocked: number): void {
+    if (
+      !this._acceptCharacterListMessages ||
+      !this.connectionStateChange.getValue()
+    ) {
+      return;
+    }
+    this.zone.run(() => this.characterSlotsChange.next({ total, unlocked }));
+  }
+
+  private onCharacterCreateResult(
+    status: SkyrimTogetherTypes.CharacterCreateStatus,
+    characterId: SkyrimTogetherTypes.CharacterId,
+  ): void {
+    if (!this.connectionStateChange.getValue()) {
+      return;
+    }
+    this.zone.run(() =>
+      this.characterCreateResultChange.next({ status, characterId }),
+    );
+  }
+
+  private onLoadingStage(
+    stage: SkyrimTogetherTypes.LoadingStage,
+    progress: number,
+  ): void {
+    this.zone.run(() =>
+      this.loadingStageChange.next({
+        stage,
+        progress: Math.max(0, Math.min(1, progress)),
+      }),
+    );
   }
 
   private onCharacterSelectionResult(

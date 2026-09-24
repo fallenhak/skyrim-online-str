@@ -57,6 +57,8 @@ enum ClientOpcode : unsigned char
     kSelectCharacterRequest,
     kCharacterReadyRequest,
     kCombatHitObservationRequest,
+    kCreateCharacterRequest,
+    kUpdateCharacterAppearanceRequest,
     kClientOpcodeMax
 };
 
@@ -123,5 +125,7 @@ enum ServerOpcode : unsigned char
     kNotifyCharacterEnteredWorld,
     kNotifyProgressionAward,
     kNotifyCharacterAssignmentRejected,
+    kNotifyCharacterSlots,
+    kNotifyCharacterCreateResult,
     kServerOpcodeMax
 };

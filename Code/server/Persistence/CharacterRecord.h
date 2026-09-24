@@ -18,6 +18,8 @@ struct CharacterRecord final
     CharacterId Id{};
     Persistence::OwnerProfileId OwnerProfileId;
     std::string Name;
+    std::int32_t SlotIndex{};
+    bool NeedsRaceMenu{};
     GameId Race{};
     std::int32_t Sex{};
     std::int32_t Level{};

@@ -11,6 +11,7 @@
 #include <Messages/TeleportRequest.h>
 
 #include <Events/SetTimeCommandEvent.h>
+#include <Events/LoadingStageEvent.h>
 
 #include <World.h>
 
@@ -65,6 +66,7 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
             ProcessDisconnectMessage();
         else if (eventName == "requestCharacterList")
         {
+            World::Get().GetDispatcher().trigger(LoadingStageEvent{LoadingStage::kFetchingCharacters, 0.24f});
             World::Get().GetRunner().Queue([]() {
                 if (!World::Get().GetCharacterSessionService().RequestCharacterList())
                     spdlog::debug("Character list request was rejected by the current client session state.");
@@ -72,6 +74,8 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
         }
         else if (eventName == "selectCharacter")
             ProcessSelectCharacterMessage(eventArgs);
+        else if (eventName == "createCharacter")
+            ProcessCreateCharacterMessage(eventArgs);
         else if (eventName == "revealPlayers")
             ProcessRevealPlayersMessage();
         else if (eventName == "sendMessage")
@@ -148,6 +152,23 @@ void OverlayClient::ProcessSelectCharacterMessage(CefRefPtr<CefListValue> aEvent
     World::Get().GetRunner().Queue([characterId]() {
         if (!World::Get().GetCharacterSessionService().SelectCharacter(characterId))
             spdlog::debug("Character selection request was rejected by the current client session state.");
+    });
+}
+
+void OverlayClient::ProcessCreateCharacterMessage(CefRefPtr<CefListValue> aEventArgs)
+{
+    const int slotIndex = aEventArgs->GetInt(0);
+    const std::string name = aEventArgs->GetString(1).ToString();
+    if (slotIndex < 0 || slotIndex > 2 || name.size() > 24 * 4)
+    {
+        spdlog::warn("Ignoring a character creation request with an invalid slot or oversized name.");
+        return;
+    }
+
+    World::Get().GetDispatcher().trigger(LoadingStageEvent{LoadingStage::kCreatingCharacter, 0.28f});
+    World::Get().GetRunner().Queue([slotIndex, name]() {
+        if (!World::Get().GetCharacterSessionService().CreateCharacter(static_cast<std::uint32_t>(slotIndex), name))
+            spdlog::debug("Character creation request was rejected by the current client session state.");
     });
 }
 

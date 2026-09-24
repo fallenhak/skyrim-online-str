@@ -1,5 +1,7 @@
 #include <Persistence/CharacterRepository.h>
 
+#include <Services/CharacterNamePolicy.h>
+
 #include <chrono>
 
 namespace Persistence
@@ -7,7 +9,7 @@ namespace Persistence
 namespace
 {
 constexpr std::string_view kCharacterColumns = "id, owner_profile_id, name, race_mod_id, race_base_id, sex, level, worldspace_mod_id, worldspace_base_id, "
-                                               "cell_mod_id, cell_base_id, position_x, position_y, position_z, health, magicka, stamina, created_at, updated_at";
+                                               "cell_mod_id, cell_base_id, position_x, position_y, position_z, health, magicka, stamina, created_at, updated_at, slot_index, needs_race_menu";
 
 [[nodiscard]] std::int64_t GetUnixTimestamp() noexcept
 {
@@ -44,6 +46,8 @@ void BindGameId(Database::Statement& aStatement, const int aModIndex, const int 
     character.Stamina = static_cast<float>(acStatement.ColumnDouble(16));
     character.CreatedAt = acStatement.ColumnInt64(17);
     character.UpdatedAt = acStatement.ColumnInt64(18);
+    character.SlotIndex = static_cast<std::int32_t>(acStatement.ColumnInt64(19));
+    character.NeedsRaceMenu = acStatement.ColumnInt64(20) != 0;
     return character;
 }
 
@@ -51,6 +55,8 @@ void BindCharacterFields(Database::Statement& aStatement, const CharacterRecord&
 {
     int index = aFirstIndex;
     aStatement.Bind(index++, acCharacter.Name);
+    aStatement.Bind(index++, static_cast<std::int64_t>(acCharacter.SlotIndex));
+    aStatement.Bind(index++, static_cast<std::int64_t>(acCharacter.NeedsRaceMenu ? 1 : 0));
     BindGameId(aStatement, index, index + 1, acCharacter.Race);
     index += 2;
     aStatement.Bind(index++, static_cast<std::int64_t>(acCharacter.Sex));
@@ -79,15 +85,17 @@ CharacterId CharacterRepository::CreateCharacter(const CharacterRecord& acCharac
 
     auto statement = m_database.Prepare(R"sql(
         INSERT INTO characters (
-            owner_profile_id, name, race_mod_id, race_base_id, sex, level,
+            owner_profile_id, name, slot_index, needs_race_menu, race_mod_id, race_base_id, sex, level,
             worldspace_mod_id, worldspace_base_id, cell_mod_id, cell_base_id,
             position_x, position_y, position_z, health, magicka, stamina, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     )sql");
 
     int index = 1;
     statement.Bind(index++, acCharacter.OwnerProfileId);
     statement.Bind(index++, acCharacter.Name);
+    statement.Bind(index++, static_cast<std::int64_t>(acCharacter.SlotIndex));
+    statement.Bind(index++, static_cast<std::int64_t>(acCharacter.NeedsRaceMenu ? 1 : 0));
     BindGameId(statement, index, index + 1, acCharacter.Race);
     index += 2;
     statement.Bind(index++, static_cast<std::int64_t>(acCharacter.Sex));
@@ -111,6 +119,63 @@ CharacterId CharacterRepository::CreateCharacter(const CharacterRecord& acCharac
     const CharacterId characterId = m_database.LastInsertRowId();
     transaction.Commit();
     return characterId;
+}
+
+CharacterRepositoryCreateResult CharacterRepository::CreateCharacterInSlot(const CharacterRecord& acCharacter)
+{
+    Database::Transaction transaction(m_database);
+
+    auto occupied = m_database.Prepare("SELECT 1 FROM characters WHERE owner_profile_id = ? AND slot_index = ? LIMIT 1;");
+    occupied.Bind(1, acCharacter.OwnerProfileId);
+    occupied.Bind(2, static_cast<std::int64_t>(acCharacter.SlotIndex));
+    if (occupied.Step())
+        return {CharacterRepositoryCreateStatus::kSlotOccupied, 0};
+
+    const auto key = CharacterNamePolicy::MakeUniquenessKey(acCharacter.Name);
+    auto existingNames = m_database.Prepare("SELECT name FROM characters WHERE owner_profile_id = ?;");
+    existingNames.Bind(1, acCharacter.OwnerProfileId);
+    while (existingNames.Step())
+    {
+        if (CharacterNamePolicy::MakeUniquenessKey(existingNames.ColumnText(0)) == key)
+            return {CharacterRepositoryCreateStatus::kNameTaken, 0};
+    }
+
+    auto statement = m_database.Prepare(R"sql(
+        INSERT INTO characters (
+            owner_profile_id, name, slot_index, needs_race_menu, race_mod_id, race_base_id, sex, level,
+            worldspace_mod_id, worldspace_base_id, cell_mod_id, cell_base_id,
+            position_x, position_y, position_z, health, magicka, stamina, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    )sql");
+
+    int index = 1;
+    statement.Bind(index++, acCharacter.OwnerProfileId);
+    statement.Bind(index++, acCharacter.Name);
+    statement.Bind(index++, static_cast<std::int64_t>(acCharacter.SlotIndex));
+    statement.Bind(index++, static_cast<std::int64_t>(acCharacter.NeedsRaceMenu ? 1 : 0));
+    BindGameId(statement, index, index + 1, acCharacter.Race);
+    index += 2;
+    statement.Bind(index++, static_cast<std::int64_t>(acCharacter.Sex));
+    statement.Bind(index++, static_cast<std::int64_t>(acCharacter.Level));
+    BindGameId(statement, index, index + 1, acCharacter.WorldSpace);
+    index += 2;
+    BindGameId(statement, index, index + 1, acCharacter.Cell);
+    index += 2;
+    statement.Bind(index++, static_cast<double>(acCharacter.PositionX));
+    statement.Bind(index++, static_cast<double>(acCharacter.PositionY));
+    statement.Bind(index++, static_cast<double>(acCharacter.PositionZ));
+    statement.Bind(index++, static_cast<double>(acCharacter.Health));
+    statement.Bind(index++, static_cast<double>(acCharacter.Magicka));
+    statement.Bind(index++, static_cast<double>(acCharacter.Stamina));
+
+    const auto now = GetUnixTimestamp();
+    statement.Bind(index++, now);
+    statement.Bind(index++, now);
+    (void)statement.Step();
+
+    const CharacterId characterId = m_database.LastInsertRowId();
+    transaction.Commit();
+    return {CharacterRepositoryCreateStatus::kCreated, characterId};
 }
 
 std::optional<CharacterRecord> CharacterRepository::GetCharacterForOwner(const CharacterId aCharacterId, const std::string_view acOwnerProfileId) const
@@ -143,7 +208,7 @@ bool CharacterRepository::UpdateCharacter(const CharacterRecord& acCharacter)
 
     auto statement = m_database.Prepare(R"sql(
         UPDATE characters SET
-            name = ?, race_mod_id = ?, race_base_id = ?, sex = ?, level = ?,
+            name = ?, slot_index = ?, needs_race_menu = ?, race_mod_id = ?, race_base_id = ?, sex = ?, level = ?,
             worldspace_mod_id = ?, worldspace_base_id = ?, cell_mod_id = ?, cell_base_id = ?,
             position_x = ?, position_y = ?, position_z = ?, health = ?, magicka = ?, stamina = ?, updated_at = ?
         WHERE id = ? AND owner_profile_id = ?;
@@ -151,7 +216,7 @@ bool CharacterRepository::UpdateCharacter(const CharacterRecord& acCharacter)
 
     int index = 1;
     BindCharacterFields(statement, acCharacter, index);
-    index += 15;
+    index += 17;
     statement.Bind(index++, GetUnixTimestamp());
     statement.Bind(index++, acCharacter.Id);
     statement.Bind(index, acCharacter.OwnerProfileId);
@@ -188,6 +253,49 @@ bool CharacterRepository::UpdateCharacterRuntimeState(const CharacterId aCharact
     statement.Bind(index++, GetUnixTimestamp());
     statement.Bind(index++, aCharacterId);
     statement.Bind(index, acOwnerProfileId);
+    (void)statement.Step();
+
+    const bool updated = m_database.Changes() == 1;
+    transaction.Commit();
+    return updated;
+}
+
+bool CharacterRepository::UpdateCharacterSpawnPosition(const CharacterId aCharacterId, const std::string_view acOwnerProfileId, const float aPositionX,
+                                                       const float aPositionY, const float aPositionZ)
+{
+    Database::Transaction transaction(m_database);
+
+    auto statement = m_database.Prepare(R"sql(
+        UPDATE characters SET position_x = ?, position_y = ?, position_z = ?, updated_at = ?
+        WHERE id = ? AND owner_profile_id = ? AND needs_race_menu = 1;
+    )sql");
+    statement.Bind(1, static_cast<double>(aPositionX));
+    statement.Bind(2, static_cast<double>(aPositionY));
+    statement.Bind(3, static_cast<double>(aPositionZ));
+    statement.Bind(4, GetUnixTimestamp());
+    statement.Bind(5, aCharacterId);
+    statement.Bind(6, acOwnerProfileId);
+    (void)statement.Step();
+
+    const bool updated = m_database.Changes() == 1;
+    transaction.Commit();
+    return updated;
+}
+
+bool CharacterRepository::UpdateCharacterAppearance(const CharacterId aCharacterId, const std::string_view acOwnerProfileId, const GameId aRace, const std::int32_t aSex)
+{
+    Database::Transaction transaction(m_database);
+
+    auto statement = m_database.Prepare(R"sql(
+        UPDATE characters SET
+            race_mod_id = ?, race_base_id = ?, sex = ?, needs_race_menu = 0, updated_at = ?
+        WHERE id = ? AND owner_profile_id = ?;
+    )sql");
+    BindGameId(statement, 1, 2, aRace);
+    statement.Bind(3, static_cast<std::int64_t>(aSex));
+    statement.Bind(4, GetUnixTimestamp());
+    statement.Bind(5, aCharacterId);
+    statement.Bind(6, acOwnerProfileId);
     (void)statement.Step();
 
     const bool updated = m_database.Changes() == 1;
