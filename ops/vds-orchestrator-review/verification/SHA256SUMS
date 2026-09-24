@@ -36,7 +36,7 @@ c5245031efced8f62815df5c0ffcd62321aa8859c9e0c946df53080a09d4cc60  ./verification
 9a4c12c2570d2b3042442c74d08b1acce9b9858db98198fad407e1bea48fc13b  ./verification/evidence-v3-20260923/live-follow-up-state-redacted.json
 a22febac9f92430463d57b8fc0256d281dee9cc785199384315f0efcbdafe41d  ./verification/evidence-v3-20260923/preflight-state-redacted.json
 74c516c89e9fce44a6e90c6a5b5c2b230943fe20570a245c28fa8a27b9b87920  ./verification/file-origins.md
-122befc917d225925f43ebcfbbccdedbbc362e68b8e5febcab6ea80c6b158aed  ./verification/final-review-retry-deployment.md
+597048b851db34353637ad74a0933bd40f40a83e81b23e91a00aa32b5bf7253d  ./verification/final-review-retry-deployment.md
 b6268778deb02d2000ca034b428967f73d7489b251351cff9543d3aa967708b7  ./verification/final-verification.md
 b8a5688f182bf14ef56e08b36a5fda9302154641bfd4e8c4bc0a5f4cf77bf83f  ./verification/first-run-blockers.md
 23fada29b0353ee49c1440f5d4ff4d84437eb7350731f721c575fff75452ac87  ./verification/operator-request-design.md
