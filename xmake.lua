@@ -1,5 +1,8 @@
 set_xmakever("3.0.0")
 
+-- Local package overrides (see xmake-packages/packages/g/gamenetworkingsockets)
+add_repositories("str-packages xmake-packages")
+
 -- If newer version of xmake, remove ccache until it actually works
 if set_policy ~= nil then
     set_policy("build.ccache", false)
