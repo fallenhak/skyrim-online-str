@@ -70,7 +70,7 @@ Envanter `Default` profilinden 24 Eylül 2026 14:40 (İstanbul) anlık görünt�
 | SSE Engine Fixes preloader (`Root`) | 7.0.0 | Nexus 17230 / 725261 | Dahil |
 | Skyrim Script Extender (SKSE64) | 2.3.1.0 | Nexus 30379 / 795992 | Dahil |
 
-En yeni Nexus JContainers 4.3.2 (16495 / file 800245) 1.7.104 desteğini bildiriyor ve STR düzeltmesi upstream'e birleşmiş durumda. Ancak bu Nexus DLL'i 1.7.104'te çalıştırılmadı. Burak'ın ayrı v4.2.13.2-rwf derlemesi Papyrus fonksiyon kaydı sırasında çöktüğünden özel build dağıtılmıyor. Bu MO2 anlık görüntüsünde JContainers klasörü de devre dışı; manifestte JContainers yok. Crash Logger 1.25.0 changelog'u 1.7.99 desteğini yazıyor; 1.7.104 desteği belirtilmediğinden dağıtıma alınmadı. Skyrim Souls RE etkin profilde yoktur ve resmi 3.1.2 DLL'i hedef runtime'ı desteklemez.
+En yeni Nexus JContainers 4.3.2 (16495 / file 800245) 1.7.104 desteğini bildiriyor ve STR düzeltmesi upstream'e birleşmiş durumda. Ancak bu Nexus DLL'i 1.7.104'te çalıştırılmadı. Burak'ın ayrı v4.2.13.2-rwf derlemesi Papyrus fonksiyon kaydı sırasında çöktüğünden özel build dağıtılmıyor. Bu MO2 anlık görüntüsünde JContainers klasörü de devre dışı; manifestte JContainers yok. Crash Logger 1.25.0 Nexus sayfası hedef runtime'ı belirtmediğinden 1.7.104 uyumu doğrulanmadı ve dağıtıma alınmadı. Skyrim Souls RE etkin profilde yoktur ve resmi 3.1.2 DLL'i hedef runtime'ı desteklemez.
 
 | `downloads` arşivi | Bayt | Not |
 |---|---:|---|
