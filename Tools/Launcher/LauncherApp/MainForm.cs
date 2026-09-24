@@ -20,7 +20,7 @@ internal sealed class UserSettings
 
 internal sealed class MainForm : Form
 {
-    private const string RequiredGameVersion = "1.6.1170";
+    private const string RequiredGameVersion = GameVersion.Required;
     private static readonly HttpClient Http = new() { Timeout = Timeout.InfiniteTimeSpan };
     private readonly LauncherConfig _config;
     private readonly string _localData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SkyrimOnlineSTR");
@@ -59,16 +59,14 @@ internal sealed class MainForm : Form
         LoadCachedManifest();
         try
         {
-            _isInstalled = _manifest is not null &&
-                GameVersion.ReadExecutableVersion(Path.Combine(_stockGame, "SkyrimSE.exe")) == RequiredGameVersion &&
+            _isInstalled = _manifest is not null && new StockGameService().IsLockedCopyValid(_stockGame, RequiredGameVersion) &&
                 new ModDeploymentService().IsCurrentInstall(_stockGame, _stateDirectory, _manifest.Mods);
         }
         catch (Exception ex) { AppendLog("Önceki kurulum doğrulanamadı; Kur / Güncelle çalıştırın. " + ex.Message); }
         BuildUi();
         LoadSettings();
         AppendLog("Skyrim Online STR launcher hazır.");
-        AppendLog("Hedef Skyrim SE sürümü: 1.6.1170.");
-        AppendLog("STR kaynak kodundaki mevcut istemci sürüm bildirimi: 1.7.104.0; istemci uyumluluğu ayrıca çözülmeli.");
+        AppendLog($"Hedef Skyrim SE sürümü: {RequiredGameVersion}; Stock Game kopyası sürüm ve SkyrimSE.exe SHA-256 değeriyle kilitlenir.");
         _launchButton.Enabled = _isInstalled;
         FormClosing += (_, e) =>
         {
@@ -92,7 +90,7 @@ internal sealed class MainForm : Form
 
         var title = new Label { Text = "Skyrim Online STR", Font = new Font(Font, FontStyle.Bold), AutoSize = true };
         root.Controls.Add(title, 0, 0);
-        var version = new Label { Text = "Skyrim SE 1.6.1170 • Steam dosyalarınızdan Stock Game kopyası", AutoSize = true, Margin = new Padding(0, 5, 0, 10) };
+        var version = new Label { Text = $"Skyrim SE {RequiredGameVersion} • Steam'den bağımsız Stock Game kopyası", AutoSize = true, Margin = new Padding(0, 5, 0, 10) };
         root.Controls.Add(version, 0, 1);
 
         var pathRow = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true };
@@ -160,28 +158,15 @@ internal sealed class MainForm : Form
             _manifest = manifest;
             File.WriteAllText(Path.Combine(_localData, "manifest.json"), ManifestReader.Serialize(manifest));
             if (GameVersion.Normalize(manifest.RequiredGameVersion) != RequiredGameVersion)
-                throw new InvalidDataException("Sunucu manifesti 1.6.1170 hedefinden farklı. Kurulum durduruldu.");
+                throw new InvalidDataException($"Sunucu manifesti {RequiredGameVersion} hedefinden farklı. Kurulum durduruldu.");
             AppendLog($"Manifest {manifest.ManifestVersion} alındı.");
 
             SetStatus("Steam oyunu Stock Game klasörüne kopyalanıyor…");
             var copyProgress = new Progress<(int Percent, string Message)>(x => { _progress.Value = x.Percent; SetStatus(x.Message); });
-            await new StockGameService().CopyFromSteamAsync(_steamPath.Text, _stockGame, copyProgress, _operation.Token);
-
-            var gameVersion = GameVersion.ReadExecutableVersion(Path.Combine(_stockGame, "SkyrimSE.exe"));
-            if (gameVersion != RequiredGameVersion)
-            {
-                var patch = manifest.Patches.FirstOrDefault(p => GameVersion.Normalize(p.FromVersion) == gameVersion &&
-                    GameVersion.Normalize(p.ToVersion) == RequiredGameVersion);
-                if (patch is null)
-                    throw new InvalidDataException($"Kopyalanan oyun {gameVersion}. Manifestte bu sürümden {RequiredGameVersion} sürümüne patch yok.");
-                SetStatus($"Oyun {RequiredGameVersion} sürümüne geri alınıyor…");
-                var patchFile = await new DownloadService(Http).EnsureAssetAsync(patch.Url, patch.Sha256, patch.Size,
-                    Path.Combine(_localData, "downloads"), cancellationToken: _operation.Token);
-                await new DeltaPatchApplier().ApplyAsync(_stockGame, patchFile, gameVersion, RequiredGameVersion, _operation.Token);
-            }
-            gameVersion = GameVersion.ReadExecutableVersion(Path.Combine(_stockGame, "SkyrimSE.exe"));
-            if (gameVersion != RequiredGameVersion)
-                throw new InvalidDataException($"Stock Game sürümü {gameVersion}; gerekli sürüm {RequiredGameVersion}.");
+            var stockGame = new StockGameService();
+            await stockGame.CopyFromSteamAsync(_steamPath.Text, _stockGame, RequiredGameVersion, copyProgress, _operation.Token);
+            if (!stockGame.IsLockedCopyValid(_stockGame, RequiredGameVersion))
+                throw new InvalidDataException("Stock Game kopyası için sürüm kilidi oluşturulamadı.");
 
             var removed = StockGameService.RemoveCreationClubContent(_stockGame);
             if (removed > 0) AppendLog($"CC içeriği temizlendi: {removed} dosya.");
@@ -202,11 +187,13 @@ internal sealed class MainForm : Form
             SetStatus("Modlar yerleştiriliyor…");
             _isInstalled = false;
             await new ModDeploymentService().ApplyAsync(_stockGame, _stateDirectory, manifest.Mods, archives, _operation.Token);
+            if (!stockGame.IsLockedCopyValid(_stockGame, RequiredGameVersion))
+                throw new InvalidDataException("Mod kurulumu SkyrimSE.exe sürüm kilidini değiştirdi. Stock Game kurulumu doğrulanamadı.");
             _progress.Value = 100;
             _isInstalled = true;
             _launchButton.Enabled = true;
             SetStatus("Kurulum tamamlandı.");
-            AppendLog($"Stock Game hazır: {gameVersion}; {manifest.Mods.Count} paket uygulandı.");
+            AppendLog($"Stock Game hazır: {RequiredGameVersion}; {manifest.Mods.Count} paket uygulandı.");
         }
         catch (OperationCanceledException) { SetStatus("İşlem iptal edildi."); AppendLog("İşlem iptal edildi."); }
         catch (Exception ex) { SetStatus("Kurulum tamamlanamadı."); AppendLog("HATA: " + ex.Message); MessageBox.Show(this, ex.Message, "Kurulum hatası", MessageBoxButtons.OK, MessageBoxIcon.Error); }
@@ -221,13 +208,11 @@ internal sealed class MainForm : Form
             MessageBox.Show(this, $"STR başlatıcısı bulunamadı:\n{launcher}\n\nDerlenmiş SkyrimTogether.exe dosyasını bu aracın yanına koyun veya launcher.config.json içindeki strLauncherPath değerini düzenleyin.", "STR başlatıcısı bulunamadı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        var answer = MessageBox.Show(this,
-            "Bu repo kodu STR istemcisi için 1.7.104.0 bildiriyor; launcher oyunu 1.6.1170'e sabitliyor. STR istemcisi bu sürüm için güncellenip derlenmediyse oyun açılmayabilir. Yine de başlatılsın mı?",
-            "Sürüm uyumluluğu", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-        if (answer != DialogResult.Yes) return;
         IDisposable? profile = null;
         try
         {
+            if (!new StockGameService().IsLockedCopyValid(_stockGame, RequiredGameVersion))
+                throw new InvalidDataException($"Stock Game sürüm veya SHA-256 doğrulaması başarısız. Gerekli Skyrim SE sürümü: {RequiredGameVersion}. Kur / Güncelle adımını yeniden çalıştırın.");
             var manifest = _manifest ?? throw new InvalidOperationException("Önce Kur / Güncelle adımını tamamlayın.");
             profile = new PluginProfileService().ApplyForSession(_stockGame, _profileDirectory, _stateDirectory, manifest.Mods);
             var info = new ProcessStartInfo(launcher) { WorkingDirectory = _stockGame, UseShellExecute = false };
@@ -319,7 +304,7 @@ internal sealed class MainForm : Form
         {
             _manifest = ManifestReader.ParseAndValidate(File.ReadAllText(path));
             if (GameVersion.Normalize(_manifest.RequiredGameVersion) != RequiredGameVersion)
-                throw new InvalidDataException("Önbellekteki manifest hedef sürümle eşleşmiyor.");
+                throw new InvalidDataException($"Önbellekteki manifest {RequiredGameVersion} hedef sürümüyle eşleşmiyor.");
             _manifestVersion = _manifest.ManifestVersion;
         }
         catch (Exception ex) { AppendLog("Önceki manifest okunamadı; tekrar Kur / Güncelle yapın. " + ex.Message); }

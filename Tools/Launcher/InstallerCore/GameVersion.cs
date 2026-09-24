@@ -4,6 +4,8 @@ namespace SosStr.Launcher;
 
 public static partial class GameVersion
 {
+    public const string Required = "1.7.104";
+
     public static string Normalize(string version)
     {
         var match = VersionPattern().Match(version ?? "");

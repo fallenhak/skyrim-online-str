@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace SosStr.Launcher;
@@ -9,19 +8,7 @@ public sealed class LauncherManifest
     public int SchemaVersion { get; set; }
     public string ManifestVersion { get; set; } = "";
     public string RequiredGameVersion { get; set; } = "";
-    public List<GamePatch> Patches { get; set; } = [];
     public List<ModPackage> Mods { get; set; } = [];
-}
-
-public sealed class GamePatch
-{
-    public string Name { get; set; } = "";
-    public string FromVersion { get; set; } = "";
-    public string ToVersion { get; set; } = "";
-    public string Url { get; set; } = "";
-    public string Sha256 { get; set; } = "";
-    public long Size { get; set; }
-    public string Format { get; set; } = "sostr-delta-v1";
 }
 
 public sealed class ModPackage
@@ -36,32 +23,6 @@ public sealed class ModPackage
     public int Order { get; set; }
     public string StripPrefix { get; set; } = "";
     public List<string> Plugins { get; set; } = [];
-}
-
-public sealed class DeltaPatchDocument
-{
-    public string Format { get; set; } = "";
-    public string FromVersion { get; set; } = "";
-    public string ToVersion { get; set; } = "";
-    public List<DeltaFile> Files { get; set; } = [];
-    public List<string> Delete { get; set; } = [];
-}
-
-public sealed class DeltaFile
-{
-    public string Path { get; set; } = "";
-    public string BaseSha256 { get; set; } = "";
-    public string Sha256 { get; set; } = "";
-    public long Size { get; set; }
-    public string Payload { get; set; } = "";
-    public List<DeltaOperation> Operations { get; set; } = [];
-}
-
-public sealed class DeltaOperation
-{
-    public string Kind { get; set; } = ""; // copy from the original file, or insert from the payload
-    public long Offset { get; set; }
-    public long Length { get; set; }
 }
 
 public static partial class ManifestReader
@@ -89,9 +50,10 @@ public static partial class ManifestReader
         if (manifest.SchemaVersion != 1)
             throw new InvalidDataException("Manifest schemaVersion değeri 1 olmalı.");
         RequireText(manifest.ManifestVersion, "manifestVersion");
-        if (!GameVersion.TryNormalize(manifest.RequiredGameVersion, out _))
+        if (!GameVersion.TryNormalize(manifest.RequiredGameVersion, out var requiredGameVersion))
             throw new InvalidDataException("requiredGameVersion geçerli bir oyun sürümü olmalı.");
-        manifest.Patches ??= [];
+        if (requiredGameVersion != GameVersion.Required)
+            throw new InvalidDataException($"Manifest oyun sürümü {requiredGameVersion}; STR kurulumu yalnız Skyrim SE {GameVersion.Required} sürümünü kabul eder.");
         manifest.Mods ??= [];
 
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -118,17 +80,6 @@ public static partial class ManifestReader
                       extension.Equals(".esl", StringComparison.OrdinalIgnoreCase)))
                     throw new InvalidDataException($"{mod.Id}.plugins yalnızca ESM/ESP/ESL dosyası olabilir: {plugin}");
             }
-        }
-
-        foreach (var patch in manifest.Patches)
-        {
-            RequireText(patch.Name, "patch.name");
-            if (!GameVersion.TryNormalize(patch.FromVersion, out _) ||
-                !GameVersion.TryNormalize(patch.ToVersion, out _))
-                throw new InvalidDataException($"{patch.Name}: patch sürüm numarası geçersiz.");
-            ValidateUrlAndHash(patch.Url, patch.Sha256, patch.Size, patch.Name);
-            if (patch.Format != "sostr-delta-v1")
-                throw new InvalidDataException($"{patch.Name}: desteklenmeyen patch biçimi '{patch.Format}'.");
         }
 
         manifest.Mods = manifest.Mods.OrderBy(m => m.Order).ToList();

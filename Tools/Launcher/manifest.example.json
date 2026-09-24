@@ -1,23 +1,12 @@
 {
   "schemaVersion": 1,
-  "manifestVersion": "2026.09.24.1",
-  "requiredGameVersion": "1.6.1170",
-  "patches": [
-    {
-      "name": "Stock Game 1.7.104 -> 1.6.1170",
-      "fromVersion": "1.7.104",
-      "toVersion": "1.6.1170",
-      "url": "https://downloads.example.invalid/skyrim-online-str/patches/patch-1.7.104-to-1.6.1170.zip",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "size": 0,
-      "format": "sostr-delta-v1"
-    }
-  ],
+  "manifestVersion": "2026.09.24.2",
+  "requiredGameVersion": "1.7.104",
   "mods": [
     {
       "id": "skse64-root",
-      "name": "SKSE64 2.2.6 — oyun kökü",
-      "version": "2.2.6 / Skyrim 1.6.1170",
+      "name": "SKSE64 2.3.1 — oyun kökü",
+      "version": "2.3.1 / Skyrim 1.7.104",
       "url": "https://downloads.example.invalid/skyrim-online-str/mods/skse64-root.zip",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 0,
@@ -27,8 +16,8 @@
     },
     {
       "id": "skse64-data",
-      "name": "SKSE64 2.2.6 — Data dosyaları",
-      "version": "2.2.6 / Skyrim 1.6.1170",
+      "name": "SKSE64 2.3.1 — Data dosyaları",
+      "version": "2.3.1 / Skyrim 1.7.104",
       "url": "https://downloads.example.invalid/skyrim-online-str/mods/skse64-data.zip",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 0,
@@ -38,8 +27,8 @@
     },
     {
       "id": "address-library",
-      "name": "Address Library — Anniversary Edition / 1.6.x",
-      "version": "1.6.x All-in-One",
+      "name": "Address Library AE All-in-One v13",
+      "version": "v13 / Skyrim 1.7.104.0",
       "url": "https://downloads.example.invalid/skyrim-online-str/mods/address-library.zip",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 0,
@@ -50,7 +39,7 @@
     {
       "id": "sse-display-tweaks",
       "name": "SSE Display Tweaks",
-      "version": "1.6.1170 ile uyumlu sürüm",
+      "version": "0.5.25 / AE 1.7.xx",
       "url": "https://downloads.example.invalid/skyrim-online-str/mods/sse-display-tweaks.zip",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 0,
@@ -60,8 +49,8 @@
     },
     {
       "id": "engine-fixes-part1",
-      "name": "SSE Engine Fixes 6.2.0 — Part 1 (SKSE / Data)",
-      "version": "6.2.0 / Skyrim 1.6.1170",
+      "name": "SSE Engine Fixes — SKSE plugin (Data)",
+      "version": "1.7.104 uyumlu yayımlanmış paket doğrulanmadı; kurmadan önce upstream sürümünü doğrulayın",
       "url": "https://downloads.example.invalid/skyrim-online-str/mods/engine-fixes-part1.zip",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 0,
@@ -71,8 +60,8 @@
     },
     {
       "id": "engine-fixes-part2",
-      "name": "SSE Engine Fixes 6.2.0 — Part 2 (oyun kökü)",
-      "version": "6.2.0 / Skyrim 1.6.1170",
+      "name": "SSE Engine Fixes — oyun kökü DLL/preloader dosyaları",
+      "version": "1.7.104 uyumlu yayımlanmış paket doğrulanmadı; 1.7.99 betasını kullanmayın",
       "url": "https://downloads.example.invalid/skyrim-online-str/mods/engine-fixes-part2.zip",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 0,
@@ -82,8 +71,8 @@
     },
     {
       "id": "ussep-cc-free",
-      "name": "USSEP — CC içeriği gerektirmeyen eski paket",
-      "version": "CC'siz uyumlu sürümü seçip sabitleyin",
+      "name": "USSEP — temel oyun, CC DLC'siz",
+      "version": "4.3.9c / Skyrim 1.7.99+; CC DLC zorunlu değil",
       "url": "https://downloads.example.invalid/skyrim-online-str/mods/ussep-cc-free.zip",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 0,
@@ -95,7 +84,7 @@
     {
       "id": "skyrim-souls-re",
       "name": "Skyrim Souls RE",
-      "version": "STR modlistinde doğrulanmış sürümü seçin",
+      "version": "3.1.2; yayımlanmış dosya 1.6.1170/1.6.1179 diyor, 1.7.104 doğrulanmadı",
       "url": "https://downloads.example.invalid/skyrim-online-str/mods/skyrim-souls-re.zip",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 0,
@@ -107,7 +96,7 @@
     {
       "id": "jcontainers-str",
       "name": "JContainers — STR sürümü",
-      "version": "rfortier/JContainers-rwf STR release",
+      "version": "rfortier/JContainers-rwf v4.2.13.2; 1.7.104 doğrulanmadı",
       "url": "https://downloads.example.invalid/skyrim-online-str/mods/jcontainers-str.zip",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 0,

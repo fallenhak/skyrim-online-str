@@ -14,9 +14,8 @@ var tests = new (string Name, Func<Task> Run)[]
     ("indirmeyi yarım dosyadan sürdürme ve sha256 doğrulama", ResumableDownload),
     ("hatalı indirmeyi silme", InvalidDownloadRejected),
     ("manifest varlık üreticisi boyut ve sha yazar", ManifestAssetGenerator),
-    ("Steam kopyası oluşturma ve CC temizliği", StockCopyAndCreationClubCleanup),
-    ("delta patch kopyala/ekle işlemleri", DeltaPatchApplication),
-    ("delta üreticisi patch uygulayıcıyla uyumlu", DeltaBuilderRoundTrip),
+    ("bağımsız Stock Game kopyası sürüm ve SHA-256 ile kilitlenir", StockCopyVersionLockAndIndependence),
+    ("yanlış Steam oyun sürümü reddedilir", WrongSteamVersionRejected),
     ("mod kök/Data dağıtımı ve eski dosyaları geri alma", ModDeployment),
     ("plugins.txt oyun oturumunda uygulanır ve geri yüklenir", PluginProfileBackupAndRestore),
     ("hata raporu ZIP'i ve Bearer token yüklemesi", ErrorReportBundleAndUpload),
@@ -36,11 +35,12 @@ static Task ManifestValidation()
 {
     var manifest = ManifestReader.ParseAndValidate(ValidManifest());
     Assert.Equal(1, manifest.SchemaVersion);
-    Assert.Equal("1.6.1170", GameVersion.Normalize(manifest.RequiredGameVersion));
+    Assert.Equal(GameVersion.Required, GameVersion.Normalize(manifest.RequiredGameVersion));
     Assert.Equal("first", manifest.Mods[0].Id);
     var example = ManifestReader.ParseAndValidate(File.ReadAllText(Path.Combine("Tools", "Launcher", "manifest.example.json")));
-    Assert.Equal("1.6.1170", GameVersion.Normalize(example.RequiredGameVersion));
+    Assert.Equal(GameVersion.Required, GameVersion.Normalize(example.RequiredGameVersion));
     Assert.Equal("engine-fixes-part2", example.Mods.Single(m => m.Id == "engine-fixes-part2").Id);
+    Assert.Equal("2.3.1 / Skyrim 1.7.104", example.Mods.Single(m => m.Id == "skse64-root").Version);
     return Task.CompletedTask;
 }
 
@@ -49,6 +49,7 @@ static Task ManifestRejectsBadValues()
     Assert.Throws<InvalidDataException>(() => ManifestReader.ParseAndValidate(ValidManifest().Replace("https://example.com/a.zip", "file:///a.zip")));
     Assert.Throws<InvalidDataException>(() => ManifestReader.ParseAndValidate(ValidManifest().Replace(new string('a', 64), "bad")));
     Assert.Throws<InvalidDataException>(() => ManifestReader.ParseAndValidate(ValidManifest().Replace("\"target\": \"data\"", "\"target\": \"anywhere\"")));
+    Assert.Throws<InvalidDataException>(() => ManifestReader.ParseAndValidate(ValidManifest().Replace("1.7.104.0", "1.6.1170.0")));
     return Task.CompletedTask;
 }
 
@@ -64,7 +65,7 @@ static Task SteamVdfParsing()
 
 static Task VersionNormalization()
 {
-    Assert.Equal("1.6.1170", GameVersion.Normalize("1.6.1170.0"));
+    Assert.Equal("1.7.104", GameVersion.Normalize("1.7.104.0"));
     Assert.Equal("1.6.640", GameVersion.Normalize("Skyrim SE 1.6.640.0 (Steam)"));
     Assert.False(GameVersion.TryNormalize("unknown", out _));
     return Task.CompletedTask;
@@ -104,7 +105,7 @@ static async Task ManifestAssetGenerator()
     await File.WriteAllBytesAsync(Path.Combine(assets, "sample.zip"), bytes);
     var manifestPath = Path.Combine(temp.Path, "manifest.json");
     await File.WriteAllTextAsync(manifestPath, $$"""
-    {"schemaVersion":1,"manifestVersion":"1","requiredGameVersion":"1.6.1170","patches":[],"mods":[{"id":"sample","name":"sample","version":"1","url":"https://example.com/sample.zip","sha256":"{{new string('0', 64)}}","size":0,"target":"data","order":0}]}
+    {"schemaVersion":1,"manifestVersion":"1","requiredGameVersion":"1.7.104","mods":[{"id":"sample","name":"sample","version":"1","url":"https://example.com/sample.zip","sha256":"{{new string('0', 64)}}","size":0,"target":"data","order":0}]}
     """);
     await RunPythonScript("update_manifest_assets.py", manifestPath, "--asset-dir", assets);
     var generated = ManifestReader.ParseAndValidate(await File.ReadAllTextAsync(manifestPath));
@@ -112,82 +113,46 @@ static async Task ManifestAssetGenerator()
     Assert.Equal(Sha(bytes), generated.Mods[0].Sha256);
 }
 
-static async Task StockCopyAndCreationClubCleanup()
+static async Task StockCopyVersionLockAndIndependence()
 {
     using var temp = new TempDirectory();
     var source = Path.Combine(temp.Path, "steam");
     var target = Path.Combine(temp.Path, "launcher", "Stock Game");
     Directory.CreateDirectory(Path.Combine(source, "Data"));
-    await File.WriteAllTextAsync(Path.Combine(source, "SkyrimSE.exe"), "game from steam");
+    var sourceExe = Path.Combine(source, "SkyrimSE.exe");
+    var targetExe = Path.Combine(target, "SkyrimSE.exe");
+    await File.WriteAllTextAsync(sourceExe, "1.7.104.0 game from steam");
     await File.WriteAllTextAsync(Path.Combine(source, "Data", "ccBGSSSE001-Fish.esl"), "cc");
     await File.WriteAllTextAsync(Path.Combine(source, "Data", "Skyrim.esm"), "vanilla");
     await File.WriteAllTextAsync(Path.Combine(source, "Skyrim.ccc"), "cc index");
 
-    await new StockGameService().CopyFromSteamAsync(source, target);
-    Assert.Equal("game from steam", await File.ReadAllTextAsync(Path.Combine(target, "SkyrimSE.exe")));
+    var service = new StockGameService(ReadFakeExecutableVersion);
+    await service.CopyFromSteamAsync(source, target, GameVersion.Required);
+    Assert.Equal("1.7.104.0 game from steam", await File.ReadAllTextAsync(targetExe));
     Assert.False(File.Exists(Path.Combine(target, "Data", "ccBGSSSE001-Fish.esl")));
     Assert.True(File.Exists(Path.Combine(target, "Data", "Skyrim.esm")));
     Assert.False(File.Exists(Path.Combine(target, "Skyrim.ccc")));
-    await File.WriteAllTextAsync(Path.Combine(source, "SkyrimSE.exe"), "Steam updated");
-    await new StockGameService().CopyFromSteamAsync(source, target);
-    Assert.Equal("game from steam", await File.ReadAllTextAsync(Path.Combine(target, "SkyrimSE.exe")));
+    Assert.True(service.IsLockedCopyValid(target, GameVersion.Required));
+
+    await File.WriteAllTextAsync(sourceExe, "1.6.1170.0 Steam updated");
+    await service.CopyFromSteamAsync(source, target, GameVersion.Required);
+    Assert.Equal("1.7.104.0 game from steam", await File.ReadAllTextAsync(targetExe));
+    Assert.True(service.IsLockedCopyValid(target, GameVersion.Required));
+
+    await File.WriteAllTextAsync(targetExe, "1.7.104.0 modified Stock Game executable");
+    await Assert.ThrowsAsync<InvalidDataException>(() => Task.Run(() => service.IsLockedCopyValid(target, GameVersion.Required)));
 }
 
-static async Task DeltaPatchApplication()
+static async Task WrongSteamVersionRejected()
 {
     using var temp = new TempDirectory();
-    var game = Path.Combine(temp.Path, "Stock Game");
-    Directory.CreateDirectory(game);
-    var exe = Path.Combine(game, "SkyrimSE.exe");
-    var original = Encoding.UTF8.GetBytes("HELLO world");
-    var final = Encoding.UTF8.GetBytes("HELLO STR!");
-    await File.WriteAllBytesAsync(exe, original);
-    var archive = Path.Combine(temp.Path, "patch.zip");
-    using (var zip = ZipFile.Open(archive, ZipArchiveMode.Create))
-    {
-        var doc = new DeltaPatchDocument
-        {
-            Format = "sostr-delta-v1", FromVersion = "1.6.640", ToVersion = "1.6.1170",
-            Files = [new DeltaFile
-            {
-                Path = "SkyrimSE.exe", BaseSha256 = Sha(original), Sha256 = Sha(final), Size = final.Length,
-                Payload = "payload/exe.bin", Operations = [new DeltaOperation { Kind = "copy", Offset = 0, Length = 6 }, new DeltaOperation { Kind = "insert", Offset = 0, Length = 4 }]
-            }]
-        };
-        var jsonEntry = zip.CreateEntry("patch.json");
-        await using (var writer = new StreamWriter(jsonEntry.Open())) await writer.WriteAsync(ManifestReader.Serialize(doc));
-        var dataEntry = zip.CreateEntry("payload/exe.bin");
-        await using (var stream = dataEntry.Open()) await stream.WriteAsync(Encoding.UTF8.GetBytes("STR!"));
-    }
-    await new DeltaPatchApplier().ApplyAsync(game, archive, "1.6.640.0", "1.6.1170.0");
-    Assert.Bytes(final, await File.ReadAllBytesAsync(exe));
-}
-
-static async Task DeltaBuilderRoundTrip()
-{
-    using var temp = new TempDirectory();
-    var source = Path.Combine(temp.Path, "source");
-    var target = Path.Combine(temp.Path, "target");
-    var game = Path.Combine(temp.Path, "game");
+    var source = Path.Combine(temp.Path, "steam");
+    var target = Path.Combine(temp.Path, "launcher", "Stock Game");
     Directory.CreateDirectory(source);
-    Directory.CreateDirectory(target);
-    Directory.CreateDirectory(game);
-    var original = Enumerable.Range(0, 32_768).Select(x => (byte)(x % 251)).ToArray();
-    var updated = original.ToArray();
-    updated[8_100] = 99;
-    updated = [.. updated, 1, 2, 3, 4];
-    await File.WriteAllBytesAsync(Path.Combine(source, "SkyrimSE.exe"), original);
-    await File.WriteAllBytesAsync(Path.Combine(target, "SkyrimSE.exe"), updated);
-    await File.WriteAllTextAsync(Path.Combine(source, "removed.txt"), "old");
-    await File.WriteAllTextAsync(Path.Combine(target, "new.txt"), "new file");
-    foreach (var file in Directory.EnumerateFiles(source)) File.Copy(file, Path.Combine(game, Path.GetFileName(file)));
-    var patch = Path.Combine(temp.Path, "patch.zip");
-    await RunPythonScript("make_delta_patch.py", source, target, patch, "--from-version", "1.6.640");
-    await new DeltaPatchApplier().ApplyAsync(game, patch, "1.6.640", "1.6.1170");
-    var expected = Directory.EnumerateFiles(target).Select(Path.GetFileName).OrderBy(x => x).ToArray();
-    var actual = Directory.EnumerateFiles(game).Select(Path.GetFileName).OrderBy(x => x).ToArray();
-    Assert.True(expected.SequenceEqual(actual));
-    foreach (var filename in expected) Assert.Bytes(await File.ReadAllBytesAsync(Path.Combine(target, filename!)), await File.ReadAllBytesAsync(Path.Combine(game, filename!)));
+    await File.WriteAllTextAsync(Path.Combine(source, "SkyrimSE.exe"), "1.6.1170.0 old Steam version");
+    var service = new StockGameService(ReadFakeExecutableVersion);
+    await Assert.ThrowsAsync<InvalidDataException>(() => service.CopyFromSteamAsync(source, target, GameVersion.Required));
+    Assert.False(File.Exists(Path.Combine(target, "SkyrimSE.exe")));
 }
 
 static async Task ModDeployment()
@@ -277,11 +242,13 @@ static string ValidManifest() => $$"""
 {
   "schemaVersion": 1,
   "manifestVersion": "test-1",
-  "requiredGameVersion": "1.6.1170.0",
-  "patches": [],
+  "requiredGameVersion": "1.7.104.0",
   "mods": [{ "id": "first", "name": "First", "version": "1", "url": "https://example.com/a.zip", "sha256": "{{new string('a', 64)}}", "size": 10, "target": "data", "order": 1 }]
 }
 """;
+
+static string ReadFakeExecutableVersion(string path) =>
+    File.ReadAllText(path).StartsWith("1.7.104.0", StringComparison.Ordinal) ? "1.7.104.0" : "1.6.1170.0";
 
 static ModPackage Mod(string id, string target, int order, string archive, string stripPrefix) => new()
 {
