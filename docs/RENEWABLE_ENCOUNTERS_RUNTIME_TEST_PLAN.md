@@ -31,9 +31,9 @@ one does.
 ### Startup check (before anyone connects)
 
 - **Expected:** `[World] renewable encounters loaded encounters=1 cells=1 slots=38 errors=0`
+  followed by `[World] snapshot restored encounters=...`.
   `cells` counts only the extra `cell` lines; the owning cell (`000371DE`) is always
   covered, so the dungeon spans two cells while the log reports `cells=1`.
-  followed by `[World] snapshot restored encounters=...`.
 - **Failure:** `[World] no renewable encounter config at <path>, none configured` (warn) —
   the launcher put the file in the wrong place; every scenario below is void.
 
