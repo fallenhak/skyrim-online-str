@@ -16,6 +16,8 @@ import { MockPlayer } from './mock-player';
 
 let nextPlayerId = 1;
 
+type MockServerCharacterSummary = SkyrimTogetherTypes.CharacterSummaryBridge;
+
 const playerStore = createStore(
   { name: 'players' },
   withEntities<MockPlayer>(),
@@ -23,11 +25,21 @@ const playerStore = createStore(
 
 export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
   private connected = false;
+  public characterConnectionGeneration = 0;
   private active = false;
   private version = 'browser';
   private playerName = 'Local Player';
   private showEvents = true;
   private localPlayerId: number;
+  private readonly mockServerCharacterList: MockServerCharacterSummary[] = [
+    {
+      characterId: '1',
+      name: 'Traveler',
+      race: { baseId: '0', modId: '0' },
+      sex: 0,
+      level: 1,
+    },
+  ];
   public readonly players$ = playerStore.pipe(selectAllEntities());
 
   connect(host: string, port: number, password: string): void {
@@ -73,8 +85,14 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
           break;
       }
       setTimeout(() => {
-        this.emit(!!error ? 'disconnect' : 'connect');
         this.connected = !error;
+        const connectionGeneration = ++this.characterConnectionGeneration;
+        if (error) {
+          this.emit('disconnect', false, connectionGeneration);
+        } else {
+          this.emit('characterSessionState', 'awaitingCharacterSelection');
+          this.emit('connect', connectionGeneration);
+        }
         if (error && typeof error !== 'boolean') {
           this.emit('triggerError', JSON.stringify(error));
         } else {
@@ -96,9 +114,50 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
 
   disconnect(): void {
     if (this.connected) {
-      this.emit('disconnect');
       this.connected = false;
+      const connectionGeneration = ++this.characterConnectionGeneration;
+      this.emit('disconnect', false, connectionGeneration);
     }
+  }
+
+  requestCharacterList(): void {
+    if (this.connected) {
+      // This is a fixed mock server response fixture, not a local character store.
+      this.emit(
+        'characterList',
+        this.mockServerCharacterList.map(
+          (character): SkyrimTogetherTypes.CharacterSummaryWireRow => [
+            character.characterId,
+            character.name,
+            character.race.baseId,
+            character.race.modId,
+            character.sex,
+            character.level,
+          ],
+        ),
+        this.characterConnectionGeneration,
+      );
+    }
+  }
+
+  selectCharacter(characterId: SkyrimTogetherTypes.CharacterId): void {
+    if (!this.connected) {
+      return;
+    }
+
+    const hasServerCharacter = this.mockServerCharacterList.some(
+      character => character.characterId === characterId,
+    );
+    const status: SkyrimTogetherTypes.CharacterSelectionStatus =
+      hasServerCharacter ? 0 : 2;
+    if (status === 0) {
+      this.emit('characterSessionState', 'characterSelected');
+    }
+    this.emit(
+      'characterSelectionResult',
+      status,
+      this.characterConnectionGeneration,
+    );
   }
 
   reconnect(): void {
@@ -120,7 +179,10 @@ export class SkyrimtogetherMock extends EventEmitter implements SkyrimTogether {
   }
 
   deactivate(): void {
-    throw new Error('NOT YET IMPLEMENTED');
+    if (this.active) {
+      this.active = false;
+      this.emit('deactivate');
+    }
   }
 
   teleportToPlayer(playerId: number): void {

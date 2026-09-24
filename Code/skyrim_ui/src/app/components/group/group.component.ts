@@ -36,6 +36,7 @@ export class GroupComponent implements OnInit, OnDestroy {
 
   groupMembers$: Observable<(Player & { isOwner: boolean })[]>;
   group$: Observable<Group>;
+  public isInWorld = false;
 
   public isAutoHide = new BehaviorSubject(true);
   public isShown = new BehaviorSubject(true);
@@ -79,6 +80,7 @@ export class GroupComponent implements OnInit, OnDestroy {
     this.onPartyShownState();
     this.onPartyAutoHideState();
     this.onPositionUpdate();
+    this.onCharacterSessionState();
 
     this.subscribeChangeHealth();
     this.onPartyInfo();
@@ -114,14 +116,22 @@ export class GroupComponent implements OnInit, OnDestroy {
     this.clientService.connectionStateChange
       .pipe(takeUntil(this.destroy$))
       .subscribe((state: boolean) => {
-        if (this.isAutoHide.getValue()) {
-          if (state) {
-            this.flashGroup();
-          } else {
-            if (this.timerSubscription) {
-              this.timerSubscription.unsubscribe();
-            }
-          }
+        if (!state && this.timerSubscription) {
+          this.timerSubscription.unsubscribe();
+        }
+      });
+  }
+
+  private onCharacterSessionState() {
+    this.clientService.characterSessionStateChange
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(state => {
+        this.isInWorld = state === 'inWorld';
+
+        if (this.isInWorld) {
+          this.flashGroup();
+        } else if (this.timerSubscription) {
+          this.timerSubscription.unsubscribe();
         }
       });
   }
@@ -189,7 +199,8 @@ export class GroupComponent implements OnInit, OnDestroy {
   private flashGroup() {
     if (
       this.isAutoHide.getValue() &&
-      this.clientService.connectionStateChange.getValue()
+      this.clientService.connectionStateChange.getValue() &&
+      this.clientService.characterSessionStateChange.getValue() === 'inWorld'
     ) {
       if (!this.isShown.getValue()) {
         this.isShown.next(true);

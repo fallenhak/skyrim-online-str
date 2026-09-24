@@ -9,6 +9,7 @@
 #include <Events/CharacterSnapshotApplyFailedEvent.h>
 #include <Events/CharacterPlayerAssignmentStartedEvent.h>
 #include <Events/CharacterWorldSyncStartedEvent.h>
+#include <Events/CharacterSessionStateChangedEvent.h>
 
 #include <Structs/CharacterLoadSnapshot.h>
 #include <Structs/ProgressionAwardPolicy.h>
@@ -24,17 +25,6 @@ struct NotifyCharacterSelectionResult;
 struct NotifyCharacterReadyResult;
 struct NotifyCharacterEnteredWorld;
 struct TransportService;
-
-enum class ClientCharacterSessionState : std::uint8_t
-{
-    kDisconnected = 0,
-    kAwaitingCharacterSelection,
-    kCharacterSelected,
-    kApplyingCharacter,
-    kAwaitingClientReady,
-    kAwaitingPlayerAssignment,
-    kInWorld
-};
 
 /**
  * @brief Client-side protocol facade for character listing and selection.
@@ -71,6 +61,7 @@ private:
     void HandleCharacterSnapshotApplyFailed(const CharacterSnapshotApplyFailedEvent& acEvent) noexcept;
     void HandleCharacterReadyResult(const NotifyCharacterReadyResult& acMessage) noexcept;
     void HandleCharacterEnteredWorld(const NotifyCharacterEnteredWorld& acMessage) noexcept;
+    void SetState(ClientCharacterSessionState aState) noexcept;
 
     TransportService& m_transport;
     entt::dispatcher& m_dispatcher;
