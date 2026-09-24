@@ -13,7 +13,7 @@ Bu build, `integration/m01-test` dalındaki lane çalışmalarını birlikte den
 
 - [ ] Aynı build'den iki Windows istemcisi ve Linux sunucusu kullan.
 - [ ] `docs/renewable_encounters.example.txt` dosyasını `Data/renewable_encounters.txt` adıyla sunucu klasörüne kopyala.
-- [ ] `config/STServer.ini` içinde `[Identity]` bölümüne `bDevTestMode=true` ekle. Ayar normalde kapalıdır; üretim sunucusunda açma.
+- [ ] `config/STServer.ini` içinde `[Identity]` `bDevTestMode` **kapalı** (varsayılan) olmalı. Kimlik Discord girişinden gelir; dev modu doğrulanmamış kimlik bağlar ve save'den karakter tohumlar, save'siz akışla çelişir.
 - [ ] Sunucu portunu `10578` yap ve VDS güvenlik duvarında UDP 10578'e izin ver.
 - [ ] İsteğe bağlı: `[GameServer]` bölümünde `sPassword` belirle. İki oyuncu da aynı parolayı kullanır.
 - [ ] Sunucuyu başlat, sonra açılışı doğrula:
