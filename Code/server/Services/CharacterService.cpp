@@ -615,7 +615,7 @@ void CharacterService::OnNewPackageRequest(const PacketEvent<NewPackageRequest>&
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }
 
-void CharacterService::OnRequestRespawn(const PacketEvent<RequestRespawn>& acMessage) const noexcept
+void CharacterService::OnRequestRespawn(const PacketEvent<RequestRespawn>& acMessage) noexcept
 {
     auto view = m_world.view<OwnerComponent, CharacterComponent>();
     auto it = view.find(static_cast<entt::entity>(acMessage.Packet.ActorId));

@@ -66,7 +66,7 @@ protected:
     void OnFactionsChanges(const PacketEvent<RequestFactionsChanges>& acMessage) const noexcept;
     void OnMountRequest(const PacketEvent<MountRequest>& acMessage) const noexcept;
     void OnNewPackageRequest(const PacketEvent<NewPackageRequest>& acMessage) const noexcept;
-    void OnRequestRespawn(const PacketEvent<RequestRespawn>& acMessage) const noexcept;
+    void OnRequestRespawn(const PacketEvent<RequestRespawn>& acMessage) noexcept;
     void OnDialogueRequest(const PacketEvent<DialogueRequest>& acMessage) const noexcept;
     void OnSubtitleRequest(const PacketEvent<SubtitleRequest>& acMessage) const noexcept;
 
