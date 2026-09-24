@@ -25,6 +25,7 @@
 #include <Messages/RequestFactionsChanges.h>
 #include <Messages/NotifyFactionsChanges.h>
 #include <Messages/NotifyRemoveCharacter.h>
+#include <Services/CharacterRemoval.h>
 #include <Messages/RequestOwnershipTransfer.h>
 #include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/RequestOwnershipClaim.h>
@@ -478,17 +479,12 @@ void CharacterService::OnCharacterRemoveEvent(const CharacterRemoveEvent& acEven
     if (it == view.end())
         return;
 
-    GameServer::Get()->GetWorld().GetScriptService().HandleCharacterDestoy(*it);
-
-    NotifyRemoveCharacter response;
-    response.ServerId = acEvent.ServerId;
-
-    for (auto pPlayer : m_world.GetPlayerManager())
-        pPlayer->Send(response);
-
-    // Registry destruction removes the lifecycle component with the canonical
-    // actor state; its generation is intentionally never recycled.
-    m_world.destroy(*it);
+    const auto entity = *it;
+    NotifyAndDestroyCharacter(
+        acEvent.ServerId, m_world.GetPlayerManager(), [entity] { GameServer::Get()->GetWorld().GetScriptService().HandleCharacterDestoy(entity); },
+        // Registry destruction removes the lifecycle component with the canonical
+        // actor state; its generation is intentionally never recycled.
+        [this, entity] { m_world.destroy(entity); });
     spdlog::debug("Character destroyed {:X}", acEvent.ServerId);
 }
 
