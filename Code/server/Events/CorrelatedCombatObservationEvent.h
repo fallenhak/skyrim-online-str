@@ -18,13 +18,14 @@ struct CorrelatedCombatObservationEvent final
         , TargetLifecycleGeneration(acObservation.TargetLifecycleGeneration)
         , ObservationId(acObservation.ObservationId)
         , ObservedTick(acObservation.ObservedTick)
+        , AttackerLifecycleGeneration(acObservation.AttackerLifecycleGeneration)
     {
     }
 
     [[nodiscard]] constexpr ValidatedHitObservation ToObservation() const noexcept
     {
         return {AttackerServerId, AttackerOwnershipEpoch, TargetServerId,
-                TargetLifecycleGeneration, ObservationId, ObservedTick};
+                TargetLifecycleGeneration, ObservationId, ObservedTick, AttackerLifecycleGeneration};
     }
 
     // Triggered EnTT event payloads must be assignable. The source DTO stays
@@ -35,4 +36,5 @@ struct CorrelatedCombatObservationEvent final
     ValidatedHitObservation::LifecycleGeneration TargetLifecycleGeneration;
     ValidatedHitObservation::ObservationSequence ObservationId;
     ValidatedHitObservation::ObservationTick ObservedTick;
+    ValidatedHitObservation::LifecycleGeneration AttackerLifecycleGeneration;
 };

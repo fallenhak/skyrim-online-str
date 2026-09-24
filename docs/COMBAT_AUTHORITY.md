@@ -89,7 +89,10 @@ pending observation for that target server ID and lifecycle generation is
 correlated and forwarded as a server-internal event. Before selecting that
 observation, stale target generations and observations whose attacker no
 longer resolves to its current in-world owner at the recorded epoch are
-discarded. A disconnected or transferred attacker therefore cannot consume a
+discarded. Each accepted observation also captures the attacker's current
+server-owned lifecycle generation. Correlation checks it again, so removal
+and entity-ID reuse cannot rebind a pending report even if the ownership epoch
+is recycled. A disconnected or transferred attacker therefore cannot consume a
 later owner's canonical health decrease. The match contains no client damage
 magnitude and does not prove that the observation caused the decrease. The
 handler does not apply damage, mutate death state, record contribution, award
@@ -111,9 +114,10 @@ not a client-selected killer. No client-provided XP or reward amount is
 authoritative.
 
 `CombatObservationReplayCache` provides a bounded replay window. It keys an
-observation ID by attacker server entity ID and ownership epoch, plus target
-server entity ID and lifecycle generation. It retains a fixed FIFO window
-(1024 entries by default); a key can be considered new again after eviction.
+observation ID by attacker server entity ID, ownership epoch, and lifecycle
+generation, plus target server entity ID and lifecycle generation. It retains
+a fixed FIFO window (1024 entries by default); a key can be considered new
+again after eviction.
 The handler validates the current attacker and target first, then consults the
 cache immediately before accepting the observation. Replay identity excludes
 the server-assigned observation tick.

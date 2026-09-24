@@ -40,9 +40,9 @@ TEST_CASE("combat hit observation requests round-trip only server entity authori
 TEST_CASE("pending combat observations remain FIFO and reject input at the fixed capacity", "[combat_authority]")
 {
     PendingCombatObservationStore<2> pending;
-    const ValidatedHitObservation first{1, 2, 3, 4, 5, 6};
-    const ValidatedHitObservation second{1, 2, 3, 4, 6, 7};
-    const ValidatedHitObservation third{1, 2, 3, 4, 7, 8};
+    const ValidatedHitObservation first{1, 2, 3, 4, 5, 6, 9};
+    const ValidatedHitObservation second{1, 2, 3, 4, 6, 7, 9};
+    const ValidatedHitObservation third{1, 2, 3, 4, 7, 8, 9};
 
     REQUIRE(pending.CanAppend());
     REQUIRE(pending.TryAppend(first));
@@ -70,18 +70,18 @@ TEST_CASE("pending combat observations reject malformed identities without consu
 {
     PendingCombatObservationStore<2> pending;
 
-    REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{0, 1, 2, 3, 4, 5}));
-    REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{1, 1, 2, 3, 0, 5}));
+    REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{0, 1, 2, 3, 4, 5, 6}));
+    REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{1, 1, 2, 3, 0, 5, 6}));
     REQUIRE(pending.Size() == 0);
-    REQUIRE(pending.TryAppend(ValidatedHitObservation{1, 1, 2, 3, 4, 5}));
+    REQUIRE(pending.TryAppend(ValidatedHitObservation{1, 1, 2, 3, 4, 5, 6}));
 }
 
 TEST_CASE("accepted canonical health decrease correlates one matching pending target lifecycle", "[combat_authority]")
 {
     PendingCombatObservationStore<4> pending;
-    const ValidatedHitObservation firstTargetHit{1, 2, 10, 20, 30, 1};
-    const ValidatedHitObservation otherTargetHit{4, 5, 11, 21, 31, 2};
-    const ValidatedHitObservation secondTargetHit{6, 7, 10, 20, 32, 3};
+    const ValidatedHitObservation firstTargetHit{1, 2, 10, 20, 30, 1, 8};
+    const ValidatedHitObservation otherTargetHit{4, 5, 11, 21, 31, 2, 9};
+    const ValidatedHitObservation secondTargetHit{6, 7, 10, 20, 32, 3, 10};
     REQUIRE(pending.TryAppend(firstTargetHit));
     REQUIRE(pending.TryAppend(otherTargetHit));
     REQUIRE(pending.TryAppend(secondTargetHit));
@@ -101,9 +101,9 @@ TEST_CASE("accepted canonical health decrease correlates one matching pending ta
 TEST_CASE("health correlation discards stale target lifecycle observations without matching them", "[combat_authority]")
 {
     PendingCombatObservationStore<4> pending;
-    const ValidatedHitObservation staleHit{1, 2, 10, 20, 30, 1};
-    const ValidatedHitObservation currentHit{1, 2, 10, 22, 31, 2};
-    const ValidatedHitObservation unrelatedHit{3, 4, 11, 21, 32, 3};
+    const ValidatedHitObservation staleHit{1, 2, 10, 20, 30, 1, 7};
+    const ValidatedHitObservation currentHit{1, 2, 10, 22, 31, 2, 7};
+    const ValidatedHitObservation unrelatedHit{3, 4, 11, 21, 32, 3, 8};
     REQUIRE(pending.TryAppend(staleHit));
     REQUIRE(pending.TryAppend(unrelatedHit));
     REQUIRE(pending.TryAppend(currentHit));
@@ -121,10 +121,10 @@ TEST_CASE("health correlation discards stale target lifecycle observations witho
 TEST_CASE("health correlation preserves FIFO order across wrapped pending storage", "[combat_authority]")
 {
     PendingCombatObservationStore<3> pending;
-    const ValidatedHitObservation discarded{1, 2, 9, 19, 29, 1};
-    const ValidatedHitObservation firstRetained{3, 4, 11, 21, 31, 2};
-    const ValidatedHitObservation matched{5, 6, 10, 20, 32, 3};
-    const ValidatedHitObservation lastRetained{7, 8, 12, 22, 33, 4};
+    const ValidatedHitObservation discarded{1, 2, 9, 19, 29, 1, 7};
+    const ValidatedHitObservation firstRetained{3, 4, 11, 21, 31, 2, 8};
+    const ValidatedHitObservation matched{5, 6, 10, 20, 32, 3, 9};
+    const ValidatedHitObservation lastRetained{7, 8, 12, 22, 33, 4, 10};
     REQUIRE(pending.TryAppend(discarded));
     REQUIRE(pending.Pop() == discarded);
     REQUIRE(pending.TryAppend(firstRetained));

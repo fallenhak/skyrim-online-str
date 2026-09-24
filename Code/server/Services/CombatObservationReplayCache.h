@@ -8,11 +8,12 @@
 /**
  * @brief Fixed-capacity replay window for validated hit observations.
  *
- * The replay key combines the attacker's server entity and ownership epoch
- * with the target's server entity and lifecycle generation. Observation ticks
- * are deliberately excluded: they are ordering metadata and may be supplied
- * by a client. Call TryRemember only after attacker and target authorization,
- * so unauthorised claims cannot evict accepted observations from the window.
+ * The replay key combines the attacker's server entity, ownership epoch, and
+ * server-owned lifecycle generation with the target's server entity and
+ * lifecycle generation. Observation ticks are deliberately excluded: they
+ * are ordering metadata. Call TryRemember only after attacker and target
+ * authorization, so unauthorised claims cannot evict accepted observations
+ * from the window.
  *
  * This is a bounded FIFO window. Once full, the oldest key is evicted to make
  * room for a new one; callers must still validate the current target lifecycle
@@ -27,6 +28,7 @@ class CombatObservationReplayCache final
     {
         ValidatedHitObservation::ServerId AttackerServerId{};
         ValidatedHitObservation::OwnershipEpoch AttackerOwnershipEpoch{};
+        ValidatedHitObservation::LifecycleGeneration AttackerLifecycleGeneration{};
         ValidatedHitObservation::ServerId TargetServerId{};
         ValidatedHitObservation::LifecycleGeneration TargetLifecycleGeneration{};
         ValidatedHitObservation::ObservationSequence ObservationId{};
@@ -53,6 +55,7 @@ public:
         const Key key{
             acObservation.AttackerServerId,
             acObservation.AttackerOwnershipEpoch,
+            acObservation.AttackerLifecycleGeneration,
             acObservation.TargetServerId,
             acObservation.TargetLifecycleGeneration,
             acObservation.ObservationId};

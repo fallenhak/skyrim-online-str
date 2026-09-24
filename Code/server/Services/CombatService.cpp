@@ -25,21 +25,27 @@ std::optional<Persistence::CharacterId> ResolveAuthorizedAttackerCharacterId(
     World& aWorld,
     const ValidatedHitObservation::ServerId aAttackerServerId,
     const ValidatedHitObservation::OwnershipEpoch aOwnershipEpoch,
-    Player* apSender) noexcept
+    Player* apSender,
+    ValidatedHitObservation::LifecycleGeneration& aResolvedAttackerLifecycleGeneration) noexcept
 {
     if (!apSender || aAttackerServerId == 0)
         return std::nullopt;
 
     const auto attackerEntity = static_cast<entt::entity>(aAttackerServerId);
-    const auto attackerView = aWorld.view<CharacterComponent, OwnerComponent, PersistentCharacterComponent>();
+    const auto attackerView = aWorld.view<
+        CharacterComponent, OwnerComponent, PersistentCharacterComponent, ActorLifecycleComponent>();
     const auto attackerIt = attackerView.find(attackerEntity);
     if (attackerIt == attackerView.end())
         return std::nullopt;
 
-    const auto* const pSession = aWorld.GetSessionService().Get(apSender->GetConnectionId());
     const auto& character = attackerView.get<CharacterComponent>(*attackerIt);
     const auto& owner = attackerView.get<OwnerComponent>(*attackerIt);
     const auto& persistentCharacter = attackerView.get<PersistentCharacterComponent>(*attackerIt);
+    const auto& lifecycle = attackerView.get<ActorLifecycleComponent>(*attackerIt);
+    if (!lifecycle.IsValid())
+        return std::nullopt;
+
+    const auto* const pSession = aWorld.GetSessionService().Get(apSender->GetConnectionId());
 
     CombatAttackerAuthorizationInput attackerInput{};
     attackerInput.SessionIsInWorld = pSession && pSession->State == SessionState::kInWorld;
@@ -54,7 +60,10 @@ std::optional<Persistence::CharacterId> ResolveAuthorizedAttackerCharacterId(
     attackerInput.CurrentOwnershipEpoch = owner.OwnershipEpoch;
     attackerInput.ServerResolvedPersistentCharacterId = persistentCharacter.CharacterId;
 
-    return CombatAttackerAuthorizationPolicy::ResolveAuthorizedCharacterId(attackerInput);
+    const auto characterId = CombatAttackerAuthorizationPolicy::ResolveAuthorizedCharacterId(attackerInput);
+    if (characterId)
+        aResolvedAttackerLifecycleGeneration = lifecycle.GetGeneration();
+    return characterId;
 }
 
 std::optional<Persistence::CharacterId> ResolveCurrentObservationAttackerCharacterId(
@@ -70,11 +79,17 @@ std::optional<Persistence::CharacterId> ResolveCurrentObservationAttackerCharact
     if (attackerIt == attackerView.end())
         return std::nullopt;
 
-    return ResolveAuthorizedAttackerCharacterId(
+    ValidatedHitObservation::LifecycleGeneration attackerLifecycleGeneration{};
+    const auto attackerCharacterId = ResolveAuthorizedAttackerCharacterId(
         aWorld,
         acObservation.AttackerServerId,
         acObservation.AttackerOwnershipEpoch,
-        attackerView.get<OwnerComponent>(*attackerIt).GetOwner());
+        attackerView.get<OwnerComponent>(*attackerIt).GetOwner(),
+        attackerLifecycleGeneration);
+    if (!attackerCharacterId || !acObservation.IsFromAttackerIncarnation(attackerLifecycleGeneration))
+        return std::nullopt;
+
+    return attackerCharacterId;
 }
 } // namespace
 
@@ -97,9 +112,17 @@ void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservati
         m_observationTick == std::numeric_limits<ValidatedHitObservation::ObservationTick>::max())
         return;
 
-    const auto attackerEntity = static_cast<entt::entity>(packet.AttackerServerId);
-    if (!ResolveAuthorizedAttackerCharacterId(m_world, packet.AttackerServerId, packet.AttackerOwnershipEpoch, pPlayer).has_value())
+    ValidatedHitObservation::LifecycleGeneration attackerLifecycleGeneration{};
+    const auto attackerCharacterId = ResolveAuthorizedAttackerCharacterId(
+        m_world,
+        packet.AttackerServerId,
+        packet.AttackerOwnershipEpoch,
+        pPlayer,
+        attackerLifecycleGeneration);
+    if (!attackerCharacterId)
         return;
+
+    const auto attackerEntity = static_cast<entt::entity>(packet.AttackerServerId);
 
     const auto targetEntity = static_cast<entt::entity>(packet.TargetServerId);
     const bool targetExists = m_world.valid(targetEntity);
@@ -121,7 +144,8 @@ void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservati
         packet.TargetServerId,
         packet.TargetLifecycleGeneration,
         packet.ObservationId,
-        observedTick};
+        observedTick,
+        attackerLifecycleGeneration};
 
     if (!observation.IsWellFormed() || !m_observationReplayCache.TryRemember(observation))
         return;

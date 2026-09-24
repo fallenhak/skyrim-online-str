@@ -13,9 +13,11 @@
  *
  * The observation deliberately contains no persistent character identifier.
  * The server may resolve that identity later, after the attacker authorization
- * boundary, and no client-selected identity is carried forward here.
+ * boundary, and no client-selected identity is carried forward here. The
+ * attacker lifecycle generation is captured by the server at admission; it
+ * prevents a pending observation from rebinding if an entity ID is reused.
  * ObservationId is scoped to the attacker authority incarnation, while
- * ObservedTick is ordering metadata only; neither is a damage or reward value.
+ * ObservedTick is ordering metadata only.
  */
 struct ValidatedHitObservation final
 {
@@ -36,13 +38,15 @@ struct ValidatedHitObservation final
         const ServerId aTargetServerId,
         const LifecycleGeneration aTargetLifecycleGeneration,
         const ObservationSequence aObservationId,
-        const ObservationTick aObservedTick) noexcept
+        const ObservationTick aObservedTick,
+        const LifecycleGeneration aAttackerLifecycleGeneration) noexcept
         : AttackerServerId(aAttackerServerId)
         , AttackerOwnershipEpoch(aAttackerOwnershipEpoch)
         , TargetServerId(aTargetServerId)
         , TargetLifecycleGeneration(aTargetLifecycleGeneration)
         , ObservationId(aObservationId)
         , ObservedTick(aObservedTick)
+        , AttackerLifecycleGeneration(aAttackerLifecycleGeneration)
     {
     }
 
@@ -57,7 +61,12 @@ struct ValidatedHitObservation final
     {
         return AttackerServerId != kInvalidServerId && AttackerOwnershipEpoch != kInvalidOwnershipEpoch &&
                TargetServerId != kInvalidServerId && TargetLifecycleGeneration != kInvalidLifecycleGeneration &&
-               ObservationId != kInvalidObservationId;
+               ObservationId != kInvalidObservationId && AttackerLifecycleGeneration != kInvalidLifecycleGeneration;
+    }
+
+    [[nodiscard]] constexpr bool IsFromAttackerIncarnation(const LifecycleGeneration aCurrentGeneration) const noexcept
+    {
+        return aCurrentGeneration != kInvalidLifecycleGeneration && AttackerLifecycleGeneration == aCurrentGeneration;
     }
 
     friend constexpr bool operator==(const ValidatedHitObservation&, const ValidatedHitObservation&) noexcept = default;
@@ -68,4 +77,5 @@ struct ValidatedHitObservation final
     const LifecycleGeneration TargetLifecycleGeneration;
     const ObservationSequence ObservationId;
     const ObservationTick ObservedTick;
+    const LifecycleGeneration AttackerLifecycleGeneration;
 };

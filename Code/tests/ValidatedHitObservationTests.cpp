@@ -8,7 +8,7 @@
 
 TEST_CASE("validated hit observations contain only immutable server entity identity", "[combat_authority]")
 {
-    const ValidatedHitObservation observation{17, 4, 29, 81, 12, 900};
+    const ValidatedHitObservation observation{17, 4, 29, 81, 12, 900, 70};
 
     REQUIRE(observation.IsWellFormed());
     REQUIRE(observation.AttackerServerId == 17);
@@ -17,6 +17,7 @@ TEST_CASE("validated hit observations contain only immutable server entity ident
     REQUIRE(observation.TargetLifecycleGeneration == 81);
     REQUIRE(observation.ObservationId == 12);
     REQUIRE(observation.ObservedTick == 900);
+    REQUIRE(observation.AttackerLifecycleGeneration == 70);
 
     static_assert(!std::is_assignable_v<decltype(observation.AttackerServerId)&, std::uint32_t>);
     static_assert(!std::is_assignable_v<decltype(observation.TargetLifecycleGeneration)&, std::uint64_t>);
@@ -24,18 +25,19 @@ TEST_CASE("validated hit observations contain only immutable server entity ident
 
 TEST_CASE("validated hit observations reject missing identity components", "[combat_authority]")
 {
-    REQUIRE_FALSE(ValidatedHitObservation{0, 1, 2, 3, 4, 5}.IsWellFormed());
-    REQUIRE_FALSE(ValidatedHitObservation{1, 0, 2, 3, 4, 5}.IsWellFormed());
-    REQUIRE_FALSE(ValidatedHitObservation{1, 1, 0, 3, 4, 5}.IsWellFormed());
-    REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 0, 4, 5}.IsWellFormed());
-    REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 3, 0, 5}.IsWellFormed());
+    REQUIRE_FALSE(ValidatedHitObservation{0, 1, 2, 3, 4, 5, 6}.IsWellFormed());
+    REQUIRE_FALSE(ValidatedHitObservation{1, 0, 2, 3, 4, 5, 6}.IsWellFormed());
+    REQUIRE_FALSE(ValidatedHitObservation{1, 1, 0, 3, 4, 5, 6}.IsWellFormed());
+    REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 0, 4, 5, 6}.IsWellFormed());
+    REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 3, 0, 5, 6}.IsWellFormed());
+    REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 3, 4, 5, 0}.IsWellFormed());
 }
 
 TEST_CASE("validated hit observations can be appended without overwriting prior records", "[combat_authority]")
 {
     std::vector<ValidatedHitObservation> observations;
-    observations.emplace_back(1, 2, 3, 4, 5, 6);
-    observations.emplace_back(1, 2, 3, 4, 6, 7);
+    observations.emplace_back(1, 2, 3, 4, 5, 6, 8);
+    observations.emplace_back(1, 2, 3, 4, 6, 7, 8);
 
     REQUIRE(observations.size() == 2);
     REQUIRE(observations[0].ObservationId == 5);

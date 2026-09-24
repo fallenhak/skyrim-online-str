@@ -1,6 +1,7 @@
 #include <Services/ActorMutationAuthorityPolicy.h>
 #include <Services/CombatAttackerAuthorizationPolicy.h>
 #include <Services/CombatContributionLedger.h>
+#include <Services/CombatObservationReplayCache.h>
 #include <Services/PendingCombatObservationStore.h>
 
 #include <catch2/catch.hpp>
@@ -39,7 +40,7 @@ TEST_CASE("Target owner disconnect and transfer keep the target lifecycle while 
 {
     PendingCombatObservationStore<4> pending;
     CombatContributionLedger ledger;
-    const ValidatedHitObservation hit{17, 5, 30, 99, 41, 1};
+    const ValidatedHitObservation hit{17, 5, 30, 99, 41, 1, 55};
     REQUIRE(pending.TryAppend(hit));
 
     // The target's owner changes during combat. The lifecycle remains the
@@ -67,8 +68,8 @@ TEST_CASE("Attacker disconnect drops its queued hit before a current attacker is
 {
     PendingCombatObservationStore<4> pending;
     CombatContributionLedger ledger;
-    const ValidatedHitObservation disconnectedHit{17, 5, 30, 99, 41, 1};
-    const ValidatedHitObservation currentHit{18, 2, 30, 99, 42, 2};
+    const ValidatedHitObservation disconnectedHit{17, 5, 30, 99, 41, 1, 55};
+    const ValidatedHitObservation currentHit{18, 2, 30, 99, 42, 2, 72};
 
     // Both were accepted while their respective senders had live authority.
     REQUIRE(CombatAttackerAuthorizationPolicy::ResolveAuthorizedCharacterId(
@@ -123,4 +124,40 @@ TEST_CASE("Attacker disconnect and transfer cannot rewrite a contribution alread
     // later stale packet cannot replace the server-resolved persistent ID.
     const auto contributors = ledger.ConsumeCharacterIdsForDeath(target, 2);
     REQUIRE(contributors == std::vector<Persistence::CharacterId>{42});
+}
+
+TEST_CASE("A removed attacker's queued observation cannot bind to a reused entity ID", "[combat_authority]")
+{
+    PendingCombatObservationStore<4> pending;
+    CombatObservationReplayCache<4> replay;
+    CombatContributionLedger ledger;
+    const ValidatedHitObservation oldIncarnation{17, 5, 30, 99, 41, 1, 55};
+    const ValidatedHitObservation replacementIncarnation{17, 5, 30, 99, 41, 2, 56};
+
+    // The replacement reuses the server ID and ownership epoch. Its distinct
+    // server lifecycle generation prevents the old pending record from rebinding.
+    REQUIRE(replay.TryRemember(oldIncarnation));
+    REQUIRE(replay.TryRemember(replacementIncarnation));
+    REQUIRE(pending.TryAppend(oldIncarnation));
+    REQUIRE(pending.TryAppend(replacementIncarnation));
+
+    const auto correlated = pending.TakeForAcceptedHealthDecrease(
+        replacementIncarnation.TargetServerId,
+        replacementIncarnation.TargetLifecycleGeneration,
+        [](const ValidatedHitObservation& observation) noexcept {
+            return observation.IsFromAttackerIncarnation(56) &&
+                   CombatAttackerAuthorizationPolicy::ResolveAuthorizedCharacterId(
+                       MakeObservationAuthority(17, 84, 5, observation.AttackerOwnershipEpoch))
+                       .has_value();
+        });
+
+    REQUIRE(correlated == replacementIncarnation);
+    REQUIRE(pending.Size() == 0);
+    REQUIRE(ledger.RecordValidatedContribution(
+        {correlated->TargetServerId, correlated->TargetLifecycleGeneration},
+        84,
+        correlated->ObservedTick));
+    REQUIRE(ledger.ConsumeCharacterIdsForDeath(
+                {replacementIncarnation.TargetServerId, replacementIncarnation.TargetLifecycleGeneration}, 3) ==
+            std::vector<Persistence::CharacterId>{84});
 }
