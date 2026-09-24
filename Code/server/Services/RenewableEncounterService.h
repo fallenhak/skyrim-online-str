@@ -32,8 +32,8 @@ struct RenewableEncounterRepository;
  *
  * Actors the server creates for a configured placed reference are bound to
  * their slot on CharacterSpawnedEvent and released on CharacterRemoveEvent
- * (W13). Actor packet gating belongs to the actor lane and reaches the
- * registry through GetRegistry() (GetIncarnationStatus).
+ * (W13). When an encounter resets, actors still bound to the retired epoch
+ * are removed so no stale incarnation outlives its slot (W14).
  */
 struct RenewableEncounterService
 {
@@ -41,6 +41,8 @@ struct RenewableEncounterService
     static constexpr std::uint64_t kSpawnClaimTtlTicks = 30;
     // While a cleared encounter's cooldown runs, its remaining time is persisted this often.
     static constexpr std::uint64_t kCooldownSaveIntervalTicks = 60;
+    // A cleared encounter kept from resetting by a player inside is logged this often.
+    static constexpr std::uint64_t kResetBlockedLogIntervalTicks = 30;
 
     RenewableEncounterService(World& aWorld, entt::dispatcher& aDispatcher, Persistence::RenewableEncounterRepository& aRepository) noexcept;
     ~RenewableEncounterService() noexcept = default;
@@ -81,6 +83,7 @@ private:
     void OnCharacterRemove(const CharacterRemoveEvent& acEvent) noexcept;
 
     void RunTick() noexcept;
+    void RemoveStaleActors() noexcept;
 
     World& m_world;
     Persistence::RenewableEncounterRepository& m_repository;

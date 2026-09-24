@@ -43,7 +43,9 @@ void RenewableEncounterService::LoadConfiguration(const std::filesystem::path& a
     std::ifstream file(acPath);
     if (!file)
     {
-        spdlog::info("[World] no renewable encounter config at {}, none configured", acPath.string());
+        // A launcher that ships the file to the wrong place would otherwise start the
+        // server silently without encounters.
+        spdlog::warn("[World] no renewable encounter config at {}, none configured", acPath.string());
         return;
     }
 
@@ -81,7 +83,7 @@ bool RenewableEncounterService::SaveState()
         return false;
     }
 
-    spdlog::debug("[World] snapshot saved encounters={}", records.size());
+    spdlog::info("[World] snapshot saved encounters={}", records.size());
     return true;
 }
 
@@ -119,10 +121,37 @@ void RenewableEncounterService::RunTick() noexcept
         }
         else if (entry.CooldownRemainingTicks != 0)
             anyCooldown = true;
+        else if (m_tick % kResetBlockedLogIntervalTicks == 0
+                 && m_registry.GetResetBlocker(entry.Id, m_tick) == RenewableEncounterRegistry::ResetBlocker::Occupied)
+            spdlog::info("[World] reset blocked {:x}/{} reason=Occupied tick={}", entry.Id.CellFormId, entry.Id.GroupIndex, m_tick);
     }
+
+    if (anyReset)
+        RemoveStaleActors();
 
     if (anyReset || (anyCooldown && m_tick - m_lastSaveTick >= kCooldownSaveIntervalTicks))
         SaveState();
+}
+
+void RenewableEncounterService::RemoveStaleActors() noexcept
+{
+    // Actors left over from the epoch a reset just retired would otherwise
+    // keep sending packets for a slot that now belongs to a new incarnation.
+    // Removal goes through CharacterRemoveEvent so CharacterService notifies
+    // clients and destroys the entity; the next cell load spawns fresh actors.
+    for (const auto serverId : CollectStaleBoundActors(m_registry, m_boundByServerId))
+    {
+        const auto incarnation = m_boundByServerId[serverId];
+        m_boundByServerId.erase(serverId);
+
+        const auto entity = static_cast<entt::entity>(serverId);
+        const auto* pLifecycle = m_world.valid(entity) ? m_world.try_get<ActorLifecycleComponent>(entity) : nullptr;
+        if (!pLifecycle || pLifecycle->GetGeneration() != incarnation.LifecycleGeneration)
+            continue;
+
+        m_world.GetDispatcher().enqueue(CharacterRemoveEvent(serverId));
+        spdlog::info("[World] stale actor removed incarnation={:x}:{} tick={}", serverId, incarnation.LifecycleGeneration, m_tick);
+    }
 }
 
 void RenewableEncounterService::OnPlayerLeave(const PlayerLeaveEvent& acEvent) noexcept
