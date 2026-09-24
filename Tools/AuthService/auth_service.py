@@ -219,21 +219,26 @@ class AuthHandler(BaseHTTPRequestHandler):
         with self.server.oauth_states_lock:
             state_entry = self.server.oauth_states.pop(oauth_state, None)
         if state_entry is None or state_entry[0] < time.time():
+            print("sos-auth: callback rejected: unknown or expired oauth state", flush=True)
             self._json(400, {"error": "oauth_state_invalid"})
             return
         _, redirect_uri, launcher_state = state_entry
         oauth_error = query.get("error", [""])[0]
         code = query.get("code", [""])[0]
         if oauth_error or not code:
+            print(f"sos-auth: callback without code (discord error={oauth_error[:64]!r})", flush=True)
             self._redirect_loopback(redirect_uri, launcher_state, error="discord_login_failed")
             return
 
         try:
             profile = exchange_discord_code(config, code)
             token = create_session_token(config, profile["id"], profile["name"], profile["avatar"])
-        except (urllib.error.URLError, TimeoutError, ValueError, KeyError, json.JSONDecodeError):
+        except (urllib.error.URLError, TimeoutError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            detail = f"HTTP {exc.code}" if isinstance(exc, urllib.error.HTTPError) else f"{type(exc).__name__}: {str(exc)[:200]}"
+            print(f"sos-auth: callback token exchange failed: {detail}", flush=True)
             self._redirect_loopback(redirect_uri, launcher_state, error="discord_auth_failed")
             return
+        print("sos-auth: callback ok, session token issued", flush=True)
         self._redirect_loopback(redirect_uri, launcher_state, token=token)
 
     def _redirect_loopback(self, redirect_uri: str, launcher_state: str, token: str = "", error: str = "") -> None:
