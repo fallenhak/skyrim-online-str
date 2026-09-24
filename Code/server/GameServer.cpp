@@ -1172,9 +1172,10 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
         if (hasSignedIdentityToken)
         {
             pPlayer->SetDiscordId(signedIdentity.DiscordId);
-            pPlayer->SetUsername(signedIdentity.DisplayName);
-            serverResponse.DisplayName = signedIdentity.DisplayName;
-            serverResponse.AvatarUrl = signedIdentity.AvatarUrl;
+            const TiltedPhoques::String displayName(signedIdentity.DisplayName.c_str());
+            pPlayer->SetUsername(displayName);
+            serverResponse.DisplayName = displayName;
+            serverResponse.AvatarUrl = TiltedPhoques::String(signedIdentity.AvatarUrl.c_str());
         }
         else
         {
