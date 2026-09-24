@@ -1,5 +1,5 @@
 {
-  "manifestUrl": "http://87.76.146.253:8088/skyrim-online-str/manifest.json",
+  "manifestUrl": "https://87-76-146-253.sslip.io/skyrim-online-str/manifest.json",
   "strLauncherPath": "SkyrimTogether.exe",
   "errorReportEndpoint": "",
   "errorReportToken": ""

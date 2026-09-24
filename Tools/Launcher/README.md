@@ -38,7 +38,7 @@ Varlıkları `assets` klasörüne `id.zip` adıyla koyup gerçek boyut ve SHA-25
 python .\Tools\Launcher\Scripts\update_manifest_assets.py .\Tools\Launcher\manifest.example.json --asset-dir .\assets
 ```
 
-Manifest `requiredGameVersion` değeri `1.7.104` olmalıdır. Yeni kurulumlarda HTTPS kullanın; mevcut VDS mod deposu HTTP `:8088` üzerinden çalışıyor, dışarıdan 80/443 erişimi ve sertifikası olmadığı için geçici olarak bu gerçek URL kullanılır. ZIP'lerin boyutu ve SHA-256'sı manifestte sabitlenir; canlı oyun testi ayrıca yapılmalıdır.
+Manifest `requiredGameVersion` değeri `1.7.104` olmalıdır. Mod deposu HTTPS üzerinden sunulur (`https://87-76-146-253.sslip.io/skyrim-online-str/`, Let's Encrypt); manifest ve DLL'ler şifresiz kanaldan indirilmemelidir, çünkü SHA-256 değerleri de manifestin içindedir. Eski HTTP `:8088` adresi geçiş için açık kalır. ZIP'lerin boyutu ve SHA-256'sı manifestte sabitlenir; canlı oyun testi ayrıca yapılmalıdır.
 
 ## Derleme, test ve publish
 
@@ -54,7 +54,7 @@ Tek exe `LauncherApp\bin\Release\net8.0-windows\win-x64\publish\SkyrimOnlineSTR.
 
 ## Sunucu ve manifest
 
-`manifest.example.json` şema örneğidir. Burak'ın etkin MO2 profiline göre üretilen `manifest.json` ve mod arşivleri `/srv/sos-mods/skyrim-online-str/` altında sunulur; launcher yapılandırması `http://87.76.146.253:8088/skyrim-online-str/manifest.json` adresini kullanır. Her paket URL'si ayrı tutulduğundan depo/CDN değiştirilebilir. HTTPS için VDS'te 80/443 erişimi ve otomatik sertifika yenilemesi açılmalıdır.
+`manifest.example.json` şema örneğidir. Burak'ın etkin MO2 profiline göre üretilen `manifest.json` ve mod arşivleri `/srv/sos-mods/skyrim-online-str/` altında sunulur; launcher yapılandırması `https://87-76-146-253.sslip.io/skyrim-online-str/manifest.json` adresini kullanır. Her paket URL'si ayrı tutulduğundan depo/CDN değiştirilebilir. nginx: `/etc/nginx/conf.d/sos-tls.conf` içindeki `/skyrim-online-str/` konumu.
 
 ### Burak'ın MO2 profili ve Wabbajack yolu
 
