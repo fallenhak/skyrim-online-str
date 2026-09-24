@@ -2,17 +2,26 @@
 
 #include <ESLoader.h>
 
-void TES4::ParseChunks(TES4& aSourceRecord, Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept
+bool TES4::ParseChunks(const uint8_t* apRecordData, Map<uint8_t, uint32_t>&) noexcept
 {
-    aSourceRecord.IterateChunks(
-        [&](ChunkId aChunkId, Buffer::Reader& aReader)
+    bool fieldsValid = true;
+    const auto* const pChunkData = apRecordData + sizeof(Record);
+    const bool chunksValid = IterateChunksBounded(pChunkData, GetDataSize(),
+        [&](ChunkId aChunkId, Buffer::Reader& aReader, const size_t aChunkSize)
         {
             switch (aChunkId)
             {
             case ChunkId::MAST_ID:
-                Chunks::MAST mast(aReader);
-                m_masterFiles.push_back(mast);
+            {
+                Chunks::MAST master;
+                if (!ESLoader::ReadZString(aReader, aChunkSize, master.m_masterName))
+                    fieldsValid = false;
+                else
+                    m_masterFiles.push_back(master);
                 break;
             }
+            }
         });
+
+    return chunksValid && fieldsValid;
 }

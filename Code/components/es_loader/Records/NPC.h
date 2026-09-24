@@ -15,5 +15,5 @@ public:
     Chunks::DOFT m_defaultOutfit{};
     Chunks::VMAD m_scriptData{};
 
-    void ParseChunks(NPC& aSourceRecord, TiltedPhoques::Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept;
+    bool ParseChunks(const uint8_t* apRecordData, TiltedPhoques::Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept;
 };

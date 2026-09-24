@@ -12,5 +12,5 @@ public:
 
     Chunks::NAME m_baseObject{};
 
-    void ParseChunks(ACHR& aSourceRecord, TiltedPhoques::Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept;
+    bool ParseChunks(const uint8_t* apRecordData, TiltedPhoques::Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept;
 };

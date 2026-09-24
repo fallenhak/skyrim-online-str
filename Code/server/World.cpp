@@ -24,7 +24,8 @@
 #include <utility>
 
 World::World(
-    std::filesystem::path aDatabasePath, bool aEnableActorRecordLoading, bool aEnableHumanoidAssignmentGate, bool aAllowUnknownActorAssignments)
+    std::filesystem::path aDatabasePath, bool aEnableActorRecordLoading, bool aEnableHumanoidAssignmentGate, bool aAllowUnknownActorAssignments,
+    const char* apRaceClassificationOverrides)
 {
     m_spAdminService = std::make_shared<AdminService>(*this, m_dispatcher);
     spdlog::default_logger()->sinks().push_back(std::static_pointer_cast<spdlog::sinks::sink>(m_spAdminService));
@@ -64,12 +65,18 @@ World::World(
         spdlog::warn("Actor population classification records are unavailable; NPC classification will remain Unknown.");
 
     ctx().emplace<ActorPopulationPolicy>(m_recordCollection.get());
+    auto& populationPolicy = ctx().at<ActorPopulationPolicy>();
+    if (!populationPolicy.ApplyRaceClassificationOverrides(apRaceClassificationOverrides == nullptr ? "" : apRaceClassificationOverrides))
+    {
+        spdlog::warn(
+            "Ignoring invalid Population:sRaceClassificationOverrides; use comma-separated RaceEditorId=HumanoidNpc, Creature, or Unknown entries with no duplicates.");
+    }
     auto& modsComponent = ctx().at<ModsComponent>();
     for (const auto& it : loader.GetLoadOrder())
     {
         modsComponent.AddServerMod(it);
     }
-    ctx().emplace<ActorPopulationIdentityResolver>(modsComponent, m_recordCollection.get(), ctx().at<ActorPopulationPolicy>());
+    ctx().emplace<ActorPopulationIdentityResolver>(modsComponent, m_recordCollection.get(), populationPolicy);
     ctx().emplace<ActorPopulationAssignmentPolicy>(aEnableHumanoidAssignmentGate, aAllowUnknownActorAssignments);
 
     // late initialize the ScriptService to ensure all components are valid
