@@ -3,7 +3,9 @@
 #include <Services/CombatTargetAuthorizationPolicy.h>
 #include <Services/ProjectileLaunchAuthorityPolicy.h>
 #include <Events/AcceptedCanonicalHealthDecreaseEvent.h>
+#include <Events/AcceptedCanonicalCreatureDeathEvent.h>
 #include <Events/CorrelatedCombatObservationEvent.h>
+#include <Events/CreatureDeathContributionEvent.h>
 #include <Components.h>
 #include <GameServer.h>
 #include <Game/Player.h>
@@ -14,6 +16,7 @@
 #include <Messages/NotifyProjectileLaunch.h>
 
 #include <limits>
+#include <utility>
 
 CombatService::CombatService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
     : m_world(aWorld)
@@ -23,6 +26,7 @@ CombatService::CombatService(World& aWorld, entt::dispatcher& aDispatcher) noexc
     m_hitObservationConnection = aDispatcher.sink<PacketEvent<CombatHitObservationRequest>>().connect<&CombatService::OnHitObservationRequest>(this);
     m_healthDecreaseConnection = aDispatcher.sink<AcceptedCanonicalHealthDecreaseEvent>().connect<&CombatService::OnCanonicalHealthDecrease>(this);
     m_correlatedObservationConnection = aDispatcher.sink<CorrelatedCombatObservationEvent>().connect<&CombatService::OnCorrelatedCombatObservation>(this);
+    m_creatureDeathConnection = aDispatcher.sink<AcceptedCanonicalCreatureDeathEvent>().connect<&CombatService::OnAcceptedCreatureDeath>(this);
 }
 
 void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservationRequest>& acMessage) noexcept
@@ -162,6 +166,31 @@ void CombatService::OnCorrelatedCombatObservation(const CorrelatedCombatObservat
         observation.TargetServerId,
         observation.TargetLifecycleGeneration};
     (void)m_contributionLedger.RecordValidatedContribution(target, *attackerCharacterId, observation.ObservedTick);
+}
+
+void CombatService::OnAcceptedCreatureDeath(const AcceptedCanonicalCreatureDeathEvent& acEvent) noexcept
+{
+    if (acEvent.TargetServerId == 0 || acEvent.TargetLifecycleGeneration == 0)
+        return;
+
+    const auto targetEntity = static_cast<entt::entity>(acEvent.TargetServerId);
+    if (!m_world.valid(targetEntity))
+        return;
+
+    const auto* const pCharacter = m_world.try_get<CharacterComponent>(targetEntity);
+    const auto* const pPopulationIdentity = m_world.try_get<ActorPopulationIdentityComponent>(targetEntity);
+    const auto* const pLifecycle = m_world.try_get<ActorLifecycleComponent>(targetEntity);
+    if (!pCharacter || !pCharacter->IsDead() || pCharacter->IsPlayer() || pCharacter->IsMount() || pCharacter->IsPlayerSummon() ||
+        !pPopulationIdentity || !pPopulationIdentity->IsTrustedCreature() || !pLifecycle || !pLifecycle->IsValid() ||
+        pLifecycle->GetGeneration() != acEvent.TargetLifecycleGeneration ||
+        pLifecycle->AcceptedCanonicalCreatureDeathGeneration != acEvent.TargetLifecycleGeneration)
+        return;
+
+    const CombatContributionLedger::Target target{
+        acEvent.TargetServerId,
+        acEvent.TargetLifecycleGeneration};
+    auto contributorCharacterIds = m_contributionLedger.ConsumeCharacterIdsForDeath(target, m_observationTick);
+    m_dispatcher.trigger(CreatureDeathContributionEvent{std::move(contributorCharacterIds)});
 }
 
 void CombatService::OnProjectileLaunchRequest(const PacketEvent<ProjectileLaunchRequest>& acMessage) const noexcept

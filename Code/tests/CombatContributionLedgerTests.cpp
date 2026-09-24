@@ -1,8 +1,10 @@
 #include <Services/CombatContributionLedger.h>
+#include <Events/CreatureDeathContributionEvent.h>
 
 #include <catch2/catch.hpp>
 
 #include <limits>
+#include <vector>
 
 TEST_CASE("Combat contribution ledger rejects invalid identities", "[combat_authority]")
 {
@@ -36,6 +38,21 @@ TEST_CASE("Combat contribution ledger coalesces deterministically and consumes o
     REQUIRE(contributions[1].LastObservedTick == 12);
     REQUIRE(ledger.ConsumeContributionsForDeath(target, 20).empty());
     REQUIRE(ledger.TargetCount() == 0);
+}
+
+TEST_CASE("creature death result contains only ledger-resolved CharacterIds", "[combat_authority]")
+{
+    CombatContributionLedger ledger(100);
+    const CombatContributionLedger::Target target{7, 3};
+
+    REQUIRE(ledger.RecordValidatedContribution(target, 42, 10));
+    REQUIRE(ledger.RecordValidatedContribution(target, 7, 11));
+    REQUIRE(ledger.RecordValidatedContribution(target, 42, 12));
+
+    CreatureDeathContributionEvent result{ledger.ConsumeCharacterIdsForDeath(target, 20)};
+    const std::vector<Persistence::CharacterId> expectedCharacterIds{7, 42};
+    REQUIRE(result.ContributorCharacterIds == expectedCharacterIds);
+    REQUIRE(ledger.ConsumeCharacterIdsForDeath(target, 20).empty());
 }
 
 TEST_CASE("Combat contribution ledger is bounded and expires old observations", "[combat_authority]")

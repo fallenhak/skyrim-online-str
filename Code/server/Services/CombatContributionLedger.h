@@ -118,6 +118,20 @@ public:
         return result;
     }
 
+    /**
+     * Return only the persistent character identities resolved into the
+     * ledger, in deterministic CharacterId order, then erase the target.
+     */
+    [[nodiscard]] std::vector<Persistence::CharacterId> ConsumeCharacterIdsForDeath(const Target aTarget, const std::uint64_t aNow)
+    {
+        const auto contributions = ConsumeContributionsForDeath(aTarget, aNow);
+        std::vector<Persistence::CharacterId> characterIds;
+        characterIds.reserve(contributions.size());
+        for (const auto& contribution : contributions)
+            characterIds.push_back(contribution.AttackerCharacterId);
+        return characterIds;
+    }
+
     void ClearTarget(const Target aTarget) noexcept
     {
         m_contributions.erase(aTarget);

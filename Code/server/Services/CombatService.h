@@ -11,6 +11,7 @@ struct World;
 struct ProjectileLaunchRequest;
 struct CombatHitObservationRequest;
 struct AcceptedCanonicalHealthDecreaseEvent;
+struct AcceptedCanonicalCreatureDeathEvent;
 struct CorrelatedCombatObservationEvent;
 
 struct CombatService
@@ -25,6 +26,7 @@ protected:
     void OnHitObservationRequest(const PacketEvent<CombatHitObservationRequest>& acMessage) noexcept;
     void OnCanonicalHealthDecrease(const AcceptedCanonicalHealthDecreaseEvent& acEvent) noexcept;
     void OnCorrelatedCombatObservation(const CorrelatedCombatObservationEvent& acEvent) noexcept;
+    void OnAcceptedCreatureDeath(const AcceptedCanonicalCreatureDeathEvent& acEvent) noexcept;
 
 private:
     static constexpr std::size_t kPendingObservationCapacity = 1024;
@@ -40,4 +42,5 @@ private:
     entt::scoped_connection m_hitObservationConnection;
     entt::scoped_connection m_healthDecreaseConnection;
     entt::scoped_connection m_correlatedObservationConnection;
+    entt::scoped_connection m_creatureDeathConnection;
 };
