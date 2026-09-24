@@ -117,6 +117,29 @@ TEST_CASE("AssignObjectsResponse carries harvest state", "[encoding.object_autho
     REQUIRE(received->Objects.front() == object);
 }
 
+TEST_CASE("AssignObjectsResponse carries door state", "[encoding.object_authority][door]")
+{
+    AssignObjectsResponse sent;
+    ObjectData object{};
+    object.ServerId = 9;
+    object.Id = GameId{1, 0x400};
+    object.IsDoor = true;
+    object.IsDoorStateKnown = true;
+    object.IsDoorOpen = true;
+    sent.Objects.push_back(object);
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<AssignObjectsResponse>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(received->Objects.size() == 1);
+    REQUIRE(received->Objects.front() == object);
+}
+
 TEST_CASE("NotifyObjectHarvested round-trips", "[encoding.object_authority][harvest]")
 {
     NotifyObjectHarvested sent;

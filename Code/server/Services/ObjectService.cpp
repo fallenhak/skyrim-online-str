@@ -101,6 +101,9 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.IsHarvestable = objectComponent.IsHarvestable;
             objectData.IsHarvestItem = objectComponent.IsHarvestItem;
             objectData.IsHarvested = objectComponent.IsHarvested;
+            objectData.IsDoor = objectComponent.IsDoor;
+            objectData.IsDoorStateKnown = objectComponent.Door.IsKnown;
+            objectData.IsDoorOpen = objectComponent.Door.IsOpen;
             if (objectComponent.HasTrustedState)
             {
                 objectData.CurrentLockData = objectComponent.CurrentLockData;
@@ -123,6 +126,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             auto& objectComponent = m_world.emplace<ObjectComponent>(cEntity, acMessage.pPlayer);
             objectComponent.IsHarvestable = object.IsHarvestable;
             objectComponent.IsHarvestItem = object.IsHarvestable && object.IsHarvestItem;
+            objectComponent.IsDoor = object.IsDoor;
 
             m_world.emplace<CellIdComponent>(cEntity, object.CellId, object.WorldSpaceId, object.CurrentCoords);
             m_world.emplace<InventoryComponent>(cEntity);
@@ -133,6 +137,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.IsStateUntrusted = true;
             objectData.IsHarvestable = object.IsHarvestable;
             objectData.IsHarvestItem = objectComponent.IsHarvestItem;
+            objectData.IsDoor = object.IsDoor;
 
             response.Objects.push_back(objectData);
         }
@@ -195,6 +200,31 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
             objectComponent.HarvestRespawnAtTick = ObjectInteractionPolicy::HarvestRespawnTick(m_tick, objectComponent.IsHarvestItem);
         else
             spdlog::info("Harvest of {:X}:{:X} rejected (already harvested or out of range)", packet.Id.ModId, packet.Id.BaseId);
+        return;
+    }
+
+    if (objectComponent.IsDoor)
+    {
+        const bool toggled = ObjectInteractionPolicy::TryToggleDoor(
+            true, objectComponent.Door, packet.PreActivationOpenState, activatorExists, ownedBySender,
+            packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+            activatorCell.Cell, activatorCell.WorldSpaceId, activatorCell.CenterCoords,
+            objectCell.Cell, objectCell.WorldSpaceId, objectCell.CenterCoords,
+            [&]
+            {
+                NotifyActivate notifyActivate;
+                notifyActivate.Id = packet.Id;
+                notifyActivate.ActivatorId = packet.ActivatorId;
+                notifyActivate.PreActivationOpenState = packet.PreActivationOpenState;
+
+                for (Player* pPlayer : m_world.GetPlayerManager())
+                {
+                    if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == packet.CellId)
+                        pPlayer->Send(notifyActivate);
+                }
+            });
+        if (!toggled)
+            spdlog::info("Door toggle of {:X}:{:X} rejected (stale state {} or not allowed)", packet.Id.ModId, packet.Id.BaseId, packet.PreActivationOpenState);
         return;
     }
 

@@ -6,6 +6,7 @@
 
 #include <Structs/LockData.h>
 #include <Game/Player.h>
+#include <Services/ObjectInteractionPolicy.h>
 
 struct ObjectComponent
 {
@@ -26,4 +27,7 @@ struct ObjectComponent
     bool IsHarvested{};
     bool IsHarvestItem{};
     std::uint64_t HarvestRespawnAtTick{};
+    // Set by the discovering client; receivers re-check the local base form type.
+    bool IsDoor{};
+    DoorState Door{};
 };
