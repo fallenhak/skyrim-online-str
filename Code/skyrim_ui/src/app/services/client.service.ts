@@ -465,12 +465,13 @@ export class ClientService implements OnDestroy {
     }
 
     const characters: SkyrimTogetherTypes.CharacterSummaryBridge[] = rows.map(
-      ([characterId, name, raceBaseId, raceModId, sex, level]) => ({
+      ([characterId, name, raceBaseId, raceModId, sex, level, slotIndex]) => ({
         characterId,
         name,
         race: { baseId: raceBaseId, modId: raceModId },
         sex,
         level,
+        slotIndex,
       }),
     );
 

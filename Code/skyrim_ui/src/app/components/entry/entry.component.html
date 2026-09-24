@@ -1,0 +1,135 @@
+<div class="entry" [attr.data-entry-view]="view">
+  <div class="entry-backdrop" aria-hidden="true"></div>
+  <div class="entry-vignette" aria-hidden="true"></div>
+
+  <header class="entry-brand">
+    <span class="entry-brand-title">{{ 'COMPONENT.ENTRY.BRAND' | transloco }}</span>
+  </header>
+
+  <ng-container *ngIf="auth$ | async as auth">
+    <div class="entry-account" *ngIf="auth.state === 'authenticated' && auth.displayName">
+      <img *ngIf="auth.avatarUrl" [src]="auth.avatarUrl" alt="" />
+      <span>{{ auth.displayName }}</span>
+    </div>
+  </ng-container>
+
+  <!-- Loading / connecting / world load -->
+  <section class="entry-loading" *ngIf="view === 'loading'" role="status" aria-live="polite">
+    <ng-container *ngIf="stage$ | async as stage">
+      <div class="entry-sigil" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+      <p class="entry-stage">{{ stageKey(stage.stage) | transloco }}</p>
+      <div class="entry-progress" *ngIf="stage.progress > 0">
+        <div class="entry-progress-fill" [style.width.%]="progressPercent$ | async"></div>
+      </div>
+    </ng-container>
+  </section>
+
+  <p class="entry-tip" *ngIf="view === 'loading'">
+    <span class="entry-tip-label">{{ 'COMPONENT.ENTRY.TIP_LABEL' | transloco }}</span>
+    {{ tipKey | transloco }}
+  </p>
+
+  <!-- Connection / auth failure -->
+  <section class="entry-panel entry-failed" *ngIf="view === 'failed'" role="alert">
+    <ng-container *ngIf="auth$ | async as auth">
+      <h2>{{ 'COMPONENT.ENTRY.FAILED_TITLE' | transloco }}</h2>
+      <p>{{ (auth.errorKey || 'COMPONENT.ENTRY.ERROR.CONNECTION') | transloco }}</p>
+    </ng-container>
+    <div class="entry-actions">
+      <button class="entry-button entry-button-primary" (click)="retry()">
+        {{ 'COMPONENT.ENTRY.RETRY' | transloco }}
+      </button>
+      <button class="entry-button" (click)="quit()">
+        {{ 'COMPONENT.ENTRY.QUIT' | transloco }}
+      </button>
+    </div>
+  </section>
+
+  <!-- Character select -->
+  <section class="entry-select" *ngIf="view === 'select'">
+    <h1 class="entry-title">{{ 'COMPONENT.ENTRY.SELECT_TITLE' | transloco }}</h1>
+    <div class="entry-slots" role="listbox" [attr.aria-label]="'COMPONENT.ENTRY.SELECT_TITLE' | transloco">
+      <button
+        *ngFor="let slot of slots; trackBy: trackBySlot"
+        class="entry-slot"
+        role="option"
+        [class.is-focused]="slot.index === focusedSlot"
+        [class.is-locked]="slot.locked && !slot.character"
+        [class.is-empty]="!slot.character && !slot.locked"
+        [attr.aria-selected]="slot.index === focusedSlot"
+        [attr.aria-disabled]="slot.locked && !slot.character"
+        [disabled]="busy"
+        (mouseenter)="focus(slot)"
+        (focus)="focus(slot)"
+        (click)="activate(slot)"
+      >
+        <span class="entry-slot-frame" aria-hidden="true"></span>
+
+        <ng-container *ngIf="slot.character as character; else noCharacter">
+          <span class="entry-slot-crest" aria-hidden="true"><i>{{ character.name.charAt(0) }}</i></span>
+          <span class="entry-slot-name">{{ character.name }}</span>
+          <span class="entry-slot-meta">
+            {{ raceKey(character) | transloco }} · {{ sexKey(character) | transloco }}
+          </span>
+          <span class="entry-slot-level">
+            {{ 'COMPONENT.ENTRY.LEVEL' | transloco: { level: character.level } }}
+          </span>
+          <span class="entry-slot-cta">{{ 'COMPONENT.ENTRY.PLAY' | transloco }}</span>
+        </ng-container>
+
+        <ng-template #noCharacter>
+          <ng-container *ngIf="!slot.locked; else lockedSlot">
+            <span class="entry-slot-plus" aria-hidden="true">+</span>
+            <span class="entry-slot-name">{{ 'COMPONENT.ENTRY.EMPTY_SLOT' | transloco }}</span>
+            <span class="entry-slot-cta">{{ 'COMPONENT.ENTRY.CREATE' | transloco }}</span>
+          </ng-container>
+        </ng-template>
+
+        <ng-template #lockedSlot>
+          <span class="entry-slot-lock" aria-hidden="true"></span>
+          <span class="entry-slot-name">{{ 'COMPONENT.ENTRY.LOCKED_SLOT' | transloco }}</span>
+          <span class="entry-slot-meta">{{ 'COMPONENT.ENTRY.LOCKED_HINT' | transloco }}</span>
+        </ng-template>
+      </button>
+    </div>
+    <footer class="entry-hints">
+      <span><kbd>←</kbd><kbd>→</kbd> {{ 'COMPONENT.ENTRY.HINT_MOVE' | transloco }}</span>
+      <span><kbd>Enter</kbd> {{ 'COMPONENT.ENTRY.HINT_CONFIRM' | transloco }}</span>
+      <button class="entry-link" (click)="quit()">{{ 'COMPONENT.ENTRY.QUIT' | transloco }}</button>
+    </footer>
+  </section>
+
+  <!-- Character create -->
+  <section class="entry-panel entry-create" *ngIf="view === 'create'">
+    <h2>{{ 'COMPONENT.ENTRY.CREATE_TITLE' | transloco }}</h2>
+    <p class="entry-create-intro">{{ 'COMPONENT.ENTRY.CREATE_INTRO' | transloco }}</p>
+    <form (ngSubmit)="submitCreate()" autocomplete="off">
+      <label for="entry-name">{{ 'COMPONENT.ENTRY.NAME_LABEL' | transloco }}</label>
+      <input
+        #nameInput
+        id="entry-name"
+        name="name"
+        maxlength="24"
+        spellcheck="false"
+        [(ngModel)]="name"
+        [disabled]="busy"
+        [attr.aria-invalid]="!!nameErrorKey"
+        [placeholder]="'COMPONENT.ENTRY.NAME_PLACEHOLDER' | transloco"
+      />
+      <p class="entry-field-hint" [class.is-error]="!!nameErrorKey" role="alert">
+        {{ (nameErrorKey || 'COMPONENT.ENTRY.NAME_RULES') | transloco }}
+      </p>
+      <p class="entry-create-note">{{ 'COMPONENT.ENTRY.CREATE_NOTE' | transloco }}</p>
+      <div class="entry-actions">
+        <button type="submit" class="entry-button entry-button-primary" [disabled]="busy">
+          {{ (busy ? 'COMPONENT.ENTRY.CREATING' : 'COMPONENT.ENTRY.CREATE_CONFIRM') | transloco }}
+        </button>
+        <button type="button" class="entry-button" [disabled]="busy" (click)="cancelCreate()">
+          {{ 'COMPONENT.ENTRY.CANCEL' | transloco }}
+        </button>
+      </div>
+    </form>
+  </section>
+</div>

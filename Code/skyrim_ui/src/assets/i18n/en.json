@@ -161,6 +161,79 @@
         "XL": "Extra Large"
       },
       "BACK": "Back"
+    },
+    "ENTRY": {
+      "BRAND": "Skyrim Online",
+      "TIP_LABEL": "Tip",
+      "SELECT_TITLE": "Choose Your Character",
+      "PLAY": "Play",
+      "CREATE": "Create",
+      "EMPTY_SLOT": "Empty Slot",
+      "LOCKED_SLOT": "Locked",
+      "LOCKED_HINT": "This slot is not unlocked yet",
+      "LEVEL": "Level {{level}}",
+      "HINT_MOVE": "Select",
+      "HINT_CONFIRM": "Confirm",
+      "QUIT": "Quit Game",
+      "RETRY": "Try Again",
+      "CANCEL": "Cancel",
+      "FAILED_TITLE": "Could Not Connect",
+      "CREATE_TITLE": "New Character",
+      "CREATE_INTRO": "Your journey in Skyrim begins with a name.",
+      "NAME_LABEL": "Character Name",
+      "NAME_PLACEHOLDER": "Enter a name",
+      "NAME_RULES": "3–24 letters. Letters, spaces, apostrophes and hyphens are allowed.",
+      "CREATE_NOTE": "You will awaken in the Temple of Kynareth in Whiterun, where you will choose your race and appearance.",
+      "CREATE_CONFIRM": "Create Character",
+      "CREATING": "Creating…",
+      "STAGE": {
+        "connecting": "Connecting to the server",
+        "authenticating": "Verifying your Discord account",
+        "fetchingCharacters": "Fetching your characters",
+        "creatingCharacter": "Creating your character",
+        "loadingWorld": "Loading Skyrim",
+        "applyingCharacter": "Preparing your character",
+        "raceMenu": "Opening appearance menu",
+        "enteringWorld": "Entering the world",
+        "done": "Ready"
+      },
+      "ERROR": {
+        "CONNECTION": "Could not reach the server. Check your connection and try again.",
+        "NAME_INVALID": "This name does not follow the rules.",
+        "NAME_TAKEN": "This name is already used by another character.",
+        "SLOT_LOCKED": "This slot is locked.",
+        "SLOT_OCCUPIED": "This slot already has a character.",
+        "CREATE_FAILED": "The character could not be created. Please try again.",
+        "AUTH_EXPIRED": "Your session has expired. Sign in with Discord again from the launcher.",
+        "AUTH_INVALID": "Your Discord sign-in could not be verified. Sign in again from the launcher.",
+        "SERVER_FULL": "The server is full right now. Try again shortly.",
+        "VERSION_MISMATCH": "Your game version does not match the server. Open the launcher to update."
+      },
+      "RACE": {
+        "ARGONIAN": "Argonian",
+        "BRETON": "Breton",
+        "DARK_ELF": "Dark Elf",
+        "HIGH_ELF": "High Elf",
+        "IMPERIAL": "Imperial",
+        "KHAJIIT": "Khajiit",
+        "NORD": "Nord",
+        "ORC": "Orc",
+        "REDGUARD": "Redguard",
+        "WOOD_ELF": "Wood Elf",
+        "UNKNOWN": "Unknown race"
+      },
+      "SEX": {
+        "MALE": "Male",
+        "FEMALE": "Female"
+      },
+      "TIP": {
+        "0": "Your character is stored on the server, so you continue where you left off from any PC.",
+        "1": "Whiterun sits at the heart of Skyrim; many journeys begin here.",
+        "2": "If something goes wrong, the launcher's \"Report Bug\" button sends your logs automatically.",
+        "3": "Cleared dungeons stay empty for a while, then come back to life.",
+        "4": "Quitting properly makes sure your last position is saved.",
+        "5": "Be respectful to other players; this is everyone's Skyrim."
+      }
     }
   },
   "SERVICE": {

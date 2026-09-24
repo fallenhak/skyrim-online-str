@@ -141,6 +141,79 @@
         "XL": "Ekstra Büyük"
       },
       "BACK": "Geri"
+    },
+    "ENTRY": {
+      "BRAND": "Skyrim Online",
+      "TIP_LABEL": "İpucu",
+      "SELECT_TITLE": "Karakterini Seç",
+      "PLAY": "Oyna",
+      "CREATE": "Oluştur",
+      "EMPTY_SLOT": "Boş Slot",
+      "LOCKED_SLOT": "Kilitli",
+      "LOCKED_HINT": "Bu slot henüz açılmadı",
+      "LEVEL": "Seviye {{level}}",
+      "HINT_MOVE": "Seç",
+      "HINT_CONFIRM": "Onayla",
+      "QUIT": "Oyundan Çık",
+      "RETRY": "Tekrar Dene",
+      "CANCEL": "Vazgeç",
+      "FAILED_TITLE": "Bağlanılamadı",
+      "CREATE_TITLE": "Yeni Karakter",
+      "CREATE_INTRO": "Skyrim'deki yolculuğun bir isimle başlar.",
+      "NAME_LABEL": "Karakter Adı",
+      "NAME_PLACEHOLDER": "Adını yaz",
+      "NAME_RULES": "3–24 harf. Harf, boşluk, kesme işareti ve tire kullanılabilir.",
+      "CREATE_NOTE": "Onayladığında Whiterun'daki Kynareth Mabedi'nde uyanacaksın. Irkını ve görünüşünü orada seçeceksin.",
+      "CREATE_CONFIRM": "Karakteri Oluştur",
+      "CREATING": "Oluşturuluyor…",
+      "STAGE": {
+        "connecting": "Sunucuya bağlanılıyor",
+        "authenticating": "Discord hesabın doğrulanıyor",
+        "fetchingCharacters": "Karakterlerin getiriliyor",
+        "creatingCharacter": "Karakterin oluşturuluyor",
+        "loadingWorld": "Skyrim yükleniyor",
+        "applyingCharacter": "Karakterin hazırlanıyor",
+        "raceMenu": "Görünüş ekranı açılıyor",
+        "enteringWorld": "Dünyaya adım atılıyor",
+        "done": "Hazır"
+      },
+      "ERROR": {
+        "CONNECTION": "Sunucuya ulaşılamadı. İnternet bağlantını kontrol edip tekrar dene.",
+        "NAME_INVALID": "Bu isim kurallara uymuyor.",
+        "NAME_TAKEN": "Bu isim başka bir karakterde kullanılıyor.",
+        "SLOT_LOCKED": "Bu slot kilitli.",
+        "SLOT_OCCUPIED": "Bu slotta zaten bir karakter var.",
+        "CREATE_FAILED": "Karakter oluşturulamadı. Lütfen tekrar dene.",
+        "AUTH_EXPIRED": "Oturumunun süresi doldu. Launcher'dan tekrar Discord ile giriş yap.",
+        "AUTH_INVALID": "Discord girişi doğrulanamadı. Launcher'dan tekrar giriş yap.",
+        "SERVER_FULL": "Sunucu şu an dolu. Biraz sonra tekrar dene.",
+        "VERSION_MISMATCH": "Oyun sürümün sunucuyla uyuşmuyor. Launcher'ı açıp güncelle."
+      },
+      "RACE": {
+        "ARGONIAN": "Argonian",
+        "BRETON": "Breton",
+        "DARK_ELF": "Kara Elf",
+        "HIGH_ELF": "Yüksek Elf",
+        "IMPERIAL": "İmparatorluk",
+        "KHAJIIT": "Khajiit",
+        "NORD": "Nord",
+        "ORC": "Ork",
+        "REDGUARD": "Redguard",
+        "WOOD_ELF": "Orman Elfi",
+        "UNKNOWN": "Bilinmeyen ırk"
+      },
+      "SEX": {
+        "MALE": "Erkek",
+        "FEMALE": "Kadın"
+      },
+      "TIP": {
+        "0": "Karakterin sunucuda saklanır; hangi bilgisayardan girersen gir kaldığın yerden devam edersin.",
+        "1": "Whiterun, Skyrim'in tam ortasındadır; birçok yolculuk buradan başlar.",
+        "2": "Bir sorunla karşılaşırsan launcher'daki \"Hata Bildir\" butonu logları otomatik gönderir.",
+        "3": "Temizlenen zindanlar bir süre boş kalır, sonra yeniden canlanır.",
+        "4": "Oyundan düzgün çıkarsan son konumun kesin olarak kaydedilir.",
+        "5": "Diğer oyunculara saygılı ol; burası hepimizin Skyrim'i."
+      }
     }
   },
   "SERVICE": {

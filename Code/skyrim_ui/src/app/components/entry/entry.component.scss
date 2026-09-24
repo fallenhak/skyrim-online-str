@@ -1,0 +1,584 @@
+// Full-screen pre-world entry: loading, character select, character create.
+$ink: #0b0a09;
+$ink-2: #16130f;
+$bone: #e9dfc7;
+$bone-dim: rgba(233, 223, 199, 0.62);
+$bone-faint: rgba(233, 223, 199, 0.28);
+$gold: #c8a45a;
+$gold-bright: #e6c479;
+$ember: #b5482f;
+
+:host {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: all;
+}
+
+.entry {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: $bone;
+  background: $ink;
+  overflow: hidden;
+  letter-spacing: 0.04em;
+}
+
+.entry-backdrop {
+  position: absolute;
+  inset: -10%;
+  background:
+    radial-gradient(ellipse 60% 45% at 50% 38%, rgba(200, 164, 90, 0.1), transparent 70%),
+    radial-gradient(ellipse 80% 60% at 20% 90%, rgba(80, 96, 110, 0.18), transparent 70%),
+    radial-gradient(ellipse 70% 50% at 85% 10%, rgba(120, 110, 95, 0.14), transparent 70%),
+    linear-gradient(180deg, $ink-2 0%, $ink 100%);
+  animation: entry-drift 40s ease-in-out infinite alternate;
+}
+
+.entry-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, 0.75) 100%);
+  pointer-events: none;
+}
+
+@keyframes entry-drift {
+  from {
+    transform: translate3d(-1.5%, -1%, 0) scale(1.02);
+  }
+  to {
+    transform: translate3d(1.5%, 1%, 0) scale(1.06);
+  }
+}
+
+.entry-brand {
+  position: absolute;
+  top: 5vh;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  opacity: 0.9;
+}
+
+.entry-brand-title {
+  font-size: 1.1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5em;
+  color: $bone-dim;
+}
+
+.entry-account {
+  position: absolute;
+  top: 3vh;
+  right: 3vw;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 1rem;
+  color: $bone-dim;
+
+  img {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    border: 1px solid $bone-faint;
+  }
+}
+
+// ---------- Loading ----------
+.entry-loading {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.6rem;
+  animation: entry-fade 0.6s ease-out both;
+}
+
+.entry-sigil {
+  position: relative;
+  width: 5.5rem;
+  height: 5.5rem;
+
+  span {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 1px solid transparent;
+    border-top-color: $gold;
+    animation: entry-spin 2.4s cubic-bezier(0.55, 0.15, 0.45, 0.85) infinite;
+
+    &:nth-child(2) {
+      inset: 0.8rem;
+      border-top-color: $bone-dim;
+      animation-duration: 3.2s;
+      animation-direction: reverse;
+    }
+
+    &:nth-child(3) {
+      inset: 1.7rem;
+      border-top-color: $gold-bright;
+      animation-duration: 1.8s;
+    }
+  }
+}
+
+@keyframes entry-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.entry-stage {
+  margin: 0;
+  font-size: 1.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+}
+
+.entry-progress {
+  width: 22rem;
+  height: 2px;
+  background: $bone-faint;
+  overflow: hidden;
+}
+
+.entry-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, $gold, $gold-bright);
+  box-shadow: 0 0 10px $gold;
+  transition: width 0.4s ease-out;
+}
+
+.entry-tip {
+  position: absolute;
+  bottom: 7vh;
+  max-width: 46rem;
+  padding: 0 2rem;
+  margin: 0;
+  text-align: center;
+  font-size: 1.05rem;
+  line-height: 1.5;
+  color: $bone-dim;
+}
+
+.entry-tip-label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  color: $gold;
+}
+
+// ---------- Select ----------
+.entry-select {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3vh;
+  width: 100%;
+  animation: entry-fade 0.5s ease-out both;
+}
+
+.entry-title {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.35em;
+
+  &::after {
+    content: '';
+    display: block;
+    width: 60%;
+    height: 1px;
+    margin: 0.9rem auto 0;
+    background: linear-gradient(90deg, transparent, $gold, transparent);
+  }
+}
+
+.entry-slots {
+  display: flex;
+  gap: 2vw;
+}
+
+.entry-slot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  width: 17rem;
+  height: 26rem;
+  padding: 2rem 1.2rem;
+  border: 0;
+  color: $bone;
+  font-size: 1rem;
+  text-align: center;
+  cursor: pointer;
+  background: linear-gradient(180deg, rgba(22, 19, 15, 0.55), rgba(11, 10, 9, 0.92));
+  opacity: 0.78;
+  transition:
+    transform 0.25s ease,
+    box-shadow 0.25s ease,
+    opacity 0.25s ease;
+
+  &.is-focused {
+    opacity: 1;
+    transform: translateY(-0.5rem);
+    box-shadow:
+      0 1.2rem 2.4rem rgba(0, 0, 0, 0.6),
+      0 0 2.2rem rgba(200, 164, 90, 0.16);
+
+    .entry-slot-frame {
+      border-color: $gold;
+
+      &::before,
+      &::after {
+        opacity: 1;
+      }
+    }
+
+    .entry-slot-cta {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  &.is-locked {
+    cursor: default;
+    opacity: 0.4;
+
+    .entry-slot-name {
+      color: $bone-dim;
+    }
+
+    &.is-focused {
+      transform: none;
+      box-shadow: none;
+
+      .entry-slot-frame {
+        border-color: $bone-faint;
+
+        &::before,
+        &::after {
+          opacity: 0;
+        }
+      }
+    }
+  }
+
+  &[disabled] {
+    cursor: progress;
+  }
+}
+
+.entry-slot-frame {
+  position: absolute;
+  inset: 0.5rem;
+  border: 1px solid $bone-faint;
+  pointer-events: none;
+  transition: border-color 0.25s ease;
+
+  // Corner ornaments
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    width: 1.2rem;
+    height: 1.2rem;
+    border: 2px solid $gold-bright;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+  }
+
+  &::before {
+    top: -3px;
+    left: -3px;
+    border-right: 0;
+    border-bottom: 0;
+  }
+
+  &::after {
+    bottom: -3px;
+    right: -3px;
+    border-left: 0;
+    border-top: 0;
+  }
+}
+
+.entry-slot-crest {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 5.5rem;
+  height: 5.5rem;
+  margin: 2rem 0 auto;
+  border: 1px solid $gold;
+  transform: rotate(45deg);
+  font-size: 2.4rem;
+  line-height: 1;
+  color: $gold-bright;
+
+  i {
+    font-style: normal;
+    transform: rotate(-45deg);
+  }
+}
+
+.entry-slot-plus {
+  margin: 5rem 0 auto;
+  font-size: 4rem;
+  line-height: 1;
+  color: $bone-faint;
+}
+
+.entry-slot-lock {
+  position: relative;
+  width: 2.4rem;
+  height: 2rem;
+  margin: 6rem 0 auto;
+  border: 2px solid $bone-dim;
+  border-radius: 3px;
+
+  &::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: 100%;
+    width: 1.4rem;
+    height: 1.3rem;
+    margin-left: -0.7rem;
+    border: 2px solid $bone-dim;
+    border-bottom: 0;
+    border-radius: 0.8rem 0.8rem 0 0;
+  }
+}
+
+.entry-slot-name {
+  font-size: 1.45rem;
+  letter-spacing: 0.08em;
+  word-break: break-word;
+}
+
+.entry-slot-meta {
+  font-size: 0.95rem;
+  color: $bone-dim;
+}
+
+.entry-slot-level {
+  font-size: 0.85rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: $gold;
+}
+
+.entry-slot-cta {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  color: $gold-bright;
+  opacity: 0;
+  transform: translateY(0.3rem);
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+}
+
+.entry-hints {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  font-size: 0.9rem;
+  color: $bone-dim;
+
+  kbd {
+    display: inline-block;
+    min-width: 1.6rem;
+    margin-right: 0.25rem;
+    padding: 0.1rem 0.4rem;
+    border: 1px solid $bone-faint;
+    border-radius: 3px;
+    font-family: inherit;
+    text-align: center;
+  }
+}
+
+.entry-link {
+  border: 0;
+  background: none;
+  color: $bone-dim;
+  font-size: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  cursor: pointer;
+
+  &:hover {
+    color: $ember;
+  }
+}
+
+// ---------- Panels (create / failed) ----------
+.entry-panel {
+  position: relative;
+  width: 34rem;
+  padding: 2.6rem 3rem;
+  background: linear-gradient(180deg, rgba(22, 19, 15, 0.92), rgba(11, 10, 9, 0.96));
+  border: 1px solid $bone-faint;
+  box-shadow: 0 2rem 4rem rgba(0, 0, 0, 0.7);
+  animation: entry-fade 0.4s ease-out both;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 15%;
+    right: 15%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, $gold-bright, transparent);
+  }
+
+  h2 {
+    margin: 0 0 1rem;
+    font-size: 1.6rem;
+    font-weight: normal;
+    text-transform: uppercase;
+    letter-spacing: 0.25em;
+    text-align: center;
+  }
+
+  p {
+    color: $bone-dim;
+    line-height: 1.5;
+  }
+
+  label {
+    display: block;
+    margin: 1.4rem 0 0.5rem;
+    font-size: 0.85rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: $gold;
+  }
+
+  input {
+    width: 100%;
+    padding: 0.7rem 0.2rem;
+    border: 0;
+    border-bottom: 1px solid $bone-faint;
+    background: transparent;
+    color: $bone;
+    font-size: 1.5rem;
+    opacity: 1;
+    user-select: text;
+    transition: border-color 0.2s ease;
+
+    &:focus {
+      border-bottom-color: $gold-bright;
+    }
+
+    &::placeholder {
+      color: $bone-faint;
+    }
+
+    &[aria-invalid='true'] {
+      border-bottom-color: $ember;
+    }
+  }
+}
+
+.entry-create-intro {
+  margin: 0;
+  text-align: center;
+}
+
+.entry-field-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+
+  &.is-error,
+  .entry-panel &.is-error {
+    color: $ember;
+  }
+}
+
+.entry-create-note {
+  margin: 1.4rem 0 0;
+  font-size: 0.9rem;
+}
+
+.entry-actions {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.entry-button {
+  min-width: 9rem;
+  padding: 0.75rem 1.4rem;
+  border: 1px solid $bone-faint;
+  background: transparent;
+  color: $bone;
+  font-size: 1rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    color 0.2s ease;
+
+  &:hover:not([disabled]),
+  &:focus-visible {
+    border-color: $gold;
+    color: $gold-bright;
+  }
+
+  &[disabled] {
+    opacity: 0.5;
+    cursor: progress;
+  }
+}
+
+.entry-button-primary {
+  border-color: $gold;
+  background: rgba(200, 164, 90, 0.12);
+
+  &:hover:not([disabled]) {
+    background: rgba(200, 164, 90, 0.22);
+  }
+}
+
+.entry-failed {
+  text-align: center;
+}
+
+@keyframes entry-fade {
+  from {
+    opacity: 0;
+    transform: translateY(0.6rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entry-backdrop,
+  .entry-sigil span {
+    animation: none;
+  }
+}
