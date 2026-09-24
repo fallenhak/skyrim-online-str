@@ -46,7 +46,7 @@ TEST_CASE("Actor respawn starts a new lifecycle and resets accepted death state"
 
 TEST_CASE("Zero is not a valid actor lifecycle generation", "[actor_lifecycle]")
 {
-    const ActorLifecycleComponent invalid{ActorLifecycleComponent::kInvalidGeneration};
+    ActorLifecycleComponent invalid{ActorLifecycleComponent::kInvalidGeneration};
     REQUIRE_FALSE(invalid.IsValid());
     REQUIRE_FALSE(invalid.TryStartNewIncarnation());
 }
