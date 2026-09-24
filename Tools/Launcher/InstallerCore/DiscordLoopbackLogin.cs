@@ -95,7 +95,9 @@ public sealed class DiscordLoopbackLogin
                 }
 
                 var transfer = Encoding.UTF8.GetString(body);
-                var payload = JsonSerializer.Deserialize<CallbackPayload>(transfer);
+                // The callback page posts lower-case keys ({"state","token","error"}); System.Text.Json is
+                // case-sensitive by default, which left State null and rejected every login as a mismatch.
+                var payload = JsonSerializer.Deserialize<CallbackPayload>(transfer, CallbackJson);
                 if (payload?.State is null || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(payload.State), Encoding.UTF8.GetBytes(expectedState)))
                 {
                     await ReplyAsync(stream, 403, "Forbidden", "text/plain; charset=utf-8", "State mismatch"u8.ToArray()).ConfigureAwait(false);
@@ -179,6 +181,8 @@ public sealed class DiscordLoopbackLogin
 
     private static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     private static string SafeError(string value) => value.Length <= 80 && value.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '_' or '-') ? value : "discord_login_failed";
+
+    private static readonly JsonSerializerOptions CallbackJson = new() { PropertyNameCaseInsensitive = true };
 
     private sealed record CallbackPayload(string? State, string? Token, string? Error);
 }
