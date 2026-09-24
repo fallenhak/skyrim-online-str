@@ -24,6 +24,7 @@
 #include <misc/ActorValueOwner.h>
 
 #include <cmath>
+#include <optional>
 
 ActorValueService::ActorValueService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport) noexcept
     : m_world(aWorld)
@@ -180,7 +181,7 @@ void ActorValueService::OnHealthChange(const HealthChangeEvent& acEvent) noexcep
 
     if (hitteeIt == std::end(view))
     {
-        spdlog::warn("Health change event form id component not found, form id: {:X}", acEvent.HitteeId);
+        SendNonOwnerDamage(acEvent);
         return;
     }
 
@@ -212,6 +213,33 @@ void ActorValueService::OnHealthChange(const HealthChangeEvent& acEvent) noexcep
     m_transport.Send(requestHealthChange);
 
     spdlog::debug("Sent out delta health through collection: {:X}:{:f}", serverId, acEvent.DeltaHealth);
+}
+
+void ActorValueService::SendNonOwnerDamage(const HealthChangeEvent& acEvent) const noexcept
+{
+    // Only hits count; regeneration and sub-point ticks on a remote actor are the owner's to simulate.
+    if (acEvent.DeltaHealth > -1.0f)
+        return;
+
+    auto view = m_world.view<FormIdComponent, RemoteComponent>();
+    const auto hitteeIt = std::find_if(
+        std::begin(view), std::end(view), [id = acEvent.HitteeId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == id; });
+
+    if (hitteeIt == std::end(view))
+        return;
+
+    const auto& remoteComponent = view.get<RemoteComponent>(*hitteeIt);
+    if (remoteComponent.OwnershipEpoch == 0)
+        return;
+
+    RequestHealthChangeBroadcast request;
+    request.Id = remoteComponent.Id;
+    request.DeltaHealth = acEvent.DeltaHealth;
+    request.OwnershipEpoch = remoteComponent.OwnershipEpoch;
+
+    m_transport.Send(request);
+
+    spdlog::debug("Sent non-owner damage for remote actor {:X}: {:f}", remoteComponent.Id, acEvent.DeltaHealth);
 }
 
 void ActorValueService::RunSmallHealthUpdates() noexcept
@@ -299,18 +327,36 @@ void ActorValueService::OnHealthChangeBroadcast(const NotifyHealthChangeBroadcas
     if (acMessage.OwnershipEpoch == 0 || !std::isfinite(acMessage.DeltaHealth))
         return;
 
-    auto view = m_world.view<FormIdComponent, RemoteComponent>();
-    const auto it = std::find_if(std::begin(view), std::end(view), [&acMessage, view](entt::entity entity)
+    std::optional<uint32_t> formId;
+
+    auto remoteView = m_world.view<FormIdComponent, RemoteComponent>();
+    const auto remoteIt = std::find_if(std::begin(remoteView), std::end(remoteView), [&acMessage, remoteView](entt::entity entity)
     {
-        const auto& remoteComponent = view.get<RemoteComponent>(entity);
+        const auto& remoteComponent = remoteView.get<RemoteComponent>(entity);
         return remoteComponent.Id == acMessage.Id && remoteComponent.OwnershipEpoch == acMessage.OwnershipEpoch;
     });
 
-    if (it == std::end(view))
+    if (remoteIt != std::end(remoteView))
+        formId = remoteView.get<FormIdComponent>(*remoteIt).Id;
+
+    // The owner also receives damage another player reported; its game never applied that hit.
+    if (!formId)
+    {
+        auto localView = m_world.view<FormIdComponent, LocalComponent>();
+        const auto localIt = std::find_if(std::begin(localView), std::end(localView), [&acMessage, localView](entt::entity entity)
+        {
+            const auto& localComponent = localView.get<LocalComponent>(entity);
+            return localComponent.Id == acMessage.Id && localComponent.OwnershipEpoch == acMessage.OwnershipEpoch;
+        });
+
+        if (localIt != std::end(localView) && acMessage.DeltaHealth < 0.f)
+            formId = localView.get<FormIdComponent>(*localIt).Id;
+    }
+
+    if (!formId)
         return;
 
-    const auto& formIdComponent = view.get<FormIdComponent>(*it);
-    Actor* pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id));
+    Actor* pActor = Cast<Actor>(TESForm::GetById(*formId));
     if (!pActor)
     {
         spdlog::error("{}: could not find actor server id {:X}", __FUNCTION__, acMessage.Id);

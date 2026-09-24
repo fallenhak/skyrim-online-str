@@ -5,6 +5,8 @@
 #include <Messages/RequestDeathStateChange.h>
 #include <Services/ActorValueService.h>
 #include <Services/ActorHealthChangePolicy.h>
+#include <Services/ActorNonOwnerDamagePolicy.h>
+#include <Services/SessionService.h>
 #include <Services/CanonicalCreatureDeathPolicy.h>
 #include <Events/AcceptedCanonicalHealthDecreaseEvent.h>
 #include <Events/AcceptedCanonicalCreatureDeathEvent.h>
@@ -132,6 +134,29 @@ void ActorValueService::OnActorMaxValueChanges(const PacketEvent<RequestActorMax
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }
 
+bool ActorValueService::IsAcceptedNonOwnerDamage(const PacketEvent<RequestHealthChangeBroadcast>& acMessage) const noexcept
+{
+    const auto& message = acMessage.Packet;
+    const auto entity = static_cast<entt::entity>(message.Id);
+
+    const auto* pOwner = m_world.try_get<OwnerComponent>(entity);
+    const auto* pCharacter = m_world.try_get<CharacterComponent>(entity);
+    const auto* pCell = m_world.try_get<CellIdComponent>(entity);
+    const bool entityExists = m_world.valid(entity) && pOwner && pCharacter && pCell;
+
+    const bool senderInWorld = m_world.GetSessionService().CanProcessGameplay(acMessage.pPlayer->GetConnectionId());
+    const bool senderInRange = entityExists && acMessage.pPlayer->GetCellComponent().IsInRange(*pCell, pCharacter->IsDragon());
+
+    const bool accepted = ActorNonOwnerDamagePolicy::IsAccepted(
+        entityExists, entityExists && pCharacter->IsDead(), senderInWorld, senderInRange,
+        entityExists ? pOwner->OwnershipEpoch : 0, message.OwnershipEpoch, message.DeltaHealth);
+
+    if (!accepted)
+        spdlog::debug("Rejected health change from non-owner player {:X} for actor {:X}, delta {}", acMessage.pPlayer->GetId(), message.Id, message.DeltaHealth);
+
+    return accepted;
+}
+
 void ActorValueService::OnHealthChangeBroadcast(const PacketEvent<RequestHealthChangeBroadcast>& acMessage) const noexcept
 {
     auto& message = acMessage.Packet;
@@ -141,7 +166,8 @@ void ActorValueService::OnHealthChangeBroadcast(const PacketEvent<RequestHealthC
 
     const bool entityExists = it != actorValuesView.end();
     const bool isCurrentOwner = entityExists && actorValuesView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch);
-    if (!ActorHealthChangePolicy::IsAuthorized(entityExists, entityExists, isCurrentOwner, message.OwnershipEpoch))
+    // The non-owner path below dereferences the same view entity, so it needs the entity too.
+    if (!entityExists || (!ActorHealthChangePolicy::IsAuthorized(entityExists, entityExists, isCurrentOwner, message.OwnershipEpoch) && !IsAcceptedNonOwnerDamage(acMessage)))
         return;
 
     auto& actorValuesComponent = actorValuesView.get<ActorValuesComponent>(*it);

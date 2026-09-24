@@ -1,4 +1,5 @@
 #include <Services/ActorHealthChangePolicy.h>
+#include <Services/ActorNonOwnerDamagePolicy.h>
 
 #include <catch2/catch.hpp>
 
@@ -51,4 +52,29 @@ TEST_CASE("Canonical health decrease requires the accepted value to be lower", "
     const float roundedHealth = previousHealth - 1.f;
     REQUIRE(roundedHealth == previousHealth);
     REQUIRE_FALSE(ActorHealthChangePolicy::IsCanonicalDecrease(previousHealth, roundedHealth));
+}
+
+TEST_CASE("Non-owner damage reports are bounded, current and in range", "[actor_authority]")
+{
+    constexpr float cMax = ActorNonOwnerDamagePolicy::kMaxDamagePerReport;
+
+    REQUIRE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, true, true, 7, 7, -25.f));
+    REQUIRE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, true, true, 7, 7, -cMax));
+
+    // Healing, zero and oversized or non-finite damage are rejected.
+    REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, true, true, 7, 7, 10.f));
+    REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, true, true, 7, 7, 0.f));
+    REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, true, true, 7, 7, -cMax - 1.f));
+    REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, true, true, 7, 7, -std::numeric_limits<float>::infinity()));
+    REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, true, true, 7, 7, std::numeric_limits<float>::quiet_NaN()));
+
+    // Stale or missing incarnation.
+    REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, true, true, 8, 7, -25.f));
+    REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, true, true, 0, 0, -25.f));
+
+    // Missing or dead target, sender out of world or out of range.
+    REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(false, false, true, true, 7, 7, -25.f));
+    REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(true, true, true, true, 7, 7, -25.f));
+    REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, false, true, 7, 7, -25.f));
+    REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, true, false, 7, 7, -25.f));
 }

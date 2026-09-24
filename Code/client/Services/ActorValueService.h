@@ -82,6 +82,7 @@ private:
      * If the health changes are small, it will be cached and sent out on update.
      */
     void OnHealthChange(const HealthChangeEvent&) noexcept;
+    void SendNonOwnerDamage(const HealthChangeEvent& acEvent) const noexcept;
     /**
      * @brief Receives health value changes and applies them locally.
      */
