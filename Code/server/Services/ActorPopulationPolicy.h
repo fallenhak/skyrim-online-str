@@ -51,6 +51,10 @@ public:
     [[nodiscard]] ActorPopulationClassification ClassifyNpcBase(uint32_t aResolvedNpcBaseFormId) const noexcept;
 
 private:
+    static constexpr uint32_t kMaxTemplateDepth = 16;
+
+    [[nodiscard]] ActorPopulationClassification ClassifyTemplateTarget(uint32_t aFormId, uint32_t aDepth) const noexcept;
+
     const ESLoader::RecordCollection* m_recordCollection{};
     TiltedPhoques::Map<TiltedPhoques::String, ActorPopulationClass> m_raceClassifications{};
 };
