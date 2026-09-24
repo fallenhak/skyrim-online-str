@@ -2,6 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iosfwd>
+
+#include <TiltedCore/Buffer.hpp>
+#include <TiltedCore/Stl.hpp>
 
 using TiltedPhoques::Vector;
 

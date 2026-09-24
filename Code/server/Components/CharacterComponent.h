@@ -4,6 +4,8 @@
 #error Include Components.h instead
 #endif
 
+#include <TiltedCore/Stl.hpp>
+
 #include <Structs/Tints.h>
 #include <Structs/Factions.h>
 
@@ -79,7 +81,7 @@ struct CharacterComponent
     }
 
     uint32_t ChangeFlags{0};
-    String SaveBuffer{};
+    TiltedPhoques::String SaveBuffer{};
     FormIdComponent BaseId{};
     FormIdComponent LeveledNpcPickId{};
     Tints FaceTints{};

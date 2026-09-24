@@ -3,6 +3,8 @@
 #include <Events/PacketEvent.h>
 #include <Structs/ActorData.h>
 
+#include <cstdint>
+
 struct UpdateEvent;
 struct CharacterInteriorCellChangeEvent;
 struct CharacterSpawnedEvent;
@@ -24,6 +26,7 @@ struct RequestRespawn;
 struct DialogueRequest;
 struct SubtitleRequest;
 struct Player;
+struct ActorPopulationIdentity;
 
 /**
  * @brief Manages player and actor state.
@@ -36,6 +39,9 @@ struct CharacterService
     TP_NOCOPYMOVE(CharacterService);
 
     static void Serialize(World& aRegistry, entt::entity aEntity, CharacterSpawnRequest* apSpawnRequest) noexcept;
+    /** Advance a current owner's actor lifecycle and notify lifecycle-bound services. */
+    [[nodiscard]] bool BeginOwnerRespawnLifecycle(
+        entt::entity aEntity, Player* apOwner, std::uint32_t aOwnershipEpoch) noexcept;
 
 protected:
     enum class OwnershipTransferReason : uint8_t
@@ -60,11 +66,11 @@ protected:
     void OnFactionsChanges(const PacketEvent<RequestFactionsChanges>& acMessage) const noexcept;
     void OnMountRequest(const PacketEvent<MountRequest>& acMessage) const noexcept;
     void OnNewPackageRequest(const PacketEvent<NewPackageRequest>& acMessage) const noexcept;
-    void OnRequestRespawn(const PacketEvent<RequestRespawn>& acMessage) const noexcept;
+    void OnRequestRespawn(const PacketEvent<RequestRespawn>& acMessage) noexcept;
     void OnDialogueRequest(const PacketEvent<DialogueRequest>& acMessage) const noexcept;
     void OnSubtitleRequest(const PacketEvent<SubtitleRequest>& acMessage) const noexcept;
 
-    void CreateCharacter(const PacketEvent<AssignCharacterRequest>& acMessage) const noexcept;
+    void CreateCharacter(const PacketEvent<AssignCharacterRequest>& acMessage, const ActorPopulationIdentity& acIdentity) const noexcept;
     void PopulateAssignmentResponse(entt::entity aEntity, AssignCharacterResponse& aResponse) const noexcept;
     static const char* GetOwnershipTransferReasonName(OwnershipTransferReason aReason) noexcept;
     bool CanClaimOwnership(Player* apPlayer, entt::entity aEntity, uint32_t aExpectedOwnershipEpoch, OwnershipTransferReason aReason) const noexcept;

@@ -10,6 +10,7 @@
 #include <Events/UpdateEvent.h>
 #include <Events/CharacterRemoveEvent.h>
 #include <Events/OwnershipTransferEvent.h>
+#include <Events/ActorRespawnedEvent.h>
 
 #include <Game/OwnerView.h>
 
@@ -92,6 +93,33 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher)
     , m_dialogueConnection(aDispatcher.sink<PacketEvent<DialogueRequest>>().connect<&CharacterService::OnDialogueRequest>(this))
     , m_subtitleConnection(aDispatcher.sink<PacketEvent<SubtitleRequest>>().connect<&CharacterService::OnSubtitleRequest>(this))
 {
+}
+
+bool CharacterService::BeginOwnerRespawnLifecycle(
+    const entt::entity aEntity, Player* apOwner, const std::uint32_t aOwnershipEpoch) noexcept
+{
+    if (!m_world.valid(aEntity) || !m_world.all_of<CharacterComponent>(aEntity))
+        return false;
+
+    const auto* const pOwner = m_world.try_get<OwnerComponent>(aEntity);
+    if (!pOwner || !pOwner->IsCurrentOwner(apOwner, aOwnershipEpoch))
+        return false;
+
+    auto* const pLifecycle = m_world.try_get<ActorLifecycleComponent>(aEntity);
+    const bool startedLifecycle = pLifecycle == nullptr;
+    auto* const pCurrentLifecycle = pLifecycle ? pLifecycle : &m_world.emplace<ActorLifecycleComponent>(aEntity);
+    if (!pCurrentLifecycle->IsValid() || (!startedLifecycle && !pCurrentLifecycle->TryStartNewIncarnation()))
+    {
+        if (startedLifecycle)
+            m_world.remove<ActorLifecycleComponent>(aEntity);
+        spdlog::warn("Cannot respawn actor {:X}: lifecycle generation is unavailable", World::ToInteger(aEntity));
+        return false;
+    }
+
+    m_world.GetDispatcher().trigger(ActorRespawnedEvent{
+        World::ToInteger(aEntity),
+        pCurrentLifecycle->GetGeneration()});
+    return true;
 }
 
 void CharacterService::Serialize(World& aRegistry, entt::entity aEntity, CharacterSpawnRequest* apSpawnRequest) noexcept
@@ -231,9 +259,9 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
     if (!isPlayer && !sessionService.CanProcessGameplay(acMessage.pPlayer->GetConnectionId()))
         return;
 
+    const auto identity = m_world.GetActorPopulationIdentityResolver().Resolve(refId, message.FormId, message.LeveledNpcPickId);
     if (!isPlayer)
     {
-        const auto identity = m_world.GetActorPopulationIdentityResolver().Resolve(refId, message.FormId, message.LeveledNpcPickId);
         spdlog::debug(
             "Actor population identity for reference {:x}:{:x}: resolved reference {:08x}, NPC {:08x}, race {:08x} '{}', classification {}, source {}, trusted {}",
             refId.ModId,
@@ -297,6 +325,21 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
 
         if (itor != std::end(view))
         {
+            // Actors created before lifecycle tracking was introduced may still
+            // be present in a long-lived server. Give them a server-owned
+            // incarnation before returning any assignment state, but never
+            // replace an existing generation for the current actor.
+            if (!m_world.all_of<ActorLifecycleComponent>(*itor))
+            {
+                auto& lifecycleComponent = m_world.emplace<ActorLifecycleComponent>(*itor);
+                if (!lifecycleComponent.IsValid())
+                {
+                    m_world.remove<ActorLifecycleComponent>(*itor);
+                    spdlog::error("Cannot assign actor {:X}: lifecycle generation allocator is exhausted", World::ToInteger(*itor));
+                    return;
+                }
+            }
+
             spdlog::debug("FormId: {:x}:{:x} is already managed", refId.ModId, refId.BaseId);
 
             auto& ownerComponent = view.get<OwnerComponent>(*itor);
@@ -325,12 +368,18 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
             if (transferToLeader)
                 TransferOwnership(acMessage.pPlayer, *itor, OwnershipTransferReason::LeaderAssignment);
 
+            // Canonical actors created by older code paths may not have the
+            // trusted projection yet. Hydrate it once, but never overwrite an
+            // existing incarnation's identity from a later client claim.
+            if (!m_world.all_of<ActorPopulationIdentityComponent>(*itor))
+                m_world.emplace<ActorPopulationIdentityComponent>(*itor, identity);
+
             return;
         }
     }
 
     // This entity has no owner create it
-    CreateCharacter(acMessage);
+    CreateCharacter(acMessage, identity);
 }
 
 void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwnershipTransfer>& acMessage) const noexcept
@@ -437,6 +486,8 @@ void CharacterService::OnCharacterRemoveEvent(const CharacterRemoveEvent& acEven
     for (auto pPlayer : m_world.GetPlayerManager())
         pPlayer->Send(response);
 
+    // Registry destruction removes the lifecycle component with the canonical
+    // actor state; its generation is intentionally never recycled.
     m_world.destroy(*it);
     spdlog::debug("Character destroyed {:X}", acEvent.ServerId);
 }
@@ -644,7 +695,7 @@ void CharacterService::OnNewPackageRequest(const PacketEvent<NewPackageRequest>&
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }
 
-void CharacterService::OnRequestRespawn(const PacketEvent<RequestRespawn>& acMessage) const noexcept
+void CharacterService::OnRequestRespawn(const PacketEvent<RequestRespawn>& acMessage) noexcept
 {
     auto view = m_world.view<OwnerComponent, CharacterComponent>();
     auto it = view.find(static_cast<entt::entity>(acMessage.Packet.ActorId));
@@ -660,6 +711,9 @@ void CharacterService::OnRequestRespawn(const PacketEvent<RequestRespawn>& acMes
 
     if (ownerComponent.IsCurrentOwner(acMessage.pPlayer, acMessage.Packet.OwnershipEpoch))
     {
+        if (!BeginOwnerRespawnLifecycle(*it, acMessage.pPlayer, acMessage.Packet.OwnershipEpoch))
+            return;
+
         // Replay cache needs to be cleared when the current owner respawns.
         if (auto* pAnimationComponent = m_world.try_get<AnimationComponent>(*it))
             pAnimationComponent->ActionsReplayCache.Clear();
@@ -717,7 +771,7 @@ void CharacterService::OnSubtitleRequest(const PacketEvent<SubtitleRequest>& acM
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }
 
-void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>& acMessage) const noexcept
+void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>& acMessage, const ActorPopulationIdentity& acIdentity) const noexcept
 {
     auto& message = acMessage.Packet;
 
@@ -757,6 +811,13 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     }
 
     const auto cEntity = m_world.create();
+    auto& lifecycleComponent = m_world.emplace<ActorLifecycleComponent>(cEntity);
+    if (!lifecycleComponent.IsValid())
+    {
+        m_world.destroy(cEntity);
+        spdlog::error("Cannot create actor: lifecycle generation allocator is exhausted");
+        return;
+    }
 
     // For player characters and temporary forms
     if (!isCustom)
@@ -765,6 +826,7 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     auto* const pServer = GameServer::Get();
 
     m_world.emplace<OwnerComponent>(cEntity, acMessage.pPlayer);
+    m_world.emplace<ActorPopulationIdentityComponent>(cEntity, acIdentity);
 
     const GameId cellId = persistentCharacter.has_value() ? persistentCharacter->Cell : message.CellId;
     const GameId worldSpaceId = persistentCharacter.has_value() ? persistentCharacter->WorldSpace : message.WorldSpaceId;

@@ -1,19 +1,34 @@
 #include <Services/CombatContributionLedger.h>
+#include <Events/CreatureDeathContributionEvent.h>
 
 #include <catch2/catch.hpp>
 
 #include <limits>
+#include <vector>
 
 TEST_CASE("Combat contribution ledger rejects invalid identities", "[combat_authority]")
 {
     CombatContributionLedger ledger;
 
-    REQUIRE_FALSE(ledger.RecordValidatedContribution({0, 1}, 12, 1));
+    const auto invalidServerId = std::numeric_limits<std::uint32_t>::max();
+    REQUIRE_FALSE(ledger.RecordValidatedContribution({invalidServerId, 1}, 12, 1));
     REQUIRE_FALSE(ledger.RecordValidatedContribution({1, 0}, 12, 1));
     REQUIRE_FALSE(ledger.RecordValidatedContribution({1, 1}, 0, 1));
     REQUIRE_FALSE(ledger.RecordValidatedContribution({1, 1}, -4, 1));
     REQUIRE(ledger.TargetCount() == 0);
     REQUIRE(ledger.ContributionCount() == 0);
+}
+
+TEST_CASE("Combat contribution ledger accepts and clears target server ID zero", "[combat_authority]")
+{
+    CombatContributionLedger ledger;
+    const CombatContributionLedger::Target target{0, 1};
+
+    REQUIRE(ledger.RecordValidatedContribution(target, 12, 1));
+    REQUIRE(ledger.ConsumeCharacterIdsForDeath(target, 2) == std::vector<Persistence::CharacterId>{12});
+    REQUIRE(ledger.RecordValidatedContribution(target, 12, 3));
+    ledger.ClearEntity(0);
+    REQUIRE(ledger.TargetCount() == 0);
 }
 
 TEST_CASE("Combat contribution ledger coalesces deterministically and consumes once", "[combat_authority]")
@@ -36,6 +51,21 @@ TEST_CASE("Combat contribution ledger coalesces deterministically and consumes o
     REQUIRE(contributions[1].LastObservedTick == 12);
     REQUIRE(ledger.ConsumeContributionsForDeath(target, 20).empty());
     REQUIRE(ledger.TargetCount() == 0);
+}
+
+TEST_CASE("creature death result contains only ledger-resolved CharacterIds", "[combat_authority]")
+{
+    CombatContributionLedger ledger(100);
+    const CombatContributionLedger::Target target{7, 3};
+
+    REQUIRE(ledger.RecordValidatedContribution(target, 42, 10));
+    REQUIRE(ledger.RecordValidatedContribution(target, 7, 11));
+    REQUIRE(ledger.RecordValidatedContribution(target, 42, 12));
+
+    CreatureDeathContributionEvent result{ledger.ConsumeCharacterIdsForDeath(target, 20)};
+    const std::vector<Persistence::CharacterId> expectedCharacterIds{7, 42};
+    REQUIRE(result.ContributorCharacterIds == expectedCharacterIds);
+    REQUIRE(ledger.ConsumeCharacterIdsForDeath(target, 20).empty());
 }
 
 TEST_CASE("Combat contribution ledger is bounded and expires old observations", "[combat_authority]")
@@ -88,6 +118,23 @@ TEST_CASE("Combat contribution ledger isolates and clears individual targets", "
     const auto remaining = ledger.ConsumeContributionsForDeath(secondTarget, 1);
     REQUIRE(remaining.size() == 1);
     REQUIRE(remaining.front().AttackerCharacterId == 20);
+}
+
+TEST_CASE("Removing or respawning an actor clears every target lifecycle contribution", "[combat_authority]")
+{
+    CombatContributionLedger ledger;
+
+    REQUIRE(ledger.RecordValidatedContribution({17, 1}, 10, 1));
+    REQUIRE(ledger.RecordValidatedContribution({17, 2}, 11, 2));
+    REQUIRE(ledger.RecordValidatedContribution({18, 2}, 12, 3));
+
+    ledger.ClearEntity(17);
+
+    REQUIRE(ledger.TargetCount() == 1);
+    REQUIRE(ledger.ContributionCount() == 1);
+    REQUIRE(ledger.ConsumeCharacterIdsForDeath({17, 1}, 3).empty());
+    REQUIRE(ledger.ConsumeCharacterIdsForDeath({17, 2}, 3).empty());
+    REQUIRE(ledger.ConsumeCharacterIdsForDeath({18, 2}, 3) == std::vector<Persistence::CharacterId>{12});
 }
 
 TEST_CASE("Combat contribution ledger saturates observation counters", "[combat_authority]")

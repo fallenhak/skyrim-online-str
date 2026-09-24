@@ -4,6 +4,9 @@
 #error Include Components.h instead
 #endif
 
+#include <cstdint>
+#include <TiltedCore/Stl.hpp>
+
 namespace ESLoader
 {
 struct PluginData;
@@ -23,8 +26,8 @@ struct ModsComponent
     // ESLoader form identity selected by the server's load order.
     bool ResolveServerFormId(const GameId& acNetworkId, uint32_t& aResolvedFormId) const noexcept;
 
-    uint32_t AddStandard(const String& acpFilename) noexcept;
-    uint32_t AddLite(const String& acpFilename) noexcept;
+    uint32_t AddStandard(const TiltedPhoques::String& acpFilename) noexcept;
+    uint32_t AddLite(const TiltedPhoques::String& acpFilename) noexcept;
 
     void AddServerMod(const ESLoader::PluginData& acData);
 
@@ -32,9 +35,9 @@ struct ModsComponent
     const auto& GetLiteMods() const noexcept { return m_liteMods; }
     const auto& GetServerMods() const noexcept { return m_serverMods; }
 
-    bool IsInstalled(const String& acpFileName) const noexcept;
+    bool IsInstalled(const TiltedPhoques::String& acpFileName) const noexcept;
 
-    using TModList = TiltedPhoques::Map<String, Entry>;
+    using TModList = TiltedPhoques::Map<TiltedPhoques::String, Entry>;
 
 private:
     struct NetworkModIdentity
@@ -61,5 +64,5 @@ private:
     // these maps connect it to authoritative server plugin metadata without
     // trusting a client-supplied form prefix.
     TiltedPhoques::Map<uint32_t, NetworkModIdentity> m_networkModIdentities;
-    TiltedPhoques::Map<String, ServerPluginIdentity> m_serverPluginIdentities;
+    TiltedPhoques::Map<TiltedPhoques::String, ServerPluginIdentity> m_serverPluginIdentities;
 };

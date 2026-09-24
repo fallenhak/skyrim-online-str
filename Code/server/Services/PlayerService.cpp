@@ -186,6 +186,11 @@ void PlayerService::OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnReques
 
     if (it != view.end())
     {
+        const auto* const pOwnerComponent = m_world.try_get<OwnerComponent>(*character);
+        if (!pOwnerComponent ||
+            !m_world.GetCharacterService().BeginOwnerRespawnLifecycle(*character, acMessage.pPlayer, pOwnerComponent->OwnershipEpoch))
+            return;
+
         if (goldLossFactor != 0.0)
         {
             auto& inventoryComponent = view.get<InventoryComponent>(*it);

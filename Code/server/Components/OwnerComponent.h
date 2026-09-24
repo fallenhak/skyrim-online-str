@@ -4,6 +4,10 @@
 #error Include Components.h instead
 #endif
 
+#include <cstdint>
+
+#include <TiltedCore/Stl.hpp>
+
 struct Player;
 struct OwnerComponent
 {
@@ -24,5 +28,5 @@ struct OwnerComponent
 
     Player* pOwner;
     uint32_t OwnershipEpoch;
-    Vector<const Player*> InvalidOwners{};
+    TiltedPhoques::Vector<const Player*> InvalidOwners{};
 };

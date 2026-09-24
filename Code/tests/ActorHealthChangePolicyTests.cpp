@@ -37,3 +37,18 @@ TEST_CASE("Signed finite health deltas update existing health without insertion"
     REQUIRE_FALSE(ActorHealthChangePolicy::TryApplySignedDelta(overflow, std::numeric_limits<float>::max()));
     REQUIRE(overflow.at(ActorHealthChangePolicy::kHealthActorValue) == std::numeric_limits<float>::max());
 }
+
+TEST_CASE("Canonical health decrease requires the accepted value to be lower", "[actor_authority][combat_authority]")
+{
+    REQUIRE(ActorHealthChangePolicy::IsCanonicalDecrease(100.f, 75.f));
+    REQUIRE_FALSE(ActorHealthChangePolicy::IsCanonicalDecrease(75.f, 85.f));
+    REQUIRE_FALSE(ActorHealthChangePolicy::IsCanonicalDecrease(75.f, 75.f));
+    REQUIRE_FALSE(ActorHealthChangePolicy::IsCanonicalDecrease(std::numeric_limits<float>::quiet_NaN(), 0.f));
+
+    // A negative submitted delta can round away; it is not evidence that the
+    // canonical health value decreased.
+    const float previousHealth = 1.0e20f;
+    const float roundedHealth = previousHealth - 1.f;
+    REQUIRE(roundedHealth == previousHealth);
+    REQUIRE_FALSE(ActorHealthChangePolicy::IsCanonicalDecrease(previousHealth, roundedHealth));
+}
