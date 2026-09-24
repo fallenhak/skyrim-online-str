@@ -25,7 +25,8 @@ var tests = new (string Name, Func<Task> Run)[]
     ("Discord token talepleri ve sÃ¼re sonu", AuthTokenClaimsValidation),
     ("Discord oturumu DPAPI ile saklanÄ±r", AuthSessionDpapiRoundTrip),
     ("oyun yapÄ±landÄ±rmasÄ± token'Ä± DPAPI ile korur", NativeAuthConfigurationProtectsToken),
-    ("single-file install copies payload, creates marker and shortcuts", LauncherInstall)
+    ("single-file install copies payload, creates marker and shortcuts", LauncherInstall),
+    ("launcher self-update downloads, verifies and swaps the exe", LauncherSelfUpdate)
 };
 
 var failures = new List<string>();
@@ -376,6 +377,44 @@ static async Task ErrorReportBundleAndUpload()
     Assert.Equal("Bearer secret-token", capture.Authorization);
     Assert.True(capture.BodyContainsZip);
     await Assert.ThrowsAsync<InvalidOperationException>(() => new ErrorReportService(new HttpClient(new FixedHandler([]))).SendAsync("https://reports.example.test/api", "", report));
+}
+
+static async Task LauncherSelfUpdate()
+{
+    using var temp = new TempDirectory();
+    var exe = Path.Combine(temp.Path, "SkyrimOnlineSTR.exe");
+    File.WriteAllText(exe, "old-launcher");
+    var fresh = Encoding.UTF8.GetBytes("new-launcher");
+    var freshSha = Convert.ToHexString(SHA256.HashData(fresh)).ToLowerInvariant();
+    var package = new LauncherPackage { Version = "new", Url = "https://example.com/l.exe", Sha256 = freshSha, Size = fresh.Length };
+
+    Assert.False(SelfUpdateService.NeedsUpdate(exe, null));
+    Assert.True(SelfUpdateService.NeedsUpdate(exe, package));
+    Assert.True(await new SelfUpdateService(new HttpClient(new FixedHandler(fresh))).TryUpdateAsync(exe, package, CancellationToken.None));
+    Assert.Bytes(fresh, File.ReadAllBytes(exe));
+    Assert.Equal("old-launcher", File.ReadAllText(exe + SelfUpdateService.OldSuffix));
+    Assert.False(SelfUpdateService.NeedsUpdate(exe, package));
+    Assert.False(await new SelfUpdateService(new HttpClient(new FixedHandler(fresh))).TryUpdateAsync(exe, package, CancellationToken.None));
+
+    SelfUpdateService.CleanupPrevious(exe);
+    Assert.False(File.Exists(exe + SelfUpdateService.OldSuffix));
+
+    // A corrupted download must leave the running launcher untouched.
+    File.WriteAllText(exe, "old-launcher");
+    Directory.Delete(Path.Combine(temp.Path, ".launcher-update"), true);
+    await AssertThrowsAsync<InvalidDataException>(() =>
+        new SelfUpdateService(new HttpClient(new FixedHandler(Encoding.UTF8.GetBytes("tampered")))).TryUpdateAsync(exe, package, CancellationToken.None));
+    Assert.Equal("old-launcher", File.ReadAllText(exe));
+
+    var withLauncher = ValidManifest().Replace("\"mods\":", $"\"launcher\": {{ \"version\": \"x\", \"url\": \"https://example.com/l.exe\", \"sha256\": \"{freshSha}\", \"size\": 12 }}, \"mods\":");
+    Assert.Equal(freshSha, ManifestReader.ParseAndValidate(withLauncher).Launcher!.Sha256);
+    Assert.Throws<InvalidDataException>(() => ManifestReader.ParseAndValidate(withLauncher.Replace(freshSha, "bad")));
+}
+
+static async Task AssertThrowsAsync<T>(Func<Task> action) where T : Exception
+{
+    try { await action(); } catch (T) { return; }
+    throw new Exception($"Expected exception {typeof(T).Name}.");
 }
 
 static string ValidManifest() => $$"""
