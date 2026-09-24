@@ -20,6 +20,8 @@ var tests = new (string Name, Func<Task> Run)[]
     ("plugins.txt oyun oturumunda uygulanır ve geri yüklenir", PluginProfileBackupAndRestore),
     ("hata raporu ZIP'i ve Bearer token yüklemesi", ErrorReportBundleAndUpload),
     ("zip traversal reddi", ZipTraversalRejected),
+    ("loopback state mismatch returns 403 without completing sign-in", LoopbackStateMismatch),
+    ("loopback token creates session or reports exception", LoopbackTokenHandling),
     ("Discord token talepleri ve sÃ¼re sonu", AuthTokenClaimsValidation),
     ("Discord oturumu DPAPI ile saklanÄ±r", AuthSessionDpapiRoundTrip),
     ("oyun yapÄ±landÄ±rmasÄ± token'Ä± DPAPI ile korur", NativeAuthConfigurationProtectsToken),
@@ -234,6 +236,60 @@ static Task AuthTokenClaimsValidation()
     Assert.Throws<InvalidDataException>(() => AuthTokenClaims.Read(CreateTestAuthToken("discord:123", "Kerim", current - 1), current));
     Assert.Throws<InvalidDataException>(() => AuthTokenClaims.Read(CreateTestAuthToken("not-discord", "Kerim", current + 3600), current));
     return Task.CompletedTask;
+}
+
+static async Task LoopbackStateMismatch()
+{
+    using var temp = new TempDirectory();
+    var completion = new TaskCompletionSource<AuthSession>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var logs = new List<string>();
+    var (status, _) = await SendLoopback("{\"state\":\"old\",\"token\":null,\"error\":null}", "current", new AuthSessionStore(Path.Combine(temp.Path, "auth.json")), completion, logs.Add);
+    Assert.Equal(403, status);
+    Assert.False(completion.Task.IsCompleted);
+    Assert.True(logs.Any(x => x.Contains("state mismatch", StringComparison.Ordinal)));
+}
+
+static async Task LoopbackTokenHandling()
+{
+    using var temp = new TempDirectory();
+    var store = new AuthSessionStore(Path.Combine(temp.Path, "auth.json"));
+    var failed = new TaskCompletionSource<AuthSession>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var (badStatus, _) = await SendLoopback("{\"state\":\"s\",\"token\":\"invalid\",\"error\":null}", "s", store, failed, _ => { });
+    Assert.Equal(400, badStatus);
+    Assert.True(failed.Task.IsFaulted);
+
+    var token = CreateTestAuthToken("discord:123456789", "Burak", DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 3600);
+    var success = new TaskCompletionSource<AuthSession>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var (okStatus, session) = await SendLoopback(System.Text.Json.JsonSerializer.Serialize(new { state = "s", token, error = (string?)null }), "s", store, success, _ => { });
+    Assert.Equal(200, okStatus);
+    Assert.Equal("Burak", session?.DisplayName);
+    Assert.Equal("Burak", store.Load()?.DisplayName);
+}
+
+static async Task<(int Status, AuthSession? Session)> SendLoopback(string payload, string expectedState, AuthSessionStore store,
+    TaskCompletionSource<AuthSession> completion, Action<string> log)
+{
+    var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+    listener.Start();
+    try
+    {
+        var endpoint = (System.Net.IPEndPoint)listener.LocalEndpoint;
+        using var client = new System.Net.Sockets.TcpClient();
+        var connect = client.ConnectAsync(System.Net.IPAddress.Loopback, endpoint.Port);
+        var server = await listener.AcceptTcpClientAsync();
+        await connect;
+        var handler = DiscordLoopbackLogin.HandleClientAsync(server, expectedState, store, completion, log);
+        var body = Encoding.UTF8.GetBytes(payload);
+        var request = Encoding.ASCII.GetBytes($"POST /token HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {body.Length}\r\n\r\n");
+        await client.GetStream().WriteAsync(request);
+        await client.GetStream().WriteAsync(body);
+        using var response = new MemoryStream();
+        await client.GetStream().CopyToAsync(response);
+        await handler;
+        var text = Encoding.UTF8.GetString(response.ToArray());
+        return (int.Parse(text.Split(' ')[1]), completion.Task.IsCompletedSuccessfully ? completion.Task.Result : null);
+    }
+    finally { listener.Stop(); }
 }
 
 static Task AuthSessionDpapiRoundTrip()

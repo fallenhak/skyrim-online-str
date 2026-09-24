@@ -35,6 +35,7 @@ internal sealed class MainForm : Form
     private AuthSession? _authSession;
     private readonly TextBox _steamPath = new() { ReadOnly = true, Anchor = AnchorStyles.Left | AnchorStyles.Right };
     private readonly Button _discordLoginButton = new() { Text = "Discord ile giris", Width = 145, Height = 32 };
+    private readonly PictureBox _avatar = new() { Size = new Size(30, 30), SizeMode = PictureBoxSizeMode.StretchImage, Visible = false, BackColor = Color.Transparent };
     private readonly Label _authStatus = new() { AutoSize = true, Text = "Discord girisi yapilmadi." };
     private readonly Button _installButton = new() { Text = "Kur / Güncelle", Width = 140, Height = 36 };
     private readonly Button _launchButton = new() { Text = "Oyunu başlat", Width = 140, Height = 36, Enabled = false };
@@ -52,6 +53,9 @@ internal sealed class MainForm : Form
     private Label? _versionLabel;
     private readonly System.Windows.Forms.Timer _fogTimer = new() { Interval = 70 };
     private float _fogOffset;
+    private Bitmap? _fogBitmap;
+    private CancellationTokenSource? _discordCancellation;
+    private bool _discordPending;
 
     public MainForm()
     {
@@ -80,7 +84,9 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex) { AppendLog("Önceki kurulum doğrulanamadı; Kur / Güncelle çalıştırın. " + ex.Message); }
         BuildUi();
-        _fogTimer.Tick += (_, _) => { _fogOffset = (_fogOffset + 1.4f) % 1800f; Invalidate(new Rectangle(0, 350, Width, Height - 350)); };
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+        _fogBitmap = CreateFogBitmap();
+        _fogTimer.Tick += (_, _) => { _fogOffset = (_fogOffset + .45f) % _fogBitmap.Width; Invalidate(new Rectangle(0, 365, Width, Height - 365)); };
         _fogTimer.Start();
         LoadSettings();
         AppendLog("Skyrim Online STR launcher hazır.");
@@ -104,40 +110,60 @@ internal sealed class MainForm : Form
         var close = WindowButton("×", Close); close.Location = new Point(1056, 8); titleBar.Controls.Add(minimize); titleBar.Controls.Add(close);
         titleBar.MouseDown += DragWindow; Controls.Add(titleBar);
         Controls.Add(new Label { Text = "SKYRIM ONLINE", AutoSize = true, ForeColor = Color.White, Font = BrandFont(38), Location = new Point(58, 112), UseCompatibleTextRendering = true });
-        _versionLabel = new Label { Text = $"Sürüm {_manifestVersion}  •  Skyrim SE {RequiredGameVersion}", AutoSize = true, ForeColor = Color.FromArgb(138, 138, 138), Font = new Font("Segoe UI", 10), Location = new Point(62, 177) };
+        _versionLabel = new Label { Text = $"Sürüm {_manifestVersion}  •  Skyrim SE {RequiredGameVersion}", AutoSize = true, ForeColor = Color.FromArgb(138, 138, 138), BackColor = BackColor, Font = new Font("Segoe UI", 10), Location = new Point(62, 177), UseCompatibleTextRendering = true };
         Controls.Add(_versionLabel);
-        _authStatus.Location = new Point(62, 493); _authStatus.ForeColor = Color.Silver; _authStatus.Font = new Font("Segoe UI", 10); Controls.Add(_authStatus);
+        _authStatus.Location = new Point(62, 493); _authStatus.ForeColor = Color.Silver; _authStatus.BackColor = BackColor; _authStatus.Font = new Font("Segoe UI", 10); Controls.Add(_authStatus);
         _discordLoginButton.Text = "DISCORD İLE GİRİŞ"; _discordLoginButton.FlatStyle = FlatStyle.Flat; _discordLoginButton.ForeColor = Color.Gainsboro; _discordLoginButton.BackColor = Color.FromArgb(22, 24, 27); _discordLoginButton.Location = new Point(58, 525); _discordLoginButton.Size = new Size(190, 38);
         LauncherVisualTheme.StyleButton(_discordLoginButton);
-        _discordLoginButton.Click += async (_, _) => { if (_authSession is null) await AuthenticateWithDiscordAsync(); else SignOut(); }; Controls.Add(_discordLoginButton);
+        _discordLoginButton.Font = LauncherVisualTheme.BrandFont(10, AppendLog, false); _discordLoginButton.UseCompatibleTextRendering = true;
+        _discordLoginButton.Text = TrackText("DISCORD İLE GİRİŞ");
+        _discordLoginButton.Click += async (_, _) => { if (_discordPending) { _discordCancellation?.Cancel(); return; } if (_authSession is null) await AuthenticateWithDiscordAsync(); else SignOut(); }; Controls.Add(_discordLoginButton);
+        _avatar.Location = new Point(24, 496); Controls.Add(_avatar);
         _steamPath.Visible = false; _findSteamButton.Visible = false; _findSteamButton.Click += (_, _) => FindSteamGame();
         var actions = new FlowLayoutPanel { Location = new Point(58, 580), AutoSize = true, BackColor = Color.Transparent };
         actions.Controls.Add(LinkLabel("Hata raporu", async () => await SendErrorReportAsync()));
         actions.Controls.Add(LinkLabel("Klas\u00f6r\u00fc a\u00e7", () => Process.Start("explorer.exe", AppContext.BaseDirectory)));
         actions.Controls.Add(LinkLabel("\u2699 Steam yolu", () => ChangeSteamGamePath())); Controls.Add(actions);
         LauncherVisualTheme.StyleButton(_launchButton);
-        _launchButton.Font = BrandFont(24); _launchButton.UseCompatibleTextRendering = true;
+        _launchButton.Font = LauncherVisualTheme.BrandFont(20, AppendLog, false); _launchButton.UseCompatibleTextRendering = true;
+        _launchButton.Text = TrackText("KUR / GÜNCELLE");
         _launchButton.FlatAppearance.BorderColor = Color.FromArgb(190, 195, 200); _launchButton.FlatAppearance.BorderSize = 1;
         _launchButton.ForeColor = Color.White;
         _launchButton.Size = new Size(350, 76); _launchButton.Location = new Point(680, 400);
         _launchButton.Click += async (_, _) => await MainActionAsync(); Controls.Add(_launchButton);
         LauncherVisualTheme.StyleButton(_installButton); LauncherVisualTheme.StyleButton(_reportButton); LauncherVisualTheme.StyleButton(_findSteamButton);
         _installButton.Visible = false; _progress.Location = new Point(680, 492); _progress.Size = new Size(350, 5); Controls.Add(_progress);
-        _status.Location = new Point(680, 509); _status.ForeColor = Color.Silver; _status.Font = new Font("Segoe UI", 9); Controls.Add(_status);
+        _status.Location = new Point(680, 509); _status.ForeColor = Color.Silver; _status.BackColor = BackColor; _status.Font = new Font("Segoe UI", 9); Controls.Add(_status);
         _log.Visible = false; _reportButton.Visible = false;
     }
 
     private Font BrandFont(float size) => LauncherVisualTheme.BrandFont(size, AppendLog);
 
+    private static Bitmap CreateFogBitmap()
+    {
+        var bitmap = new Bitmap(2200, 275);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.Clear(Color.Transparent);
+        foreach (var fog in new[] { new Rectangle(-140, 135, 650, 175), new Rectangle(530, 160, 720, 165), new Rectangle(1300, 125, 650, 190) })
+        {
+            using var path = new System.Drawing.Drawing2D.GraphicsPath(); path.AddEllipse(fog);
+            using var brush = new System.Drawing.Drawing2D.PathGradientBrush(path) { CenterColor = Color.FromArgb(43, 155, 160, 164), SurroundColors = [Color.FromArgb(0, 155, 160, 164)] };
+            graphics.FillEllipse(brush, fog);
+        }
+        return bitmap;
+    }
+
+    private static string TrackText(string text) => string.Join('\u200a', text.EnumerateRunes().Select(r => r.ToString()));
+
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
         var bounds = new Rectangle(0, 365, Width, Height - 365);
-        foreach (var fog in new[] { new Rectangle(-140 + (int)_fogOffset, 500, 650, 175), new Rectangle(230 + (int)(_fogOffset * .68f), 525, 720, 165), new Rectangle(690 - (int)(_fogOffset * .42f), 490, 650, 190) })
+        if (_fogBitmap is not null)
         {
-            using var path = new System.Drawing.Drawing2D.GraphicsPath(); path.AddEllipse(fog);
-            using var brush = new System.Drawing.Drawing2D.PathGradientBrush(path) { CenterColor = Color.FromArgb(43, 155, 160, 164), SurroundColors = [Color.FromArgb(0, 155, 160, 164)] };
-            e.Graphics.FillEllipse(brush, fog);
+            var offset = (int)_fogOffset;
+            e.Graphics.DrawImage(_fogBitmap, new Rectangle(-offset, 365, _fogBitmap.Width, _fogBitmap.Height));
+            e.Graphics.DrawImage(_fogBitmap, new Rectangle(_fogBitmap.Width - offset, 365, _fogBitmap.Width, _fogBitmap.Height));
         }
         using var fade = new System.Drawing.Drawing2D.LinearGradientBrush(bounds, Color.FromArgb(250, 5, 6, 7), Color.FromArgb(0, 5, 6, 7), 90f);
         e.Graphics.FillRectangle(fade, bounds);
@@ -145,7 +171,7 @@ internal sealed class MainForm : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _fogTimer.Dispose();
+        if (disposing) { _fogTimer.Dispose(); _fogBitmap?.Dispose(); _avatar.Image?.Dispose(); _discordCancellation?.Dispose(); }
         base.Dispose(disposing);
     }
 
@@ -155,13 +181,15 @@ internal sealed class MainForm : Form
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool ReleaseCapture();
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
     private async Task MainActionAsync() { if (_busy) return; if (!_isInstalled) await InstallOrUpdateAsync(); else if (_authSession is null) await AuthenticateWithDiscordAsync(); else await PlayAsync(); UpdatePrimaryAction(); }
-    private void UpdatePrimaryAction() => _launchButton.Text = !_isInstalled ? "KUR / G\u00dcNCELLE" : _authSession is null ? "DISCORD \u0130LE G\u0130R\u0130\u015e" : "OYNA";
+    private void UpdatePrimaryAction() => _launchButton.Text = TrackText(!_isInstalled ? "KUR / G\u00dcNCELLE" : _authSession is null ? "DISCORD \u0130LE G\u0130R\u0130\u015e" : "OYNA");
     private void SignOut()
     {
         try { File.Delete(Path.Combine(_localData, "auth-session.json")); } catch { }
         _authSession = null;
+        _avatar.Visible = false;
+        _avatar.Image?.Dispose(); _avatar.Image = null;
         _authStatus.Text = "Discord ile giri\u015f yap\u0131lmad\u0131.";
-        _discordLoginButton.Text = _authSession is null ? "DISCORD \u0130LE G\u0130R\u0130\u015e" : "\u00c7IKI\u015e";
+        _discordLoginButton.Text = TrackText(_authSession is null ? "DISCORD \u0130LE G\u0130R\u0130\u015e" : "\u00c7IKI\u015e");
         UpdateAuthUi();
     }
     private void FindSteamGame()
@@ -345,20 +373,26 @@ internal sealed class MainForm : Form
 
     private async Task AuthenticateWithDiscordAsync()
     {
-        _discordLoginButton.Enabled = false;
+        _discordPending = true;
+        _discordCancellation = new CancellationTokenSource();
+        _discordLoginButton.Enabled = true;
+        _discordLoginButton.Text = TrackText("GİRİŞ BEKLENİYOR… (iptal)");
         SetStatus("Discord servisi denetleniyor...");
         try
         {
             if (!Uri.TryCreate(_config.AuthBaseUrl, UriKind.Absolute, out var authBase) || authBase.Scheme != Uri.UriSchemeHttps)
                 throw new InvalidOperationException("launcher.config.json icindeki authBaseUrl HTTPS olmali.");
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-            using var health = await Http.GetAsync(new Uri(authBase, "/auth/healthz"), timeout.Token);
+            using var healthTimeout = CancellationTokenSource.CreateLinkedTokenSource(_discordCancellation.Token);
+            healthTimeout.CancelAfter(TimeSpan.FromSeconds(8));
+            using var health = await Http.GetAsync(new Uri(authBase, "/auth/healthz"), healthTimeout.Token);
             if (!health.IsSuccessStatusCode)
                 throw new InvalidOperationException("Discord kimlik servisi hazir degil. VDS'te /etc/sos-auth.env ve Discord uygulama ayarlari yapilandirilmali.");
 
             SetStatus("Tarayicida Discord girisi bekleniyor...");
-            _authSession = await new DiscordLoopbackLogin().SignInAsync(_config.AuthBaseUrl, _authSessionStore);
+            _authSession = await new DiscordLoopbackLogin().SignInAsync(_config.AuthBaseUrl, _authSessionStore, _discordCancellation.Token, AppendLog);
             _authStatus.Text = "Discord: " + _authSession.DisplayName;
+            _authStatus.Location = new Point(62, 493);
+            await LoadAvatarAsync(_authSession.AvatarUrl);
             SetStatus("Discord girisi tamamlandi.");
             AppendLog("Discord girisi tamamlandi: " + _authSession.DisplayName);
         }
@@ -366,13 +400,35 @@ internal sealed class MainForm : Form
         {
             SetStatus("Discord girisi tamamlanamadi.");
             AppendLog("Discord auth hatasi: " + ex.Message);
-            MessageBox.Show(this, ex.Message, "Discord girisi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            var message = ex is OperationCanceledException ? "Discord girişi iptal edildi." : ex is TimeoutException ? "Discord girişi zaman aşımına uğradı." : ex.Message.Contains("discord_auth_failed", StringComparison.Ordinal) ? "Discord doğrulaması sunucuda başarısız oldu." : ex.Message.Contains("discord_login_failed", StringComparison.Ordinal) ? "Discord girişi iptal edildi/reddedildi." : "Discord girişi tamamlanamadı: " + ex.Message;
+            MessageBox.Show(this, message, "Discord girişi", MessageBoxButtons.OK, ex is OperationCanceledException ? MessageBoxIcon.Information : MessageBoxIcon.Error);
         }
         finally
         {
+            _discordPending = false;
+            _discordCancellation?.Dispose(); _discordCancellation = null;
             _discordLoginButton.Enabled = true;
             UpdateAuthUi();
         }
+    }
+
+    private async Task LoadAvatarAsync(string url)
+    {
+        try
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return;
+            using var response = await Http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var image = Image.FromStream(stream);
+            var old = _avatar.Image;
+            _avatar.Image = new Bitmap(image, _avatar.Size);
+            old?.Dispose();
+            using var path = new System.Drawing.Drawing2D.GraphicsPath(); path.AddEllipse(0, 0, _avatar.Width, _avatar.Height);
+            _avatar.Region = new Region(path);
+            _avatar.Visible = true;
+        }
+        catch { _avatar.Visible = false; }
     }
 
     private async Task SendErrorReportAsync()
@@ -452,6 +508,11 @@ internal sealed class MainForm : Form
 
     private void AppendLog(string message)
     {
+        if (InvokeRequired)
+        {
+            if (!IsDisposed && IsHandleCreated) BeginInvoke(new Action<string>(AppendLog), message);
+            return;
+        }
         var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
         _log.AppendText(line + Environment.NewLine);
         File.AppendAllText(_logPath, line + Environment.NewLine);
@@ -475,14 +536,14 @@ internal sealed class MainForm : Form
         if (_authSession is null)
         {
             _authStatus.Text = "Discord ile giri\u015f yap\u0131lmad\u0131.";
-            _discordLoginButton.Text = _authSession is null ? "DISCORD \u0130LE G\u0130R\u0130\u015e" : "\u00c7IKI\u015e";
+            _discordLoginButton.Text = TrackText(_authSession is null ? "DISCORD \u0130LE G\u0130R\u0130\u015e" : "\u00c7IKI\u015e");
             UpdatePrimaryAction();
             _launchButton.Enabled = !_busy && !_gameRunning;
             return;
         }
 
         _authStatus.Text = "Discord: " + _authSession.DisplayName;
-        _discordLoginButton.Text = "\u00c7IKI\u015e";
+        _discordLoginButton.Text = TrackText("\u00c7IKI\u015e");
         _launchButton.Enabled = !_gameRunning && !UseWaitCursor;
         UpdatePrimaryAction();
     }
@@ -510,7 +571,7 @@ internal static class LauncherVisualTheme
     private static FontFamily? _brandFamily;
     private static bool _fontLoadAttempted;
 
-    public static Font BrandFont(float size, Action<string>? log = null)
+    public static Font BrandFont(float size, Action<string>? log = null, bool bold = true)
     {
         if (!_fontLoadAttempted)
         {
@@ -529,7 +590,8 @@ internal static class LauncherVisualTheme
             }
             catch (Exception ex) { WriteFontLog("Futura Condensed yüklenemedi; Segoe UI kullanılacak. " + ex.Message, log); }
         }
-        return _brandFamily is null ? new Font("Segoe UI", size, FontStyle.Bold) : new Font(_brandFamily, size, FontStyle.Bold);
+        var style = bold ? FontStyle.Bold : FontStyle.Regular;
+        return _brandFamily is null ? new Font("Segoe UI", size, style) : new Font(_brandFamily, size, style);
     }
 
     private static void WriteFontLog(string message, Action<string>? log)

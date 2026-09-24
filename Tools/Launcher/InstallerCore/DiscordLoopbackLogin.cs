@@ -17,13 +17,13 @@ public sealed class DiscordLoopbackLogin
         history.replaceState(null, '', location.pathname);
         fetch('/token', { method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ state: p.get('state'), token: p.get('token'), error: p.get('error') }) })
-          .then(r => r.ok ? 'Giriş tamamlandı. Bu pencereyi kapatabilirsiniz.' : 'Giriş alınamadı; launcher ekranını kontrol edin.')
+          .then(r => r.status === 403 ? 'Bu giriş sekmesi eski; launcher\'dan tekrar deneyin.' : r.ok ? 'Giriş tamamlandı. Bu pencereyi kapatabilirsiniz.' : 'Giriş alınamadı; launcher ekranını kontrol edin.')
           .catch(() => 'Launcher bağlantısı kurulamadı.')
           .then(t => { document.getElementById('status').textContent = t; });
         </script>
         """);
 
-    public async Task<AuthSession> SignInAsync(string authBaseUrl, AuthSessionStore store, CancellationToken cancellationToken = default)
+    public async Task<AuthSession> SignInAsync(string authBaseUrl, AuthSessionStore store, CancellationToken cancellationToken = default, Action<string>? log = null)
     {
         if (!Uri.TryCreate(authBaseUrl, UriKind.Absolute, out var authBase) || authBase.Scheme != Uri.UriSchemeHttps)
             throw new InvalidOperationException("launcher.config.json içindeki authBaseUrl geçerli bir HTTPS adresi olmalı.");
@@ -54,7 +54,7 @@ public sealed class DiscordLoopbackLogin
                 var ready = await Task.WhenAny(accept, completion.Task).ConfigureAwait(false);
                 if (ready == completion.Task) break;
                 var client = await accept.ConfigureAwait(false);
-                _ = HandleClientAsync(client, state, store, completion);
+                _ = HandleClientAsync(client, state, store, completion, log);
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -64,8 +64,8 @@ public sealed class DiscordLoopbackLogin
         return await completion.Task.ConfigureAwait(false);
     }
 
-    private static async Task HandleClientAsync(TcpClient client, string expectedState, AuthSessionStore store,
-        TaskCompletionSource<AuthSession> completion)
+    internal static async Task HandleClientAsync(TcpClient client, string expectedState, AuthSessionStore store,
+        TaskCompletionSource<AuthSession> completion, Action<string>? log)
     {
         using (client)
         {
@@ -77,6 +77,7 @@ public sealed class DiscordLoopbackLogin
                 if (requestParts.Length != 3)
                 {
                     await ReplyAsync(stream, 400, "Bad Request", "text/plain; charset=utf-8", "Bad Request"u8.ToArray()).ConfigureAwait(false);
+                    log?.Invoke("Loopback <invalid> <invalid> -> 400: malformed request");
                     return;
                 }
 
@@ -84,6 +85,7 @@ public sealed class DiscordLoopbackLogin
                 {
                     await ReplyAsync(stream, 200, "OK", "text/html; charset=utf-8", CallbackPage,
                         "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'\r\n").ConfigureAwait(false);
+                    log?.Invoke("Loopback GET /callback -> 200: callback page");
                     return;
                 }
 
@@ -91,26 +93,30 @@ public sealed class DiscordLoopbackLogin
                     !headers.TryGetValue("content-type", out var contentType) || !contentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase))
                 {
                     await ReplyAsync(stream, 404, "Not Found", "text/plain; charset=utf-8", "Not Found"u8.ToArray()).ConfigureAwait(false);
+                    log?.Invoke($"Loopback {requestParts[0]} {SafePath(requestParts[1])} -> 404: unknown route or content type");
                     return;
                 }
 
                 var transfer = Encoding.UTF8.GetString(body);
-                var payload = JsonSerializer.Deserialize<CallbackPayload>(transfer);
+                var payload = JsonSerializer.Deserialize<CallbackPayload>(transfer, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 if (payload?.State is null || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(payload.State), Encoding.UTF8.GetBytes(expectedState)))
                 {
                     await ReplyAsync(stream, 403, "Forbidden", "text/plain; charset=utf-8", "State mismatch"u8.ToArray()).ConfigureAwait(false);
+                    log?.Invoke("Loopback POST /token -> 403: state mismatch");
                     return;
                 }
                 if (!string.IsNullOrEmpty(payload.Error))
                 {
                     completion.TrySetException(new InvalidOperationException("Discord girişi tamamlanamadı: " + SafeError(payload.Error)));
                     await ReplyAsync(stream, 200, "OK", "text/plain; charset=utf-8", "Giriş başarısız."u8.ToArray()).ConfigureAwait(false);
+                    log?.Invoke("Loopback POST /token -> 200: error=" + SafeError(payload.Error));
                     return;
                 }
                 if (string.IsNullOrWhiteSpace(payload.Token))
                 {
                     completion.TrySetException(new InvalidDataException("Discord dönüşünde oturum token'ı bulunamadı."));
                     await ReplyAsync(stream, 400, "Bad Request", "text/plain; charset=utf-8", "Missing token"u8.ToArray()).ConfigureAwait(false);
+                    log?.Invoke("Loopback POST /token -> 400: missing token");
                     return;
                 }
 
@@ -118,6 +124,7 @@ public sealed class DiscordLoopbackLogin
                 store.Save(session);
                 completion.TrySetResult(session);
                 await ReplyAsync(stream, 200, "OK", "text/plain; charset=utf-8", "Discord girişi tamamlandı. Bu pencereyi kapatabilirsiniz."u8.ToArray()).ConfigureAwait(false);
+                log?.Invoke("Loopback POST /token -> 200: session created");
             }
             catch (Exception ex)
             {
@@ -127,6 +134,7 @@ public sealed class DiscordLoopbackLogin
                     await ReplyAsync(client.GetStream(), 400, "Bad Request", "text/plain; charset=utf-8", "Giriş verisi okunamadı."u8.ToArray()).ConfigureAwait(false);
                 }
                 catch { }
+                log?.Invoke($"Loopback request -> 400: exception={ex.GetType().Name}: {SafeExceptionMessage(ex.Message)}");
             }
         }
     }
@@ -178,6 +186,8 @@ public sealed class DiscordLoopbackLogin
     }
 
     private static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    private static string SafePath(string path) => path.Split('?', '#')[0].Replace('\r', ' ').Replace('\n', ' ');
+    private static string SafeExceptionMessage(string message) => message.Length > 240 ? message[..240] : message.Replace('\r', ' ').Replace('\n', ' ');
     private static string SafeError(string value) => value.Length <= 80 && value.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '_' or '-') ? value : "discord_login_failed";
 
     private sealed record CallbackPayload(string? State, string? Token, string? Error);

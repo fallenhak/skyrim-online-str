@@ -5,4 +5,7 @@
     <Nullable>enable</Nullable>
     <DebugType Condition="'$(PublishSingleFile)' == 'true'">none</DebugType>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="InstallerCore.Tests" />
+  </ItemGroup>
 </Project>
