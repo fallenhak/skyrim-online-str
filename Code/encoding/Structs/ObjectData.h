@@ -26,5 +26,7 @@ struct ObjectData
     bool IsStateUntrusted{};
     // Flora or a placed ingredient: activation flips server-owned harvest state.
     bool IsHarvestable{};
+    // Placed ingredient (item) rather than flora: respawns on the longer timer.
+    bool IsHarvestItem{};
     bool IsHarvested{};
 };

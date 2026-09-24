@@ -99,6 +99,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             auto& objectComponent = view.get<ObjectComponent>(*iter);
             objectData.IsStateUntrusted = !objectComponent.HasTrustedState;
             objectData.IsHarvestable = objectComponent.IsHarvestable;
+            objectData.IsHarvestItem = objectComponent.IsHarvestItem;
             objectData.IsHarvested = objectComponent.IsHarvested;
             if (objectComponent.HasTrustedState)
             {
@@ -121,6 +122,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
 
             auto& objectComponent = m_world.emplace<ObjectComponent>(cEntity, acMessage.pPlayer);
             objectComponent.IsHarvestable = object.IsHarvestable;
+            objectComponent.IsHarvestItem = object.IsHarvestable && object.IsHarvestItem;
 
             m_world.emplace<CellIdComponent>(cEntity, object.CellId, object.WorldSpaceId, object.CurrentCoords);
             m_world.emplace<InventoryComponent>(cEntity);
@@ -130,6 +132,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.ServerId = World::ToInteger(cEntity);
             objectData.IsStateUntrusted = true;
             objectData.IsHarvestable = object.IsHarvestable;
+            objectData.IsHarvestItem = objectComponent.IsHarvestItem;
 
             response.Objects.push_back(objectData);
         }
@@ -189,7 +192,7 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
                 }
             });
         if (harvested)
-            objectComponent.HarvestRespawnAtTick = ObjectInteractionPolicy::HarvestRespawnTick(m_tick);
+            objectComponent.HarvestRespawnAtTick = ObjectInteractionPolicy::HarvestRespawnTick(m_tick, objectComponent.IsHarvestItem);
         else
             spdlog::info("Harvest of {:X}:{:X} rejected (already harvested or out of range)", packet.Id.ModId, packet.Id.BaseId);
         return;

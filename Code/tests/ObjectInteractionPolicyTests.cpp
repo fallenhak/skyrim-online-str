@@ -198,8 +198,9 @@ TEST_CASE("Harvest rejects non-harvestable, foreign or out-of-range activations"
 TEST_CASE("Harvested objects respawn after the configured delay", "[object_authority][harvest]")
 {
     constexpr std::uint64_t cHarvestTick = 100;
-    const std::uint64_t respawnAt = ObjectInteractionPolicy::HarvestRespawnTick(cHarvestTick);
-    REQUIRE(respawnAt == cHarvestTick + ObjectInteractionPolicy::kHarvestRespawnTicks);
+    const std::uint64_t respawnAt = ObjectInteractionPolicy::HarvestRespawnTick(cHarvestTick, false);
+    REQUIRE(respawnAt == cHarvestTick + 30 * 60);
+    REQUIRE(ObjectInteractionPolicy::HarvestRespawnTick(cHarvestTick, true) == cHarvestTick + 60 * 60);
 
     REQUIRE_FALSE(ObjectInteractionPolicy::IsHarvestRespawnDue(true, respawnAt, respawnAt - 1));
     REQUIRE(ObjectInteractionPolicy::IsHarvestRespawnDue(true, respawnAt, respawnAt));
@@ -223,7 +224,7 @@ TEST_CASE("A respawned object can be harvested again", "[object_authority][harve
 
     bool harvested = false;
     REQUIRE(harvest(harvested));
-    const std::uint64_t respawnAt = ObjectInteractionPolicy::HarvestRespawnTick(0);
+    const std::uint64_t respawnAt = ObjectInteractionPolicy::HarvestRespawnTick(0, false);
     REQUIRE_FALSE(harvest(harvested));
 
     REQUIRE(ObjectInteractionPolicy::IsHarvestRespawnDue(harvested, respawnAt, respawnAt));

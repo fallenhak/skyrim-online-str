@@ -126,11 +126,12 @@ struct ObjectInteractionPolicy final
     }
 
     // Ticks are whole seconds of server uptime (same unit as RenewableEncounterService).
-    static constexpr std::uint64_t kHarvestRespawnTicks = 30 * 60;
+    static constexpr std::uint64_t kFloraRespawnTicks = 30 * 60;
+    static constexpr std::uint64_t kItemRespawnTicks = 60 * 60;
 
-    [[nodiscard]] static constexpr std::uint64_t HarvestRespawnTick(const std::uint64_t aHarvestTick) noexcept
+    [[nodiscard]] static constexpr std::uint64_t HarvestRespawnTick(const std::uint64_t aHarvestTick, const bool aIsItem) noexcept
     {
-        return aHarvestTick + kHarvestRespawnTicks;
+        return aHarvestTick + (aIsItem ? kItemRespawnTicks : kFloraRespawnTicks);
     }
 
     [[nodiscard]] static constexpr bool IsHarvestRespawnDue(const bool aHarvested, const std::uint64_t aRespawnAtTick, const std::uint64_t aNowTick) noexcept
