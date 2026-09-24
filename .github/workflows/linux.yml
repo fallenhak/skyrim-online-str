@@ -1,7 +1,6 @@
 name: Build linux
 
 on:
-  pull_request:
   push:
     branches:
       - master
@@ -55,6 +54,8 @@ jobs:
         with:
           path: ~/.xmake/packages
           key: ${{ matrix.runner }}-xmake-${{ hashFiles('**/xmake.lua') }}
+          restore-keys: |
+            ${{ matrix.runner }}-xmake-
 
       # Install xmake
       - name: Setup xmake

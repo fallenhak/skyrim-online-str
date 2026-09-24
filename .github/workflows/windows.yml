@@ -1,7 +1,6 @@
 name: Build windows
 
 on:
-  pull_request:
   push:
     branches:
       - master
@@ -61,6 +60,8 @@ jobs:
         with:
           path: ~/AppData/Local/.xmake/packages
           key: ${{ runner.os }}-xmake-${{ hashFiles('**/xmake.lua') }}
+          restore-keys: |
+            ${{ runner.os }}-xmake-
 
       # Install xmake
       - name: Setup xmake
