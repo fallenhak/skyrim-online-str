@@ -140,7 +140,7 @@ public:
     /** Remove all target contribution records for every lifecycle of an actor. */
     void ClearEntity(const std::uint32_t aServerId) noexcept
     {
-        if (aServerId == 0)
+        if (aServerId == std::numeric_limits<std::uint32_t>::max())
             return;
 
         auto targetIt = m_contributions.lower_bound(Target{aServerId, 0});
@@ -208,7 +208,7 @@ private:
 
     [[nodiscard]] static bool IsValidTarget(const Target aTarget) noexcept
     {
-        return aTarget.ServerId != 0 && aTarget.LifecycleGeneration != 0;
+        return aTarget.ServerId != std::numeric_limits<std::uint32_t>::max() && aTarget.LifecycleGeneration != 0;
     }
 
     std::uint64_t m_expiryTicks;

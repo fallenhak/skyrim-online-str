@@ -73,15 +73,17 @@ TEST_CASE("combat hit observation requests reject malformed identities and overs
     const auto overflowingServerField = static_cast<std::uint64_t>(maxServerField) + 1;
 
     REQUIRE(DecodeRawCombatHitObservationIsWellFormed(
-        maxServerField, maxServerField, maxServerField - 1, max64BitField, max64BitField));
+        maxServerField - 1, maxServerField, maxServerField - 2, max64BitField, max64BitField));
+    REQUIRE(DecodeRawCombatHitObservationIsWellFormed(0, 2, 3, 4, 5));
+    REQUIRE(DecodeRawCombatHitObservationIsWellFormed(1, 2, 0, 4, 5));
 
     REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(overflowingServerField, 2, 3, 4, 5));
     REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, overflowingServerField, 3, 4, 5));
     REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, 2, overflowingServerField, 4, 5));
     REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, 2, 1, 4, 5));
-    REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(0, 2, 3, 4, 5));
+    REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(maxServerField, 2, 3, 4, 5));
     REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, 0, 3, 4, 5));
-    REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, 2, 3, 0, 5));
+    REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, 2, maxServerField, 4, 5));
     REQUIRE_FALSE(DecodeRawCombatHitObservationIsWellFormed(1, 2, 3, 4, 0));
 }
 
@@ -118,12 +120,26 @@ TEST_CASE("pending combat observations reject malformed identities without consu
 {
     PendingCombatObservationStore<2> pending;
 
-    REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{0, 1, 2, 3, 4, 5, 6}));
+    REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{std::numeric_limits<std::uint32_t>::max(), 1, 2, 3, 4, 5, 6}));
     REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{1, 1, 2, 3, 0, 5, 6}));
     REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{1, 1, 1, 3, 4, 5, 6}));
     REQUIRE_FALSE(pending.TryAppend(ValidatedHitObservation{1, 1, 2, 3, 4, 0, 6}));
     REQUIRE(pending.Size() == 0);
     REQUIRE(pending.TryAppend(ValidatedHitObservation{1, 1, 2, 3, 4, 5, 6}));
+}
+
+TEST_CASE("pending combat observations support and clean up raw EnTT server ID zero", "[combat_authority]")
+{
+    PendingCombatObservationStore<2> pending;
+    const ValidatedHitObservation zeroAttacker{0, 1, 2, 3, 4, 5, 6};
+    const ValidatedHitObservation zeroTarget{1, 1, 0, 7, 8, 9, 10};
+
+    REQUIRE(pending.TryAppend(zeroAttacker));
+    pending.RemoveActor(0);
+    REQUIRE(pending.Size() == 0);
+
+    REQUIRE(pending.TryAppend(zeroTarget));
+    REQUIRE(pending.TakeForAcceptedHealthDecrease(0, 7) == zeroTarget);
 }
 
 TEST_CASE("accepted canonical health decrease correlates one matching pending target lifecycle", "[combat_authority]")

@@ -85,7 +85,7 @@ public:
         const ValidatedHitObservation::LifecycleGeneration aTargetLifecycleGeneration,
         tIsStillAuthorized&& aIsStillAuthorized) noexcept(noexcept(aIsStillAuthorized(std::declval<const ValidatedHitObservation&>())))
     {
-        if (aTargetServerId == 0 || aTargetLifecycleGeneration == 0)
+        if (aTargetServerId == ValidatedHitObservation::kInvalidServerId || aTargetLifecycleGeneration == 0)
             return std::nullopt;
 
         std::size_t offset = 0;

@@ -10,12 +10,25 @@ TEST_CASE("Combat contribution ledger rejects invalid identities", "[combat_auth
 {
     CombatContributionLedger ledger;
 
-    REQUIRE_FALSE(ledger.RecordValidatedContribution({0, 1}, 12, 1));
+    const auto invalidServerId = std::numeric_limits<std::uint32_t>::max();
+    REQUIRE_FALSE(ledger.RecordValidatedContribution({invalidServerId, 1}, 12, 1));
     REQUIRE_FALSE(ledger.RecordValidatedContribution({1, 0}, 12, 1));
     REQUIRE_FALSE(ledger.RecordValidatedContribution({1, 1}, 0, 1));
     REQUIRE_FALSE(ledger.RecordValidatedContribution({1, 1}, -4, 1));
     REQUIRE(ledger.TargetCount() == 0);
     REQUIRE(ledger.ContributionCount() == 0);
+}
+
+TEST_CASE("Combat contribution ledger accepts and clears target server ID zero", "[combat_authority]")
+{
+    CombatContributionLedger ledger;
+    const CombatContributionLedger::Target target{0, 1};
+
+    REQUIRE(ledger.RecordValidatedContribution(target, 12, 1));
+    REQUIRE(ledger.ConsumeCharacterIdsForDeath(target, 2) == std::vector<Persistence::CharacterId>{12});
+    REQUIRE(ledger.RecordValidatedContribution(target, 12, 3));
+    ledger.ClearEntity(0);
+    REQUIRE(ledger.TargetCount() == 0);
 }
 
 TEST_CASE("Combat contribution ledger coalesces deterministically and consumes once", "[combat_authority]")

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 
 /**
  * @brief One server-validated hit observation, captured without applying damage.
@@ -27,7 +28,8 @@ struct ValidatedHitObservation final
     using ObservationSequence = std::uint64_t;
     using ObservationTick = std::uint64_t;
 
-    static constexpr ServerId kInvalidServerId = 0;
+    // World::ToInteger preserves raw EnTT IDs: zero is valid and all-ones is entt::null.
+    static constexpr ServerId kInvalidServerId = std::numeric_limits<ServerId>::max();
     static constexpr OwnershipEpoch kInvalidOwnershipEpoch = 0;
     static constexpr LifecycleGeneration kInvalidLifecycleGeneration = 0;
     static constexpr ObservationSequence kInvalidObservationId = 0;

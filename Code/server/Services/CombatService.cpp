@@ -30,7 +30,7 @@ std::optional<Persistence::CharacterId> ResolveAuthorizedAttackerCharacterId(
     Player* apSender,
     ValidatedHitObservation::LifecycleGeneration& aResolvedAttackerLifecycleGeneration) noexcept
 {
-    if (!apSender || aAttackerServerId == 0)
+    if (!apSender || aAttackerServerId == ValidatedHitObservation::kInvalidServerId)
         return std::nullopt;
 
     const auto attackerEntity = static_cast<entt::entity>(aAttackerServerId);
@@ -213,7 +213,7 @@ void CombatService::OnCorrelatedCombatObservation(const CorrelatedCombatObservat
 
 void CombatService::OnAcceptedCreatureDeath(const AcceptedCanonicalCreatureDeathEvent& acEvent) noexcept
 {
-    if (acEvent.TargetServerId == 0 || acEvent.TargetLifecycleGeneration == 0)
+    if (acEvent.TargetServerId == ValidatedHitObservation::kInvalidServerId || acEvent.TargetLifecycleGeneration == 0)
         return;
 
     const auto targetEntity = static_cast<entt::entity>(acEvent.TargetServerId);
@@ -243,7 +243,7 @@ void CombatService::OnCharacterRemove(const CharacterRemoveEvent& acEvent) noexc
 
 void CombatService::OnActorRespawned(const ActorRespawnedEvent& acEvent) noexcept
 {
-    if (acEvent.ServerId == 0 || acEvent.LifecycleGeneration == 0)
+    if (acEvent.ServerId == ValidatedHitObservation::kInvalidServerId || acEvent.LifecycleGeneration == 0)
         return;
 
     const auto entity = static_cast<entt::entity>(acEvent.ServerId);

@@ -3,6 +3,7 @@
 #include <catch2/catch.hpp>
 
 #include <cstdint>
+#include <limits>
 #include <type_traits>
 #include <vector>
 
@@ -25,14 +26,21 @@ TEST_CASE("validated hit observations contain only immutable server entity ident
 
 TEST_CASE("validated hit observations reject missing identity components", "[combat_authority]")
 {
-    REQUIRE_FALSE(ValidatedHitObservation{0, 1, 2, 3, 4, 5, 6}.IsWellFormed());
+    constexpr auto invalidServerId = std::numeric_limits<ValidatedHitObservation::ServerId>::max();
+    REQUIRE_FALSE(ValidatedHitObservation{invalidServerId, 1, 2, 3, 4, 5, 6}.IsWellFormed());
     REQUIRE_FALSE(ValidatedHitObservation{1, 0, 2, 3, 4, 5, 6}.IsWellFormed());
-    REQUIRE_FALSE(ValidatedHitObservation{1, 1, 0, 3, 4, 5, 6}.IsWellFormed());
+    REQUIRE_FALSE(ValidatedHitObservation{1, 1, invalidServerId, 3, 4, 5, 6}.IsWellFormed());
     REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 0, 4, 5, 6}.IsWellFormed());
     REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 3, 0, 5, 6}.IsWellFormed());
     REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 3, 4, 5, 0}.IsWellFormed());
     REQUIRE_FALSE(ValidatedHitObservation{1, 1, 1, 3, 4, 5, 6}.IsWellFormed());
     REQUIRE_FALSE(ValidatedHitObservation{1, 1, 2, 3, 4, 0, 6}.IsWellFormed());
+}
+
+TEST_CASE("validated hit observations allow raw EnTT server ID zero", "[combat_authority]")
+{
+    REQUIRE(ValidatedHitObservation{0, 1, 2, 3, 4, 5, 6}.IsWellFormed());
+    REQUIRE(ValidatedHitObservation{1, 1, 0, 3, 4, 5, 6}.IsWellFormed());
 }
 
 TEST_CASE("validated hit observations can be appended without overwriting prior records", "[combat_authority]")

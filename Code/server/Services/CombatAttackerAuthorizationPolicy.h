@@ -3,6 +3,7 @@
 #include <Persistence/CharacterRecord.h>
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 
 /**
@@ -41,7 +42,7 @@ struct CombatAttackerAuthorizationPolicy final
         const CombatAttackerAuthorizationInput& acInput) noexcept
     {
         if (!acInput.SessionIsInWorld || !acInput.SessionCharacterId.has_value() || *acInput.SessionCharacterId <= 0 ||
-            acInput.AttackerServerId == 0 || !acInput.AttackerEntityExists || !acInput.AttackerIsPlayerCharacter || !acInput.OwnerExists ||
+            acInput.AttackerServerId == std::numeric_limits<std::uint32_t>::max() || !acInput.AttackerEntityExists || !acInput.AttackerIsPlayerCharacter || !acInput.OwnerExists ||
             !acInput.SenderIsCurrentOwner ||
             acInput.RequestedOwnershipEpoch == 0 || acInput.CurrentOwnershipEpoch == 0 ||
             acInput.RequestedOwnershipEpoch != acInput.CurrentOwnershipEpoch ||

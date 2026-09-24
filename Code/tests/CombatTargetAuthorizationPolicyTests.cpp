@@ -46,7 +46,7 @@ TEST_CASE("Combat target authorization accepts a current trusted Creature in the
     REQUIRE(CombatTargetAuthorizationPolicy::IsAuthorized(fixture.MakeInput()));
 }
 
-TEST_CASE("Combat target authorization rejects missing entities and invalid target IDs", "[combat_authority]")
+TEST_CASE("Combat target authorization rejects missing entities and the EnTT null ID", "[combat_authority]")
 {
     CombatTargetAuthorizationFixture fixture;
     auto input = fixture.MakeInput();
@@ -55,8 +55,16 @@ TEST_CASE("Combat target authorization rejects missing entities and invalid targ
     REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 
     input = fixture.MakeInput();
-    input.TargetServerId = 0;
+    input.TargetServerId = std::numeric_limits<std::uint32_t>::max();
     REQUIRE_FALSE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
+}
+
+TEST_CASE("Combat target authorization accepts raw EnTT server ID zero", "[combat_authority]")
+{
+    CombatTargetAuthorizationFixture fixture;
+    auto input = fixture.MakeInput();
+    input.TargetServerId = 0;
+    REQUIRE(CombatTargetAuthorizationPolicy::IsAuthorized(input));
 }
 
 TEST_CASE("Combat target authorization requires the current valid lifecycle", "[combat_authority]")

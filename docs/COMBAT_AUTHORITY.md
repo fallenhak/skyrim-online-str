@@ -134,10 +134,11 @@ the server-assigned observation tick.
 
 The request decoder rejects server IDs and ownership epochs whose varint values
 exceed their 32-bit fields instead of masking high bits into another actor or
-epoch. Zero IDs, epochs, target generations, and observation IDs, as well as
-self-observations, fail admission. The internal observation DTO also requires a
-nonzero server-assigned tick before entering the bounded replay or pending
-stores.
+epoch. Raw EnTT server ID zero remains valid when it resolves to a current
+entity; the all-ones null entity sentinel, zero ownership epochs, target
+generations, and observation IDs, as well as self-observations, fail admission.
+The internal observation DTO also requires a nonzero server-assigned tick
+before entering the bounded replay or pending stores.
 
 ## Contribution and transfer implications
 

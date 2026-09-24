@@ -2,6 +2,8 @@
 
 #include <catch2/catch.hpp>
 
+#include <limits>
+
 namespace
 {
 CombatAttackerAuthorizationInput MakeValidCombatAttackerAuthorizationInput()
@@ -45,10 +47,10 @@ TEST_CASE("Combat attacker authorization requires a live entity and its current 
         REQUIRE_FALSE(CombatAttackerAuthorizationPolicy::ResolveAuthorizedCharacterId(input).has_value());
     }
 
-    SECTION("invalid server entity ID")
+    SECTION("EnTT null server entity ID")
     {
         auto input = MakeValidCombatAttackerAuthorizationInput();
-        input.AttackerServerId = 0;
+        input.AttackerServerId = std::numeric_limits<std::uint32_t>::max();
         REQUIRE_FALSE(CombatAttackerAuthorizationPolicy::ResolveAuthorizedCharacterId(input).has_value());
     }
 
@@ -72,6 +74,13 @@ TEST_CASE("Combat attacker authorization requires a live entity and its current 
         input.SenderIsCurrentOwner = false;
         REQUIRE_FALSE(CombatAttackerAuthorizationPolicy::ResolveAuthorizedCharacterId(input).has_value());
     }
+}
+
+TEST_CASE("Combat attacker authorization accepts raw EnTT server ID zero", "[combat_authority]")
+{
+    auto input = MakeValidCombatAttackerAuthorizationInput();
+    input.AttackerServerId = 0;
+    REQUIRE(CombatAttackerAuthorizationPolicy::ResolveAuthorizedCharacterId(input) == 42);
 }
 
 TEST_CASE("Combat attacker authorization requires the current nonzero ownership epoch", "[combat_authority]")

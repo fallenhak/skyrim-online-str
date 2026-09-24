@@ -2,6 +2,8 @@
 
 #include <catch2/catch.hpp>
 
+#include <limits>
+
 TEST_CASE("Combat observation replay identity is scoped to attacker authority and target lifecycle", "[combat_authority]")
 {
     CombatObservationReplayCache<8> cache;
@@ -25,9 +27,10 @@ TEST_CASE("Combat observation replay cache rejects malformed identity without co
 {
     CombatObservationReplayCache<2> cache;
 
-    REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{0, 1, 2, 3, 4, 5, 6}));
+    constexpr auto invalidServerId = std::numeric_limits<ValidatedHitObservation::ServerId>::max();
+    REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{invalidServerId, 1, 2, 3, 4, 5, 6}));
     REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 0, 2, 3, 4, 5, 6}));
-    REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, 0, 3, 4, 5, 6}));
+    REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, invalidServerId, 3, 4, 5, 6}));
     REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 0, 4, 5, 6}));
     REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 3, 0, 5, 6}));
     REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 3, 4, 5, 0}));
@@ -39,6 +42,18 @@ TEST_CASE("Combat observation replay cache rejects malformed identity without co
     REQUIRE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 3, 5, 6, 6}));
     REQUIRE_FALSE(cache.TryRemember(ValidatedHitObservation{1, 1, 2, 3, 6, 7, 6}));
     REQUIRE(cache.Size() == 2);
+}
+
+TEST_CASE("Combat observation replay cache tracks actor zero and clears its keys", "[combat_authority]")
+{
+    CombatObservationReplayCache<2> cache;
+    const ValidatedHitObservation observation{0, 1, 2, 3, 4, 5, 6};
+
+    REQUIRE(cache.TryRemember(observation));
+    REQUIRE_FALSE(cache.TryRemember(observation));
+    cache.RemoveActor(0);
+    REQUIRE(cache.Size() == 0);
+    REQUIRE(cache.TryRemember(observation));
 }
 
 TEST_CASE("Combat observation replay cache evicts oldest keys within its fixed bound", "[combat_authority]")

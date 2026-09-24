@@ -3,6 +3,7 @@
 #include "Message.h"
 
 #include <cstdint>
+#include <limits>
 
 /**
  * @brief Client report that a player character observed a hit on an actor.
@@ -33,7 +34,8 @@ struct CombatHitObservationRequest final : ClientMessage
 
     [[nodiscard]] bool IsWellFormed() const noexcept
     {
-        return m_hasValidWireEncoding && AttackerServerId != 0 && AttackerOwnershipEpoch != 0 && TargetServerId != 0 &&
+        constexpr auto invalidServerId = std::numeric_limits<std::uint32_t>::max();
+        return m_hasValidWireEncoding && AttackerServerId != invalidServerId && AttackerOwnershipEpoch != 0 && TargetServerId != invalidServerId &&
                TargetLifecycleGeneration != 0 && ObservationId != 0 && AttackerServerId != TargetServerId;
     }
 
