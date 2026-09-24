@@ -6,14 +6,16 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>SkyrimOnlineSTR.Launcher</AssemblyName>
+    <AssemblyName>SkyrimOnlineSTR</AssemblyName>
+    <ApplicationIcon>launcher.ico</ApplicationIcon>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType Condition="'$(PublishSingleFile)' == 'true'">none</DebugType>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\InstallerCore\InstallerCore.csproj" />
-    <None Update="launcher.config.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Update="Data\renewable_encounters.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <EmbeddedResource Include="launcher.config.json" LogicalName="SkyrimOnlineSTR.launcher.config.json" />
+    <EmbeddedResource Include="Data\renewable_encounters.txt" LogicalName="SkyrimOnlineSTR.Data.renewable_encounters.txt" />
+    <EmbeddedResource Include="..\..\..\Code\skyrim_ui\src\assets\fonts\futura-condensed\futura-condensed-medium.otf" LogicalName="SkyrimOnlineSTR.font.otf" />
   </ItemGroup>
 </Project>

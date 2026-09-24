@@ -40,7 +40,7 @@ internal sealed class MainForm : Form
     private readonly Button _launchButton = new() { Text = "Oyunu başlat", Width = 140, Height = 36, Enabled = false };
     private readonly Button _reportButton = new() { Text = "Hata raporu gönder", Width = 170, Height = 36 };
     private readonly Button _findSteamButton = new() { Text = "Steam oyununu bul", Width = 150, Height = 31 };
-    private readonly ProgressBar _progress = new() { Dock = DockStyle.Fill, Minimum = 0, Maximum = 100 };
+    private readonly MonochromeProgressBar _progress = new();
     private readonly Label _status = new() { AutoSize = true, Text = "Hazır." };
     private readonly TextBox _log = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
     private string _manifestVersion = "yüklenmedi";
@@ -48,12 +48,18 @@ internal sealed class MainForm : Form
     private bool _gameRunning;
     private bool _isInstalled;
     private CancellationTokenSource? _operation;
+    private bool _busy;
+    private Label? _versionLabel;
+    private readonly System.Drawing.Text.PrivateFontCollection _privateFonts = new();
 
     public MainForm()
     {
-        Text = "Skyrim Online STR — Kurulum Aracı";
-        MinimumSize = new Size(720, 520);
-        Size = new Size(820, 620);
+        Text = "Skyrim Online STR";
+        FormBorderStyle = FormBorderStyle.None;
+        MinimumSize = new Size(1100, 640);
+        Size = new Size(1100, 640);
+        BackColor = Color.FromArgb(5, 6, 7);
+        ForeColor = Color.Gainsboro;
         StartPosition = FormStartPosition.CenterScreen;
         _config = LoadConfig();
         _stockGame = Path.Combine(AppContext.BaseDirectory, "Stock Game");
@@ -88,53 +94,80 @@ internal sealed class MainForm : Form
 
     private void BuildUi()
     {
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), ColumnCount = 1, RowCount = 7 };
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        Controls.Add(root);
-
-        var title = new Label { Text = "Skyrim Online STR", Font = new Font(Font, FontStyle.Bold), AutoSize = true };
-        root.Controls.Add(title, 0, 0);
-        var version = new Label { Text = $"Skyrim SE {RequiredGameVersion} • Steam'den bağımsız Stock Game kopyası", AutoSize = true, Margin = new Padding(0, 5, 0, 10) };
-        root.Controls.Add(version, 0, 1);
-
-        var authRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 0, 0, 8) };
-        _discordLoginButton.Click += async (_, _) => await AuthenticateWithDiscordAsync();
-        authRow.Controls.Add(_discordLoginButton);
-        authRow.Controls.Add(_authStatus);
-        root.Controls.Add(authRow, 0, 2);
-
-        var pathRow = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true };
-        pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        _steamPath.Dock = DockStyle.Fill;
-        _findSteamButton.Click += (_, _) => FindSteamGame();
-        pathRow.Controls.Add(_steamPath, 0, 0);
-        pathRow.Controls.Add(_findSteamButton, 1, 0);
-        root.Controls.Add(pathRow, 0, 3);
-
-        root.Controls.Add(_progress, 0, 4);
-        root.Controls.Add(_status, 0, 5);
-        root.Controls.Add(_log, 0, 6);
-
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 48, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(0, 4, 0, 0) };
-        _installButton.Click += async (_, _) => await InstallOrUpdateAsync();
-        _launchButton.Text = "Oyna";
-        _launchButton.Click += async (_, _) => await PlayAsync();
-        _reportButton.Click += async (_, _) => await SendErrorReportAsync();
-        buttons.Controls.AddRange([_installButton, _launchButton, _reportButton]);
-        root.Controls.Add(buttons, 0, 6);
-        root.SetRow(_log, 6);
-        root.Controls.Remove(buttons);
-        Controls.Add(buttons);
-        buttons.BringToFront();
+        var titleBar = new Panel { Dock = DockStyle.Top, Height = 54, BackColor = Color.FromArgb(12, 13, 15) };
+        var titleText = new Label { Text = "S K Y R I M   O N L I N E", AutoSize = true, ForeColor = Color.White, Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(28, 17) };
+        titleText.MouseDown += DragWindow; titleBar.Controls.Add(titleText);
+        var minimize = WindowButton("—", () => WindowState = FormWindowState.Minimized); minimize.Location = new Point(1014, 8);
+        var close = WindowButton("×", Close); close.Location = new Point(1056, 8); titleBar.Controls.Add(minimize); titleBar.Controls.Add(close);
+        titleBar.MouseDown += DragWindow; Controls.Add(titleBar);
+        Controls.Add(new Label { Text = "SKYRIM\nONLINE", AutoSize = true, ForeColor = Color.White, Font = BrandFont(38), Location = new Point(58, 112) });
+        _versionLabel = new Label { Text = $"Sürüm {_manifestVersion}  •  Skyrim SE {RequiredGameVersion}", AutoSize = true, ForeColor = Color.Gray, Font = new Font("Segoe UI", 10), Location = new Point(62, 220) };
+        Controls.Add(_versionLabel);
+        _authStatus.Location = new Point(62, 493); _authStatus.ForeColor = Color.Silver; _authStatus.Font = new Font("Segoe UI", 10); Controls.Add(_authStatus);
+        _discordLoginButton.Text = "DISCORD İLE GİRİŞ"; _discordLoginButton.FlatStyle = FlatStyle.Flat; _discordLoginButton.ForeColor = Color.Gainsboro; _discordLoginButton.BackColor = Color.FromArgb(22, 24, 27); _discordLoginButton.Location = new Point(58, 525); _discordLoginButton.Size = new Size(190, 38);
+        _discordLoginButton.Click += async (_, _) => { if (_authSession is null) await AuthenticateWithDiscordAsync(); else SignOut(); }; Controls.Add(_discordLoginButton);
+        _steamPath.Visible = false; _findSteamButton.Visible = false; _findSteamButton.Click += (_, _) => FindSteamGame();
+        var actions = new FlowLayoutPanel { Location = new Point(58, 580), AutoSize = true, BackColor = Color.Transparent };
+        actions.Controls.Add(LinkLabel("Hata raporu", async () => await SendErrorReportAsync()));
+        actions.Controls.Add(LinkLabel("Klas\u00f6r\u00fc a\u00e7", () => Process.Start("explorer.exe", AppContext.BaseDirectory)));
+        actions.Controls.Add(LinkLabel("\u2699 Steam yolu", () => ChangeSteamGamePath())); Controls.Add(actions);
+        _launchButton.Font = BrandFont(24); _launchButton.FlatStyle = FlatStyle.Flat;
+        _launchButton.FlatAppearance.BorderColor = Color.FromArgb(190, 195, 200); _launchButton.FlatAppearance.BorderSize = 1;
+        _launchButton.BackColor = Color.FromArgb(18, 20, 22); _launchButton.ForeColor = Color.White;
+        _launchButton.Size = new Size(350, 76); _launchButton.Location = new Point(680, 400);
+        _launchButton.Click += async (_, _) => await MainActionAsync(); Controls.Add(_launchButton);
+        _installButton.Visible = false; _progress.Location = new Point(680, 492); _progress.Size = new Size(350, 5); Controls.Add(_progress);
+        _status.Location = new Point(680, 509); _status.ForeColor = Color.Silver; _status.Font = new Font("Segoe UI", 9); Controls.Add(_status);
+        _log.Visible = false; _reportButton.Visible = false;
     }
 
+    private Font BrandFont(float size)
+    {
+        try
+        {
+            using var stream = typeof(MainForm).Assembly.GetManifestResourceStream("SkyrimOnlineSTR.font.otf");
+            if (stream is not null)
+            {
+                using var ms = new MemoryStream(); stream.CopyTo(ms); var bytes = ms.ToArray();
+                var memory = System.Runtime.InteropServices.Marshal.AllocCoTaskMem(bytes.Length);
+                try { System.Runtime.InteropServices.Marshal.Copy(bytes, 0, memory, bytes.Length); _privateFonts.AddMemoryFont(memory, bytes.Length); }
+                finally { System.Runtime.InteropServices.Marshal.FreeCoTaskMem(memory); }
+                var family = _privateFonts.Families.FirstOrDefault(); if (family is not null) return new Font(family, size, FontStyle.Bold);
+            }
+        }
+        catch { }
+        return new Font("Segoe UI", size, FontStyle.Bold);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        var bounds = new Rectangle(0, 390, Width, Height - 390);
+        using var gradient = new System.Drawing.Drawing2D.LinearGradientBrush(bounds, Color.FromArgb(30, 45, 47, 50), Color.FromArgb(0, 0, 0, 0), 90f);
+        e.Graphics.FillRectangle(gradient, bounds);
+        foreach (var fog in new[] { new Rectangle(-90, 505, 570, 140), new Rectangle(280, 535, 660, 150), new Rectangle(690, 500, 560, 160) })
+        {
+            using var path = new System.Drawing.Drawing2D.GraphicsPath(); path.AddEllipse(fog);
+            using var brush = new System.Drawing.Drawing2D.PathGradientBrush(path) { CenterColor = Color.FromArgb(19, 155, 160, 164), SurroundColors = [Color.FromArgb(0, 155, 160, 164)] };
+            e.Graphics.FillEllipse(brush, fog);
+        }
+    }
+
+    private static Button WindowButton(string text, Action action) { var b = new Button { Text = text, Size = new Size(34, 34), FlatStyle = FlatStyle.Flat, ForeColor = Color.Silver, BackColor = Color.Transparent, Font = new Font("Segoe UI", 13) }; b.FlatAppearance.BorderSize = 0; b.Click += (_, _) => action(); return b; }
+    private static Label LinkLabel(string text, Action action) { var l = new Label { Text = text, AutoSize = true, ForeColor = Color.Gray, Cursor = Cursors.Hand, Font = new Font("Segoe UI", 9), Margin = new Padding(0, 0, 24, 0) }; l.Click += (_, _) => action(); return l; }
+    private void DragWindow(object? sender, MouseEventArgs e) { if (e.Button != MouseButtons.Left) return; ReleaseCapture(); SendMessage(Handle, 0xA1, 0x2, 0); }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool ReleaseCapture();
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
+    private async Task MainActionAsync() { if (_busy) return; if (!_isInstalled) await InstallOrUpdateAsync(); else if (_authSession is null) await AuthenticateWithDiscordAsync(); else await PlayAsync(); UpdatePrimaryAction(); }
+    private void UpdatePrimaryAction() => _launchButton.Text = !_isInstalled ? "KUR / G\u00dcNCELLE" : _authSession is null ? "DISCORD \u0130LE G\u0130R\u0130\u015e" : "OYNA";
+    private void SignOut()
+    {
+        try { File.Delete(Path.Combine(_localData, "auth-session.json")); } catch { }
+        _authSession = null;
+        _authStatus.Text = "Discord ile giri\u015f yap\u0131lmad\u0131.";
+        _discordLoginButton.Text = _authSession is null ? "DISCORD \u0130LE G\u0130R\u0130\u015e" : "\u00c7IKI\u015e";
+        UpdateAuthUi();
+    }
     private void FindSteamGame()
     {
         var found = SteamLocator.FindGameDirectories().FirstOrDefault();
@@ -153,6 +186,19 @@ internal sealed class MainForm : Form
         SaveSettings();
         AppendLog($"Steam oyunu: {found}");
         _launchButton.Enabled = _isInstalled;
+    }
+
+    private void ChangeSteamGamePath()
+    {
+        using var dialog = new FolderBrowserDialog { SelectedPath = _steamPath.Text, Description = "Steam\\steamapps\\common\\Skyrim Special Edition klasörünü seçin." };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (!File.Exists(Path.Combine(dialog.SelectedPath, "SkyrimSE.exe")))
+        {
+            MessageBox.Show(this, "Seçilen klasörde SkyrimSE.exe bulunamadı.", "Oyun bulunamadı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        _steamPath.Text = dialog.SelectedPath;
+        SaveSettings();
     }
 
     private async Task InstallOrUpdateAsync()
@@ -175,6 +221,7 @@ internal sealed class MainForm : Form
             var manifest = ManifestReader.ParseAndValidate(await response.Content.ReadAsStringAsync(_operation.Token));
             _manifestVersion = manifest.ManifestVersion;
             _manifest = manifest;
+            if (_versionLabel is not null) _versionLabel.Text = $"Sürüm {_manifestVersion}  •  Skyrim SE {RequiredGameVersion}";
             File.WriteAllText(Path.Combine(_localData, "manifest.json"), ManifestReader.Serialize(manifest));
             if (GameVersion.Normalize(manifest.RequiredGameVersion) != RequiredGameVersion)
                 throw new InvalidDataException($"Sunucu manifesti {RequiredGameVersion} hedefinden farklı. Kurulum durduruldu.");
@@ -206,10 +253,16 @@ internal sealed class MainForm : Form
             foreach (var mod in manifest.Mods)
             {
                 SetStatus($"İndiriliyor: {mod.Name}");
+                var lastProgressAt = DateTime.UtcNow;
+                long lastProgressBytes = 0;
                 var progress = new Progress<DownloadProgress>(p =>
                 {
                     _progress.Value = p.Total <= 0 ? 0 : (int)Math.Clamp(p.Received * 100 / p.Total, 0, 100);
-                    SetStatus($"İndiriliyor: {mod.Name} ({_progress.Value}%)");
+                    var now = DateTime.UtcNow;
+                    var seconds = Math.Max(.05, (now - lastProgressAt).TotalSeconds);
+                    var speed = Math.Max(0, p.Received - lastProgressBytes) / seconds / 1024 / 1024;
+                    lastProgressAt = now; lastProgressBytes = p.Received;
+                    SetStatus($"İndiriliyor: {mod.Name} • {speed:0.0} MB/s • {_progress.Value}%");
                 });
                 archives[mod.Id] = await downloader.EnsureAssetAsync(mod.Url, mod.Sha256, mod.Size,
                     Path.Combine(_localData, "downloads"), progress, _operation.Token);
@@ -257,7 +310,7 @@ internal sealed class MainForm : Form
             _gameRunning = true;
             _installButton.Enabled = false;
             _findSteamButton.Enabled = false;
-            _launchButton.Enabled = false;
+            _launchButton.Enabled = !_busy && !_gameRunning;
             SetStatus("Oyun açık. Kapanınca önceki plugins.txt geri yüklenecek.");
             AppendLog("Mevcut STR başlatıcısı çalıştırıldı.");
             await process.WaitForExitAsync();
@@ -410,28 +463,49 @@ internal sealed class MainForm : Form
 
     private void SetBusy(bool busy)
     {
+        _busy = busy;
+        UpdatePrimaryAction();
         _installButton.Enabled = !busy && !_gameRunning;
         _findSteamButton.Enabled = !busy && !_gameRunning;
-        _launchButton.Enabled = !busy && !_gameRunning && _authSession is not null;
+        _launchButton.Enabled = !busy && !_gameRunning;
         _discordLoginButton.Enabled = !busy && !_gameRunning;
         _reportButton.Enabled = !busy;
         UseWaitCursor = busy;
+        UpdatePrimaryAction();
     }
 
     private void UpdateAuthUi()
     {
         if (_authSession is null)
         {
-            _authStatus.Text = "Discord girisi yapilmadi.";
-            _launchButton.Enabled = false;
+            _authStatus.Text = "Discord ile giri\u015f yap\u0131lmad\u0131.";
+            _discordLoginButton.Text = _authSession is null ? "DISCORD \u0130LE G\u0130R\u0130\u015e" : "\u00c7IKI\u015e";
+            UpdatePrimaryAction();
+            _launchButton.Enabled = !_busy && !_gameRunning;
             return;
         }
 
         _authStatus.Text = "Discord: " + _authSession.DisplayName;
+        _discordLoginButton.Text = "\u00c7IKI\u015e";
         _launchButton.Enabled = !_gameRunning && !UseWaitCursor;
+        UpdatePrimaryAction();
     }
 
     private void SetStatus(string message) { _status.Text = message; }
+}
+
+internal sealed class MonochromeProgressBar : Control
+{
+    private int _value;
+    public int Maximum { get; set; } = 100;
+    public int Value { get => _value; set { _value = Math.Clamp(value, 0, Maximum); Invalidate(); } }
+    public MonochromeProgressBar() { SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true); BackColor = Color.FromArgb(34, 36, 39); }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        using var background = new SolidBrush(Color.FromArgb(38, 40, 43)); e.Graphics.FillRectangle(background, ClientRectangle);
+        var width = Maximum == 0 ? 0 : (int)(ClientSize.Width * (double)Value / Maximum);
+        using var fill = new SolidBrush(Color.FromArgb(195, 198, 201)); e.Graphics.FillRectangle(fill, 0, 0, width, ClientSize.Height);
+    }
 }
 
 internal sealed class ErrorReportDialog : Form

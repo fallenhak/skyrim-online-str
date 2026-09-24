@@ -22,7 +22,8 @@ var tests = new (string Name, Func<Task> Run)[]
     ("zip traversal reddi", ZipTraversalRejected),
     ("Discord token talepleri ve sÃ¼re sonu", AuthTokenClaimsValidation),
     ("Discord oturumu DPAPI ile saklanÄ±r", AuthSessionDpapiRoundTrip),
-    ("oyun yapÄ±landÄ±rmasÄ± token'Ä± DPAPI ile korur", NativeAuthConfigurationProtectsToken)
+    ("oyun yapÄ±landÄ±rmasÄ± token'Ä± DPAPI ile korur", NativeAuthConfigurationProtectsToken),
+    ("single-file install copies payload, creates marker and shortcuts", LauncherInstall)
 };
 
 var failures = new List<string>();
@@ -44,6 +45,34 @@ static Task ManifestValidation()
     Assert.Equal(GameVersion.Required, GameVersion.Normalize(example.RequiredGameVersion));
     Assert.Equal("engine-fixes-part2", example.Mods.Single(m => m.Id == "engine-fixes-part2").Id);
     Assert.Equal("2.3.1 / Skyrim 1.7.104", example.Mods.Single(m => m.Id == "skse64-root").Version);
+    return Task.CompletedTask;
+}
+
+static Task LauncherInstall()
+{
+    using var temp = new TempDirectory();
+    var source = Path.Combine(temp.Path, "download", "SkyrimOnlineSTR.exe");
+    var target = Path.Combine(temp.Path, "installed");
+    Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+    File.WriteAllText(source, "exe-bytes");
+    var shortcuts = new List<string>();
+    var desktop = Path.Combine(temp.Path, "desktop");
+    var menu = Path.Combine(temp.Path, "start-menu");
+    LauncherInstallService.Install(source, target, Encoding.UTF8.GetBytes("config"), Encoding.UTF8.GetBytes("data"),
+        (path, exe) => shortcuts.Add(path + "|" + exe), desktop, menu);
+    Assert.True(LauncherInstallService.IsInstalled(target));
+    Assert.Equal("exe-bytes", File.ReadAllText(Path.Combine(target, "SkyrimOnlineSTR.exe")));
+    Assert.Equal("config", File.ReadAllText(Path.Combine(target, "launcher.config.json")));
+    Assert.Equal("data", File.ReadAllText(Path.Combine(target, "Data", "renewable_encounters.txt")));
+    Assert.Equal(2, shortcuts.Count);
+    var comTarget = Path.Combine(temp.Path, "installed-com");
+    LauncherInstallService.Install(source, comTarget, Encoding.UTF8.GetBytes("config"), Encoding.UTF8.GetBytes("data"),
+        desktopDirectory: desktop, startMenuDirectory: menu);
+    Assert.True(File.Exists(Path.Combine(desktop, "Skyrim Online STR.lnk")));
+    Assert.True(File.Exists(Path.Combine(menu, "Skyrim Online STR.lnk")));
+    File.WriteAllText(Path.Combine(target, "launcher.config.json"), "user-config");
+    LauncherInstallService.Install(source, target, Encoding.UTF8.GetBytes("new"), Encoding.UTF8.GetBytes("new"), (_, _) => { }, desktop, menu);
+    Assert.Equal("user-config", File.ReadAllText(Path.Combine(target, "launcher.config.json")));
     return Task.CompletedTask;
 }
 

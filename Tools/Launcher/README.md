@@ -50,7 +50,7 @@ dotnet build .\Tools\Launcher\LauncherApp\LauncherApp.csproj -c Release
 dotnet publish .\Tools\Launcher\LauncherApp\LauncherApp.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
 ```
 
-Tek exe `LauncherApp\bin\Release\net8.0-windows\win-x64\publish\SkyrimOnlineSTR.Launcher.exe` altındadır. Yanına `launcher.config.json`, sunucudaki manifest URL'si ve derlenmiş `SkyrimTogether.exe` konur. `Stock Game` ilk çalıştırmada launcher klasörünün yanında oluşur.
+Tek exe `LauncherApp\bin\Release\net8.0-windows\win-x64\publish\SkyrimOnlineSTR.exe` altındadır. Dağıtımda yalnızca bu exe gerekir; yapılandırma ve yardımcı metin dosyası exe içine gömülüdür. `Stock Game` kurulum klasöründe oluşur.
 
 ## Sunucu ve manifest
 
@@ -91,3 +91,9 @@ Engine Fixes özel derlemesi `downloads` içinde Nexus arşivi olarak yok; launc
 ## Hata raporu
 
 Kullanıcı kısa bir açıklama girebilir. Rapor ZIP'i launcher logunu, Skyrim/STR/SKSE/crash loglarını, `plugins.txt` ve manifest sürümünü içerir. `launcher.config.json` içindeki `errorReportEndpoint` HTTPS POST adresi, `errorReportToken` Bearer token'dır. Token için `SOS_STR_REPORT_TOKEN` ortam değişkeni config değerine tercih edilir. Endpoint veya token ayarlı değilse ZIP yerelde oluşturulur, gönderilmez.
+
+## Tek exe kurulumu ve arayüz
+
+Kullanıcıya yalnızca `SkyrimOnlineSTR.exe` verilir. İlk açılışta kurulum klasörü sorulur (varsayılan `C:\Games\\SkyrimOnlineSTR`); yaklaşık 15 GB boş alan gerekir ve hedef Steam kitaplığının içinde olamaz. Launcher kendisini seçilen klasöre kopyalar, masaüstü ve Başlat menüsü kısayollarını oluşturur, gömülü `launcher.config.json` ve `Data/renewable_encounters.txt` kaynaklarını gerekli olduğunda yazar ve kurulumdan yeniden açılır. Stock Game ve state kurulum klasörü altında tutulur.
+
+Kaldırmak için launcherı kapatın, kurulum klasörünü ve masaüstü/Başlat menüsü kısayollarını elle silin. Kullanıcı ayarları ve giriş oturumu `%LOCALAPPDATA%\SkyrimOnlineSTR` altındadır.
