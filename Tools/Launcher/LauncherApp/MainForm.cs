@@ -50,7 +50,8 @@ internal sealed class MainForm : Form
     private CancellationTokenSource? _operation;
     private bool _busy;
     private Label? _versionLabel;
-    private readonly System.Drawing.Text.PrivateFontCollection _privateFonts = new();
+    private readonly System.Windows.Forms.Timer _fogTimer = new() { Interval = 70 };
+    private float _fogOffset;
 
     public MainForm()
     {
@@ -79,6 +80,8 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex) { AppendLog("Önceki kurulum doğrulanamadı; Kur / Güncelle çalıştırın. " + ex.Message); }
         BuildUi();
+        _fogTimer.Tick += (_, _) => { _fogOffset = (_fogOffset + 1.4f) % 1800f; Invalidate(new Rectangle(0, 350, Width, Height - 350)); };
+        _fogTimer.Start();
         LoadSettings();
         AppendLog("Skyrim Online STR launcher hazır.");
         AppendLog($"Hedef Skyrim SE sürümü: {RequiredGameVersion}; Stock Game kopyası sürüm ve SkyrimSE.exe SHA-256 değeriyle kilitlenir.");
@@ -100,60 +103,53 @@ internal sealed class MainForm : Form
         var minimize = WindowButton("—", () => WindowState = FormWindowState.Minimized); minimize.Location = new Point(1014, 8);
         var close = WindowButton("×", Close); close.Location = new Point(1056, 8); titleBar.Controls.Add(minimize); titleBar.Controls.Add(close);
         titleBar.MouseDown += DragWindow; Controls.Add(titleBar);
-        Controls.Add(new Label { Text = "SKYRIM\nONLINE", AutoSize = true, ForeColor = Color.White, Font = BrandFont(38), Location = new Point(58, 112) });
-        _versionLabel = new Label { Text = $"Sürüm {_manifestVersion}  •  Skyrim SE {RequiredGameVersion}", AutoSize = true, ForeColor = Color.Gray, Font = new Font("Segoe UI", 10), Location = new Point(62, 220) };
+        Controls.Add(new Label { Text = "SKYRIM ONLINE", AutoSize = true, ForeColor = Color.White, Font = BrandFont(38), Location = new Point(58, 112), UseCompatibleTextRendering = true });
+        _versionLabel = new Label { Text = $"Sürüm {_manifestVersion}  •  Skyrim SE {RequiredGameVersion}", AutoSize = true, ForeColor = Color.FromArgb(138, 138, 138), Font = new Font("Segoe UI", 10), Location = new Point(62, 177) };
         Controls.Add(_versionLabel);
         _authStatus.Location = new Point(62, 493); _authStatus.ForeColor = Color.Silver; _authStatus.Font = new Font("Segoe UI", 10); Controls.Add(_authStatus);
         _discordLoginButton.Text = "DISCORD İLE GİRİŞ"; _discordLoginButton.FlatStyle = FlatStyle.Flat; _discordLoginButton.ForeColor = Color.Gainsboro; _discordLoginButton.BackColor = Color.FromArgb(22, 24, 27); _discordLoginButton.Location = new Point(58, 525); _discordLoginButton.Size = new Size(190, 38);
+        LauncherVisualTheme.StyleButton(_discordLoginButton);
         _discordLoginButton.Click += async (_, _) => { if (_authSession is null) await AuthenticateWithDiscordAsync(); else SignOut(); }; Controls.Add(_discordLoginButton);
         _steamPath.Visible = false; _findSteamButton.Visible = false; _findSteamButton.Click += (_, _) => FindSteamGame();
         var actions = new FlowLayoutPanel { Location = new Point(58, 580), AutoSize = true, BackColor = Color.Transparent };
         actions.Controls.Add(LinkLabel("Hata raporu", async () => await SendErrorReportAsync()));
         actions.Controls.Add(LinkLabel("Klas\u00f6r\u00fc a\u00e7", () => Process.Start("explorer.exe", AppContext.BaseDirectory)));
         actions.Controls.Add(LinkLabel("\u2699 Steam yolu", () => ChangeSteamGamePath())); Controls.Add(actions);
-        _launchButton.Font = BrandFont(24); _launchButton.FlatStyle = FlatStyle.Flat;
+        LauncherVisualTheme.StyleButton(_launchButton);
+        _launchButton.Font = BrandFont(24); _launchButton.UseCompatibleTextRendering = true;
         _launchButton.FlatAppearance.BorderColor = Color.FromArgb(190, 195, 200); _launchButton.FlatAppearance.BorderSize = 1;
-        _launchButton.BackColor = Color.FromArgb(18, 20, 22); _launchButton.ForeColor = Color.White;
+        _launchButton.ForeColor = Color.White;
         _launchButton.Size = new Size(350, 76); _launchButton.Location = new Point(680, 400);
         _launchButton.Click += async (_, _) => await MainActionAsync(); Controls.Add(_launchButton);
+        LauncherVisualTheme.StyleButton(_installButton); LauncherVisualTheme.StyleButton(_reportButton); LauncherVisualTheme.StyleButton(_findSteamButton);
         _installButton.Visible = false; _progress.Location = new Point(680, 492); _progress.Size = new Size(350, 5); Controls.Add(_progress);
         _status.Location = new Point(680, 509); _status.ForeColor = Color.Silver; _status.Font = new Font("Segoe UI", 9); Controls.Add(_status);
         _log.Visible = false; _reportButton.Visible = false;
     }
 
-    private Font BrandFont(float size)
-    {
-        try
-        {
-            using var stream = typeof(MainForm).Assembly.GetManifestResourceStream("SkyrimOnlineSTR.font.otf");
-            if (stream is not null)
-            {
-                using var ms = new MemoryStream(); stream.CopyTo(ms); var bytes = ms.ToArray();
-                var memory = System.Runtime.InteropServices.Marshal.AllocCoTaskMem(bytes.Length);
-                try { System.Runtime.InteropServices.Marshal.Copy(bytes, 0, memory, bytes.Length); _privateFonts.AddMemoryFont(memory, bytes.Length); }
-                finally { System.Runtime.InteropServices.Marshal.FreeCoTaskMem(memory); }
-                var family = _privateFonts.Families.FirstOrDefault(); if (family is not null) return new Font(family, size, FontStyle.Bold);
-            }
-        }
-        catch { }
-        return new Font("Segoe UI", size, FontStyle.Bold);
-    }
+    private Font BrandFont(float size) => LauncherVisualTheme.BrandFont(size, AppendLog);
 
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        var bounds = new Rectangle(0, 390, Width, Height - 390);
-        using var gradient = new System.Drawing.Drawing2D.LinearGradientBrush(bounds, Color.FromArgb(30, 45, 47, 50), Color.FromArgb(0, 0, 0, 0), 90f);
-        e.Graphics.FillRectangle(gradient, bounds);
-        foreach (var fog in new[] { new Rectangle(-90, 505, 570, 140), new Rectangle(280, 535, 660, 150), new Rectangle(690, 500, 560, 160) })
+        var bounds = new Rectangle(0, 365, Width, Height - 365);
+        foreach (var fog in new[] { new Rectangle(-140 + (int)_fogOffset, 500, 650, 175), new Rectangle(230 + (int)(_fogOffset * .68f), 525, 720, 165), new Rectangle(690 - (int)(_fogOffset * .42f), 490, 650, 190) })
         {
             using var path = new System.Drawing.Drawing2D.GraphicsPath(); path.AddEllipse(fog);
-            using var brush = new System.Drawing.Drawing2D.PathGradientBrush(path) { CenterColor = Color.FromArgb(19, 155, 160, 164), SurroundColors = [Color.FromArgb(0, 155, 160, 164)] };
+            using var brush = new System.Drawing.Drawing2D.PathGradientBrush(path) { CenterColor = Color.FromArgb(43, 155, 160, 164), SurroundColors = [Color.FromArgb(0, 155, 160, 164)] };
             e.Graphics.FillEllipse(brush, fog);
         }
+        using var fade = new System.Drawing.Drawing2D.LinearGradientBrush(bounds, Color.FromArgb(250, 5, 6, 7), Color.FromArgb(0, 5, 6, 7), 90f);
+        e.Graphics.FillRectangle(fade, bounds);
     }
 
-    private static Button WindowButton(string text, Action action) { var b = new Button { Text = text, Size = new Size(34, 34), FlatStyle = FlatStyle.Flat, ForeColor = Color.Silver, BackColor = Color.Transparent, Font = new Font("Segoe UI", 13) }; b.FlatAppearance.BorderSize = 0; b.Click += (_, _) => action(); return b; }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _fogTimer.Dispose();
+        base.Dispose(disposing);
+    }
+
+    private static Button WindowButton(string text, Action action) { var b = new Button { Text = text, Size = new Size(34, 34), ForeColor = Color.Silver, BackColor = Color.Transparent, Font = new Font("Segoe UI", 13) }; LauncherVisualTheme.StyleButton(b); b.FlatAppearance.BorderSize = 0; b.Click += (_, _) => action(); return b; }
     private static Label LinkLabel(string text, Action action) { var l = new Label { Text = text, AutoSize = true, ForeColor = Color.Gray, Cursor = Cursors.Hand, Font = new Font("Segoe UI", 9), Margin = new Padding(0, 0, 24, 0) }; l.Click += (_, _) => action(); return l; }
     private void DragWindow(object? sender, MouseEventArgs e) { if (e.Button != MouseButtons.Left) return; ReleaseCapture(); SendMessage(Handle, 0xA1, 0x2, 0); }
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool ReleaseCapture();
@@ -508,15 +504,69 @@ internal sealed class MonochromeProgressBar : Control
     }
 }
 
+internal static class LauncherVisualTheme
+{
+    private static readonly System.Drawing.Text.PrivateFontCollection Fonts = new();
+    private static FontFamily? _brandFamily;
+    private static bool _fontLoadAttempted;
+
+    public static Font BrandFont(float size, Action<string>? log = null)
+    {
+        if (!_fontLoadAttempted)
+        {
+            _fontLoadAttempted = true;
+            try
+            {
+                using var stream = typeof(MainForm).Assembly.GetManifestResourceStream("SkyrimOnlineSTR.font.otf")
+                    ?? throw new InvalidDataException("Gömülü Futura font kaynağı bulunamadı.");
+                using var buffer = new MemoryStream(); stream.CopyTo(buffer); var bytes = buffer.ToArray();
+                if (bytes.Length < 1000) throw new InvalidDataException($"Gömülü Futura font dosyası beklenenden küçük ({bytes.Length} bayt).");
+                var memory = System.Runtime.InteropServices.Marshal.AllocCoTaskMem(bytes.Length);
+                try { System.Runtime.InteropServices.Marshal.Copy(bytes, 0, memory, bytes.Length); Fonts.AddMemoryFont(memory, bytes.Length); }
+                finally { System.Runtime.InteropServices.Marshal.FreeCoTaskMem(memory); }
+                _brandFamily = Fonts.Families.FirstOrDefault() ?? throw new InvalidDataException("Futura font ailesi yüklenemedi.");
+                WriteFontLog($"Futura Condensed yüklendi ({bytes.Length} bayt; {_brandFamily.Name}).", log);
+            }
+            catch (Exception ex) { WriteFontLog("Futura Condensed yüklenemedi; Segoe UI kullanılacak. " + ex.Message, log); }
+        }
+        return _brandFamily is null ? new Font("Segoe UI", size, FontStyle.Bold) : new Font(_brandFamily, size, FontStyle.Bold);
+    }
+
+    private static void WriteFontLog(string message, Action<string>? log)
+    {
+        if (log is not null) { log(message); return; }
+        try
+        {
+            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SkyrimOnlineSTR");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(Path.Combine(directory, "launcher.log"), $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
+        }
+        catch { System.Diagnostics.Trace.WriteLine(message); }
+    }
+
+    public static void StyleButton(Button button)
+    {
+        button.FlatStyle = FlatStyle.Flat;
+        button.ForeColor = Color.Gainsboro;
+        button.BackColor = Color.FromArgb(18, 20, 22);
+        button.FlatAppearance.BorderColor = Color.FromArgb(190, 195, 200);
+        button.FlatAppearance.BorderSize = 1;
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(38, 40, 43);
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(58, 60, 63);
+        button.UseVisualStyleBackColor = false;
+    }
+}
+
 internal sealed class ErrorReportDialog : Form
 {
-    private readonly TextBox _description = new() { Multiline = true, MaxLength = 2000, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
+    private readonly TextBox _description = new() { Multiline = true, MaxLength = 2000, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = Color.FromArgb(18, 20, 22), ForeColor = Color.Gainsboro, BorderStyle = BorderStyle.FixedSingle };
     public string Description => _description.Text;
 
     public ErrorReportDialog()
     {
         Text = "Hata raporu";
         Size = new Size(500, 300);
+        BackColor = Color.FromArgb(5, 6, 7); ForeColor = Color.Gainsboro;
         StartPosition = FormStartPosition.CenterParent;
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), RowCount = 3, ColumnCount = 1 };
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -527,6 +577,7 @@ internal sealed class ErrorReportDialog : Form
         var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
         var send = new Button { Text = "ZIP oluştur ve gönder", DialogResult = DialogResult.OK, AutoSize = true };
         var cancel = new Button { Text = "Vazgeç", DialogResult = DialogResult.Cancel, AutoSize = true };
+        LauncherVisualTheme.StyleButton(send); LauncherVisualTheme.StyleButton(cancel);
         buttons.Controls.Add(send); buttons.Controls.Add(cancel);
         layout.Controls.Add(buttons, 0, 2);
         Controls.Add(layout);
