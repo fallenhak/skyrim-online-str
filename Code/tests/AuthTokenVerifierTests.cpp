@@ -67,7 +67,24 @@ TEST(AuthTokenVerifierTests, RejectsSignatureTampering)
 {
     const auto now = Now();
     auto token = MakeToken(Claims(now, now + 3600));
-    token.back() = token.back() == 'A' ? 'B' : 'A';
+    const auto signatureStart = token.find_last_of('.') + 1;
+    token[signatureStart] = token[signatureStart] == 'A' ? 'B' : 'A';
+    Auth::SessionClaims claims{};
+    std::string errorKey;
+    EXPECT_FALSE(Auth::VerifySessionToken(token, kTestSecret, claims, errorKey));
+    EXPECT_EQ(errorKey, "auth.token_invalid");
+}
+
+TEST(AuthTokenVerifierTests, RejectsNonCanonicalBase64UrlTailBits)
+{
+    constexpr std::string_view kBase64UrlAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const auto now = Now();
+    auto token = MakeToken(Claims(now, now + 3600));
+    const auto finalCharacterIndex = kBase64UrlAlphabet.find(token.back());
+    ASSERT_NE(finalCharacterIndex, std::string_view::npos);
+    ASSERT_LT(finalCharacterIndex + 1, kBase64UrlAlphabet.size());
+    token.back() = kBase64UrlAlphabet[finalCharacterIndex + 1];
+
     Auth::SessionClaims claims{};
     std::string errorKey;
     EXPECT_FALSE(Auth::VerifySessionToken(token, kTestSecret, claims, errorKey));

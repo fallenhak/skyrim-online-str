@@ -8,7 +8,6 @@
 #include <array>
 #include <charconv>
 #include <chrono>
-#include <cctype>
 #include <limits>
 #include <map>
 #include <string>
@@ -17,33 +16,54 @@ namespace
 {
 bool DecodeBase64Url(const std::string_view acEncoded, std::string& aDecoded)
 {
-    if (acEncoded.empty() || acEncoded.size() > 8192)
+    aDecoded.clear();
+    if (acEncoded.empty() || acEncoded.size() > 8192 || acEncoded.size() % 4 == 1)
         return false;
 
-    std::string base64(acEncoded);
-    for (char& character : base64)
+    std::string base64;
+    base64.reserve(acEncoded.size() + 3);
+    for (char character : acEncoded)
     {
         if (character == '-')
-            character = '+';
+            base64.push_back('+');
         else if (character == '_')
-            character = '/';
-        else if (!(std::isalnum(static_cast<unsigned char>(character)) || character == '+' || character == '/' || character == '='))
+            base64.push_back('/');
+        else if ((character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9'))
+            base64.push_back(character);
+        else
             return false;
     }
-    if (base64.find('=') != std::string::npos && base64.find('=') < base64.size() - 2)
-        return false;
     while (base64.size() % 4 != 0)
         base64.push_back('=');
 
     try
     {
         CryptoPP::StringSource source(base64, true, new CryptoPP::Base64Decoder(new CryptoPP::StringSink(aDecoded)));
-        return true;
     }
     catch (const CryptoPP::Exception&)
     {
+        aDecoded.clear();
         return false;
     }
+
+    std::string canonical;
+    CryptoPP::StringSource source(aDecoded, true, new CryptoPP::Base64Encoder(new CryptoPP::StringSink(canonical), false));
+    for (char& character : canonical)
+    {
+        if (character == '+')
+            character = '-';
+        else if (character == '/')
+            character = '_';
+    }
+    while (!canonical.empty() && canonical.back() == '=')
+        canonical.pop_back();
+
+    if (std::string_view(canonical) != acEncoded)
+    {
+        aDecoded.clear();
+        return false;
+    }
+    return true;
 }
 
 void AppendUtf8(std::string& aOutput, std::uint32_t aCodePoint)
