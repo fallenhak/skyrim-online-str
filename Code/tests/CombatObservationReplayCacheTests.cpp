@@ -67,3 +67,35 @@ TEST_CASE("Observation replay keys distinguish a replacement attacker incarnatio
     REQUIRE(cache.TryRemember(oldIncarnation));
     REQUIRE(cache.TryRemember(replacementIncarnation));
 }
+
+TEST_CASE("Removing an actor clears its replay keys while preserving FIFO order", "[combat_authority]")
+{
+    CombatObservationReplayCache<4> cache;
+    const ValidatedHitObservation oldestUnrelated{1, 2, 3, 1, 1, 1, 4};
+    const ValidatedHitObservation removedAsAttacker{17, 2, 30, 1, 2, 2, 5};
+    const ValidatedHitObservation retainedFirst{31, 2, 32, 1, 3, 3, 6};
+    const ValidatedHitObservation removedAsTarget{33, 2, 17, 1, 4, 4, 7};
+    const ValidatedHitObservation retainedSecond{34, 2, 35, 1, 5, 5, 8};
+
+    REQUIRE(cache.TryRemember(oldestUnrelated));
+    REQUIRE(cache.TryRemember(removedAsAttacker));
+    REQUIRE(cache.TryRemember(retainedFirst));
+    REQUIRE(cache.TryRemember(removedAsTarget));
+    REQUIRE(cache.TryRemember(retainedSecond)); // wrap and evict the oldest unrelated key
+
+    cache.RemoveActor(17);
+
+    REQUIRE(cache.Size() == 2);
+    REQUIRE_FALSE(cache.TryRemember(retainedFirst));
+    REQUIRE_FALSE(cache.TryRemember(retainedSecond));
+    REQUIRE(cache.TryRemember(removedAsAttacker));
+
+    const ValidatedHitObservation next{36, 2, 37, 1, 6, 6, 9};
+    const ValidatedHitObservation afterNext{38, 2, 39, 1, 7, 7, 10};
+    const ValidatedHitObservation last{40, 2, 41, 1, 8, 8, 11};
+    REQUIRE(cache.TryRemember(next));
+    REQUIRE(cache.TryRemember(afterNext));
+    REQUIRE(cache.TryRemember(last));
+    REQUIRE(cache.TryRemember(retainedFirst)); // oldest retained key was evicted first
+    REQUIRE(cache.TryRemember(retainedSecond));
+}

@@ -3,6 +3,8 @@
 #include <Events/PacketEvent.h>
 #include <Structs/ActorData.h>
 
+#include <cstdint>
+
 struct UpdateEvent;
 struct CharacterInteriorCellChangeEvent;
 struct CharacterSpawnedEvent;
@@ -37,6 +39,9 @@ struct CharacterService
     TP_NOCOPYMOVE(CharacterService);
 
     static void Serialize(World& aRegistry, entt::entity aEntity, CharacterSpawnRequest* apSpawnRequest) noexcept;
+    /** Advance a current owner's actor lifecycle and notify lifecycle-bound services. */
+    [[nodiscard]] bool BeginOwnerRespawnLifecycle(
+        entt::entity aEntity, Player* apOwner, std::uint32_t aOwnershipEpoch) noexcept;
 
 protected:
     enum class OwnershipTransferReason : uint8_t

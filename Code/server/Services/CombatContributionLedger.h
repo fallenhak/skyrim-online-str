@@ -137,6 +137,17 @@ public:
         m_contributions.erase(aTarget);
     }
 
+    /** Remove all target contribution records for every lifecycle of an actor. */
+    void ClearEntity(const std::uint32_t aServerId) noexcept
+    {
+        if (aServerId == 0)
+            return;
+
+        auto targetIt = m_contributions.lower_bound(Target{aServerId, 0});
+        while (targetIt != m_contributions.end() && targetIt->first.ServerId == aServerId)
+            targetIt = m_contributions.erase(targetIt);
+    }
+
     /** Remove a persistent attacker without identifying it by connection. */
     void RemoveCharacter(const Persistence::CharacterId aAttackerCharacterId) noexcept
     {

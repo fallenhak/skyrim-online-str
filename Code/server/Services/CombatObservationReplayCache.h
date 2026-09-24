@@ -81,6 +81,29 @@ public:
         m_nextIndex = 0;
     }
 
+    /** Remove every replay key where the actor was either participant. */
+    void RemoveActor(const ValidatedHitObservation::ServerId aServerId) noexcept
+    {
+        if (aServerId == ValidatedHitObservation::kInvalidServerId || m_count == 0)
+            return;
+
+        std::array<Key, tCapacity> retained{};
+        std::size_t retainedCount = 0;
+        const auto oldestIndex = (m_nextIndex + tCapacity - m_count) % tCapacity;
+        for (std::size_t offset = 0; offset < m_count; ++offset)
+        {
+            const auto& key = m_keys[(oldestIndex + offset) % tCapacity];
+            if (key.AttackerServerId == aServerId || key.TargetServerId == aServerId)
+                continue;
+
+            retained[retainedCount++] = key;
+        }
+
+        m_keys = retained;
+        m_count = retainedCount;
+        m_nextIndex = retainedCount % tCapacity;
+    }
+
     [[nodiscard]] std::size_t Size() const noexcept
     {
         return m_count;

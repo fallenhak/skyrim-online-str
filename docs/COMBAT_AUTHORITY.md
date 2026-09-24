@@ -27,6 +27,16 @@ apply hit damage, award XP, grant loot, or establish kill attribution.
   mount, or player summon. The event contains its server ID and lifecycle
   generation only; the sender is not treated as a killer identity.
 
+Actor removal clears replay keys and pending observations where that server
+entity was either attacker or target, and clears contribution records for all
+target lifecycles using that entity ID. An owner-authorized respawn advances
+the server lifecycle generation, resets its accepted-death marker, and applies
+the same cleanup for both player and actor respawn requests before notifying
+peers. Reusing an EnTT slot therefore cannot inherit combat state from the
+removed or respawned actor. Contributions already correlated to another live
+target remain attached to their server-resolved persistent CharacterId, as
+described below.
+
 ## Authority boundaries
 
 The server can currently establish:

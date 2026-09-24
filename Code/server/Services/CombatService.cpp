@@ -6,6 +6,8 @@
 #include <Events/AcceptedCanonicalCreatureDeathEvent.h>
 #include <Events/CorrelatedCombatObservationEvent.h>
 #include <Events/CreatureDeathContributionEvent.h>
+#include <Events/CharacterRemoveEvent.h>
+#include <Events/ActorRespawnedEvent.h>
 #include <Components.h>
 #include <GameServer.h>
 #include <Game/Player.h>
@@ -102,6 +104,8 @@ CombatService::CombatService(World& aWorld, entt::dispatcher& aDispatcher) noexc
     m_healthDecreaseConnection = aDispatcher.sink<AcceptedCanonicalHealthDecreaseEvent>().connect<&CombatService::OnCanonicalHealthDecrease>(this);
     m_correlatedObservationConnection = aDispatcher.sink<CorrelatedCombatObservationEvent>().connect<&CombatService::OnCorrelatedCombatObservation>(this);
     m_creatureDeathConnection = aDispatcher.sink<AcceptedCanonicalCreatureDeathEvent>().connect<&CombatService::OnAcceptedCreatureDeath>(this);
+    m_characterRemoveConnection = aDispatcher.sink<CharacterRemoveEvent>().connect<&CombatService::OnCharacterRemove>(this);
+    m_actorRespawnedConnection = aDispatcher.sink<ActorRespawnedEvent>().connect<&CombatService::OnActorRespawned>(this);
 }
 
 void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservationRequest>& acMessage) noexcept
@@ -230,6 +234,34 @@ void CombatService::OnAcceptedCreatureDeath(const AcceptedCanonicalCreatureDeath
         acEvent.TargetLifecycleGeneration};
     auto contributorCharacterIds = m_contributionLedger.ConsumeCharacterIdsForDeath(target, m_observationTick);
     m_dispatcher.trigger(CreatureDeathContributionEvent{std::move(contributorCharacterIds)});
+}
+
+void CombatService::OnCharacterRemove(const CharacterRemoveEvent& acEvent) noexcept
+{
+    ClearActorCombatState(acEvent.ServerId);
+}
+
+void CombatService::OnActorRespawned(const ActorRespawnedEvent& acEvent) noexcept
+{
+    if (acEvent.ServerId == 0 || acEvent.LifecycleGeneration == 0)
+        return;
+
+    const auto entity = static_cast<entt::entity>(acEvent.ServerId);
+    if (!m_world.valid(entity))
+        return;
+
+    const auto* const pLifecycle = m_world.try_get<ActorLifecycleComponent>(entity);
+    if (!pLifecycle || !pLifecycle->IsValid() || pLifecycle->GetGeneration() != acEvent.LifecycleGeneration)
+        return;
+
+    ClearActorCombatState(acEvent.ServerId);
+}
+
+void CombatService::ClearActorCombatState(const std::uint32_t aServerId) noexcept
+{
+    m_observationReplayCache.RemoveActor(aServerId);
+    m_pendingObservations.RemoveActor(aServerId);
+    m_contributionLedger.ClearEntity(aServerId);
 }
 
 void CombatService::OnProjectileLaunchRequest(const PacketEvent<ProjectileLaunchRequest>& acMessage) const noexcept

@@ -10,6 +10,7 @@
 #include <Events/UpdateEvent.h>
 #include <Events/CharacterRemoveEvent.h>
 #include <Events/OwnershipTransferEvent.h>
+#include <Events/ActorRespawnedEvent.h>
 
 #include <Game/OwnerView.h>
 
@@ -65,6 +66,33 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher)
     , m_dialogueConnection(aDispatcher.sink<PacketEvent<DialogueRequest>>().connect<&CharacterService::OnDialogueRequest>(this))
     , m_subtitleConnection(aDispatcher.sink<PacketEvent<SubtitleRequest>>().connect<&CharacterService::OnSubtitleRequest>(this))
 {
+}
+
+bool CharacterService::BeginOwnerRespawnLifecycle(
+    const entt::entity aEntity, Player* apOwner, const std::uint32_t aOwnershipEpoch) noexcept
+{
+    if (!m_world.valid(aEntity) || !m_world.all_of<CharacterComponent>(aEntity))
+        return false;
+
+    const auto* const pOwner = m_world.try_get<OwnerComponent>(aEntity);
+    if (!pOwner || !pOwner->IsCurrentOwner(apOwner, aOwnershipEpoch))
+        return false;
+
+    auto* const pLifecycle = m_world.try_get<ActorLifecycleComponent>(aEntity);
+    const bool startedLifecycle = pLifecycle == nullptr;
+    auto* const pCurrentLifecycle = pLifecycle ? pLifecycle : &m_world.emplace<ActorLifecycleComponent>(aEntity);
+    if (!pCurrentLifecycle->IsValid() || (!startedLifecycle && !pCurrentLifecycle->TryStartNewIncarnation()))
+    {
+        if (startedLifecycle)
+            m_world.remove<ActorLifecycleComponent>(aEntity);
+        spdlog::warn("Cannot respawn actor {:X}: lifecycle generation is unavailable", World::ToInteger(aEntity));
+        return false;
+    }
+
+    m_world.GetDispatcher().trigger(ActorRespawnedEvent{
+        World::ToInteger(aEntity),
+        pCurrentLifecycle->GetGeneration()});
+    return true;
 }
 
 void CharacterService::Serialize(World& aRegistry, entt::entity aEntity, CharacterSpawnRequest* apSpawnRequest) noexcept
@@ -603,6 +631,9 @@ void CharacterService::OnRequestRespawn(const PacketEvent<RequestRespawn>& acMes
 
     if (ownerComponent.IsCurrentOwner(acMessage.pPlayer, acMessage.Packet.OwnershipEpoch))
     {
+        if (!BeginOwnerRespawnLifecycle(*it, acMessage.pPlayer, acMessage.Packet.OwnershipEpoch))
+            return;
+
         // Replay cache needs to be cleared when the current owner respawns.
         if (auto* pAnimationComponent = m_world.try_get<AnimationComponent>(*it))
             pAnimationComponent->ActionsReplayCache.Clear();

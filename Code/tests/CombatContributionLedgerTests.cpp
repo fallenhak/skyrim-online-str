@@ -107,6 +107,23 @@ TEST_CASE("Combat contribution ledger isolates and clears individual targets", "
     REQUIRE(remaining.front().AttackerCharacterId == 20);
 }
 
+TEST_CASE("Removing or respawning an actor clears every target lifecycle contribution", "[combat_authority]")
+{
+    CombatContributionLedger ledger;
+
+    REQUIRE(ledger.RecordValidatedContribution({17, 1}, 10, 1));
+    REQUIRE(ledger.RecordValidatedContribution({17, 2}, 11, 2));
+    REQUIRE(ledger.RecordValidatedContribution({18, 2}, 12, 3));
+
+    ledger.ClearEntity(17);
+
+    REQUIRE(ledger.TargetCount() == 1);
+    REQUIRE(ledger.ContributionCount() == 1);
+    REQUIRE(ledger.ConsumeCharacterIdsForDeath({17, 1}, 3).empty());
+    REQUIRE(ledger.ConsumeCharacterIdsForDeath({17, 2}, 3).empty());
+    REQUIRE(ledger.ConsumeCharacterIdsForDeath({18, 2}, 3) == std::vector<Persistence::CharacterId>{12});
+}
+
 TEST_CASE("Combat contribution ledger saturates observation counters", "[combat_authority]")
 {
     CombatContributionLedger ledger;

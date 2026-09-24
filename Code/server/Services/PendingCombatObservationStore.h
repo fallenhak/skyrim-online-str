@@ -122,6 +122,24 @@ public:
         m_count = 0;
     }
 
+    /** Remove every pending observation where the actor was either participant. */
+    void RemoveActor(const ValidatedHitObservation::ServerId aServerId) noexcept
+    {
+        if (aServerId == ValidatedHitObservation::kInvalidServerId)
+            return;
+
+        std::size_t offset = 0;
+        while (offset < m_count)
+        {
+            const auto index = (m_head + offset) % tCapacity;
+            const auto& observation = *m_observations[index];
+            if (observation.AttackerServerId == aServerId || observation.TargetServerId == aServerId)
+                RemoveAt(offset);
+            else
+                ++offset;
+        }
+    }
+
     [[nodiscard]] std::size_t Size() const noexcept
     {
         return m_count;

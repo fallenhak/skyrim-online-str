@@ -136,3 +136,27 @@ TEST_CASE("health correlation preserves FIFO order across wrapped pending storag
     REQUIRE(pending.Pop() == lastRetained);
     REQUIRE_FALSE(pending.Pop().has_value());
 }
+
+TEST_CASE("Removing an actor clears its pending observations and retains wrapped FIFO order", "[combat_authority]")
+{
+    PendingCombatObservationStore<5> pending;
+    const ValidatedHitObservation first{1, 2, 10, 20, 1, 1, 3};
+    const ValidatedHitObservation removedAsAttacker{17, 2, 11, 21, 2, 2, 4};
+    const ValidatedHitObservation retainedBeforeRemovedTarget{3, 2, 12, 22, 3, 3, 5};
+    const ValidatedHitObservation removedAsTarget{4, 2, 17, 23, 4, 4, 6};
+    const ValidatedHitObservation retainedAfterRemovedTarget{5, 2, 13, 24, 5, 5, 7};
+
+    REQUIRE(pending.TryAppend(first));
+    REQUIRE(pending.TryAppend(removedAsAttacker));
+    REQUIRE(pending.TryAppend(retainedBeforeRemovedTarget));
+    REQUIRE(pending.TryAppend(removedAsTarget));
+    REQUIRE(pending.Pop() == first); // move the ring head before the next append
+    REQUIRE(pending.TryAppend(retainedAfterRemovedTarget));
+
+    pending.RemoveActor(17);
+
+    REQUIRE(pending.Size() == 2);
+    REQUIRE(pending.Pop() == retainedBeforeRemovedTarget);
+    REQUIRE(pending.Pop() == retainedAfterRemovedTarget);
+    REQUIRE_FALSE(pending.Pop().has_value());
+}

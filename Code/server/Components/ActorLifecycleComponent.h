@@ -42,6 +42,27 @@ struct ActorLifecycleComponent final
         return LifecycleGeneration;
     }
 
+    /**
+     * @brief Start a fresh server-owned actor lifecycle after respawn.
+     *
+     * The current generation is preserved if the process-wide allocator is
+     * exhausted, so callers can reject the respawn without leaving an actor
+     * with a partially reset lifecycle.
+     */
+    [[nodiscard]] bool TryStartNewIncarnation() noexcept
+    {
+        if (!IsValid())
+            return false;
+
+        const auto generation = AllocateGeneration();
+        if (generation == kInvalidGeneration)
+            return false;
+
+        LifecycleGeneration = generation;
+        AcceptedCanonicalCreatureDeathGeneration = 0;
+        return true;
+    }
+
     [[nodiscard]] bool TryMarkCanonicalCreatureDeathAccepted() noexcept
     {
         if (!IsValid() || AcceptedCanonicalCreatureDeathGeneration == LifecycleGeneration)
