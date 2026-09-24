@@ -1,4 +1,4 @@
-import { Injectable, NgZone } from '@angular/core';
+import { Injectable } from '@angular/core';
 import { BehaviorSubject, Subject } from 'rxjs';
 import { ClientService } from './client.service';
 
@@ -45,34 +45,27 @@ export class EntryService {
   private slotUnlocked = 1;
 
   public constructor(
-    private readonly zone: NgZone,
     private readonly client: ClientService,
   ) {
     if (typeof skyrimtogether === 'undefined') {
       return;
     }
 
-    skyrimtogether.on('authState', (state, displayName, avatarUrl, errorKey) =>
-      this.zone.run(() =>
-        this.auth$.next({ state, displayName, avatarUrl, errorKey }),
-      ),
-    );
-    skyrimtogether.on('loadingStage', (stage, progress) =>
-      this.zone.run(() => {
-        this.stage$.next({ stage, progress: Math.max(0, Math.min(1, progress)) });
-        if (stage === 'done') {
-          this.active$.next(false);
-        }
-      }),
-    );
-    skyrimtogether.on('characterSlots', (total, unlocked) =>
-      this.zone.run(() => {
-        this.slotTotal = Math.max(1, total);
-        this.slotUnlocked = Math.max(0, Math.min(unlocked, this.slotTotal));
-      }),
-    );
-    skyrimtogether.on('characterCreateResult', status =>
-      this.zone.run(() => this.createResult$.next(status)),
+    // The native bridge keeps one handler per event name and ClientService registers first,
+    // so consume its streams instead of calling skyrimtogether.on() again here.
+    this.client.authStateChange.subscribe(auth => this.auth$.next(auth));
+    this.client.loadingStageChange.subscribe(({ stage, progress }) => {
+      this.stage$.next({ stage, progress });
+      if (stage === 'done') {
+        this.active$.next(false);
+      }
+    });
+    this.client.characterSlotsChange.subscribe(({ total, unlocked }) => {
+      this.slotTotal = Math.max(1, total);
+      this.slotUnlocked = Math.max(0, Math.min(unlocked, this.slotTotal));
+    });
+    this.client.characterCreateResultChange.subscribe(({ status }) =>
+      this.createResult$.next(status),
     );
 
     this.client.characterListChange.subscribe(characters =>
