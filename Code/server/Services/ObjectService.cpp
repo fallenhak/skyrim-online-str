@@ -104,6 +104,8 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.IsDoor = objectComponent.IsDoor;
             objectData.IsDoorStateKnown = objectComponent.Door.IsKnown;
             objectData.IsDoorOpen = objectComponent.Door.IsOpen;
+            objectData.IsActivator = objectComponent.IsActivator;
+            objectData.ActivationCount = objectComponent.Activator.ActivationCount;
             if (objectComponent.HasTrustedState)
             {
                 objectData.CurrentLockData = objectComponent.CurrentLockData;
@@ -127,6 +129,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectComponent.IsHarvestable = object.IsHarvestable;
             objectComponent.IsHarvestItem = object.IsHarvestable && object.IsHarvestItem;
             objectComponent.IsDoor = object.IsDoor;
+            objectComponent.IsActivator = object.IsActivator && !object.IsDoor && !object.IsHarvestable;
 
             m_world.emplace<CellIdComponent>(cEntity, object.CellId, object.WorldSpaceId, object.CurrentCoords);
             m_world.emplace<InventoryComponent>(cEntity);
@@ -138,6 +141,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.IsHarvestable = object.IsHarvestable;
             objectData.IsHarvestItem = objectComponent.IsHarvestItem;
             objectData.IsDoor = object.IsDoor;
+            objectData.IsActivator = objectComponent.IsActivator;
 
             response.Objects.push_back(objectData);
         }
@@ -225,6 +229,33 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
             });
         if (!toggled)
             spdlog::info("Door toggle of {:X}:{:X} rejected (stale state {} or not allowed)", packet.Id.ModId, packet.Id.BaseId, packet.PreActivationOpenState);
+        return;
+    }
+
+    if (objectComponent.IsActivator)
+    {
+        const bool relayed = ObjectInteractionPolicy::TryRelayActivator(
+            true, objectComponent.Activator, m_tick, activatorExists, ownedBySender,
+            packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+            activatorCell.Cell, activatorCell.WorldSpaceId, activatorCell.CenterCoords,
+            objectCell.Cell, objectCell.WorldSpaceId, objectCell.CenterCoords,
+            [&]
+            {
+                NotifyActivate notifyActivate;
+                notifyActivate.Id = packet.Id;
+                notifyActivate.ActivatorId = packet.ActivatorId;
+                notifyActivate.PreActivationOpenState = packet.PreActivationOpenState;
+
+                for (Player* pPlayer : m_world.GetPlayerManager())
+                {
+                    if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == packet.CellId)
+                        pPlayer->Send(notifyActivate);
+                }
+            });
+        if (relayed)
+            spdlog::info("[World] activator {:X}:{:X} activation #{}", packet.Id.ModId, packet.Id.BaseId, objectComponent.Activator.ActivationCount);
+        else
+            spdlog::info("Activator {:X}:{:X} activation rejected (cooldown or not allowed)", packet.Id.ModId, packet.Id.BaseId);
         return;
     }
 

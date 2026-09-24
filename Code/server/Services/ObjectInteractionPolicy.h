@@ -16,6 +16,14 @@ struct DoorState
     bool IsOpen{};
 };
 
+// Server-owned activation history of an activator (lever, chain, puzzle pillar).
+// The script state behind it stays client-side; the server orders activations.
+struct ActivatorState
+{
+    uint32_t ActivationCount{};
+    std::uint64_t LastActivationTick{};
+};
+
 struct ObjectInteractionPolicy final
 {
     [[nodiscard]] static bool IsInSenderRange(
@@ -187,6 +195,48 @@ struct ObjectInteractionPolicy final
         aState.IsKnown = true;
         aState.IsOpen = !cWasOpen;
         std::forward<TOnToggle>(aOnToggle)();
+        return true;
+    }
+
+    // Two pulls inside the same server second would flip a lever twice on every
+    // other client; only the first is accepted.
+    static constexpr std::uint64_t kActivatorCooldownTicks = 1;
+
+    template <typename TOnRelay>
+    [[nodiscard]] static bool TryRelayActivator(
+        const bool aIsActivator,
+        ActivatorState& aState,
+        const std::uint64_t aNowTick,
+        const bool aActorExists,
+        const bool aOwnedBySender,
+        const GameId& aRequestedCell,
+        const GameId& aSenderCell,
+        const GameId& aSenderWorldSpace,
+        const GridCellCoords& aSenderCoords,
+        const GameId& aActivatorCell,
+        const GameId& aActivatorWorldSpace,
+        const GridCellCoords& aActivatorCoords,
+        const GameId& aObjectCell,
+        const GameId& aObjectWorldSpace,
+        const GridCellCoords& aObjectCoords,
+        TOnRelay&& aOnRelay)
+    {
+        if (!aIsActivator)
+            return false;
+
+        if (aState.ActivationCount > 0 && aNowTick < aState.LastActivationTick + kActivatorCooldownTicks)
+            return false;
+
+        if (!CanActivate(
+                true, aActorExists, aOwnedBySender,
+                aRequestedCell, aSenderCell, aSenderWorldSpace, aSenderCoords,
+                aActivatorCell, aActivatorWorldSpace, aActivatorCoords,
+                aObjectCell, aObjectWorldSpace, aObjectCoords))
+            return false;
+
+        ++aState.ActivationCount;
+        aState.LastActivationTick = aNowTick;
+        std::forward<TOnRelay>(aOnRelay)();
         return true;
     }
 

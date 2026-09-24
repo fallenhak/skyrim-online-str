@@ -33,4 +33,7 @@ struct ObjectData
     bool IsDoor{};
     bool IsDoorStateKnown{};
     bool IsDoorOpen{};
+    // Lever, chain, button, puzzle pillar: each accepted activation is relayed.
+    bool IsActivator{};
+    uint32_t ActivationCount{};
 };
