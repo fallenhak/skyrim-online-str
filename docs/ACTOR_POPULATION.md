@@ -62,7 +62,12 @@ existing rules (the vanilla defaults at startup).
 
 The default rule set marks only these vanilla editor IDs as `HumanoidNpc`:
 `NordRace`, `BretonRace`, `ImperialRace`, `RedguardRace`, `HighElfRace`,
-`WoodElfRace`, `DarkElfRace`, `OrcRace`, `ArgonianRace`, and `KhajiitRace`.
+`WoodElfRace`, `DarkElfRace`, `OrcRace`, `ArgonianRace`, and `KhajiitRace`,
+plus the vanilla variants with their own RACE records: `NordRaceChild`,
+`BretonRaceChild`, `ImperialRaceChild`, `RedguardRaceChild`,
+`BretonRaceChildVampire`, `ElderRace`, and `NordRaceAstrid` (verified against
+the `Skyrim.esm` RACE EDIDs). The playable-race `*Vampire` variants are left
+`Unknown` on purpose: those NPCs are hostile vampires, not town population.
 Other and edge/modded races remain `Unknown` unless an explicit server-side
 rule is added. The setting only changes server-side classification rules; it
 does not enable full record loading or the humanoid assignment gate. Editor ID

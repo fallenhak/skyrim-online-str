@@ -61,6 +61,15 @@ void ActorPopulationPolicy::InstallVanillaHumanoidRules()
     SetRaceClassification("OrcRace", ActorPopulationClass::kHumanoidNpc);
     SetRaceClassification("ArgonianRace", ActorPopulationClass::kHumanoidNpc);
     SetRaceClassification("KhajiitRace", ActorPopulationClass::kHumanoidNpc);
+
+    // Vanilla humanoid variants that use their own RACE records.
+    SetRaceClassification("NordRaceChild", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("BretonRaceChild", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("ImperialRaceChild", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("RedguardRaceChild", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("BretonRaceChildVampire", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("ElderRace", ActorPopulationClass::kHumanoidNpc);
+    SetRaceClassification("NordRaceAstrid", ActorPopulationClass::kHumanoidNpc);
 }
 
 void ActorPopulationPolicy::SetRaceClassification(TiltedPhoques::String aRaceEditorId, ActorPopulationClass aClassification)
