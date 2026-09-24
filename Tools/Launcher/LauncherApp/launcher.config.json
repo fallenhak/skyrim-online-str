@@ -1,0 +1,6 @@
+{
+  "manifestUrl": "https://downloads.example.invalid/skyrim-online-str/manifest.json",
+  "strLauncherPath": "SkyrimTogether.exe",
+  "errorReportEndpoint": "https://reports.example.invalid/skyrim-online-str",
+  "errorReportToken": ""
+}
