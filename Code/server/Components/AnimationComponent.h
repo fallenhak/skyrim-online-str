@@ -12,4 +12,8 @@ struct AnimationComponent
     Vector<ActionEvent> Actions;
     ActionEvent CurrentAction;
     ActionReplayCache ActionsReplayCache;
+    uint32_t FurnitureUseTargetId{};
+    uint32_t RejectedFurnitureTargetId{};
+    bool HasEnteredFurniture{};
+    bool RejectedFurnitureSawActiveState{};
 };

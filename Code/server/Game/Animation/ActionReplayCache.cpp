@@ -1,5 +1,8 @@
 #include "ActionReplayCache.h"
 #include <Game/Animation/AnimationEventLists.h>
+
+#include <algorithm>
+#include <cctype>
 #include <optional>
 
 ActionReplayChain ActionReplayCache::FormRefinedReplayChain() noexcept
@@ -37,13 +40,7 @@ bool ActionReplayCache::RefineReplayCache() noexcept
         ActionEvent& action = m_actions[i];
 
         // Instant counterparts of actions are highly preferred for animation replay
-        if (auto instantAnimName = FindInstantCounterpartForAction(action.EventName))
-        {
-            action.EventName = String{*instantAnimName};
-            action.TargetEventName = String{*instantAnimName};
-            action.ActionId = 0;
-            action.IdleId = 0;
-        }
+        action = NormalizeForImmediateReplay(action);
 
         if (IsExitAction(action))
         {
@@ -59,6 +56,20 @@ bool ActionReplayCache::RefineReplayCache() noexcept
 
     m_actions.erase(m_actions.begin(), m_actions.begin() + dropAllUpToIndex);
     return true;
+}
+
+ActionEvent ActionReplayCache::NormalizeForImmediateReplay(const ActionEvent& acAction) noexcept
+{
+    ActionEvent action = acAction;
+    if (auto instantAnimName = FindInstantCounterpartForAction(action.EventName))
+    {
+        action.EventName = String{*instantAnimName};
+        action.TargetEventName = String{*instantAnimName};
+        action.ActionId = 0;
+        action.IdleId = 0;
+    }
+
+    return action;
 }
 
 bool ActionReplayCache::IsExitAction(const ActionEvent& acAction) noexcept

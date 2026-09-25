@@ -128,5 +128,6 @@ enum ServerOpcode : unsigned char
     kNotifyCharacterSlots,
     kNotifyCharacterCreateResult,
     kNotifyObjectHarvested,
+    kNotifyFurnitureUseDenied,
     kServerOpcodeMax
 };

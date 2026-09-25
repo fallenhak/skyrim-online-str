@@ -41,6 +41,7 @@
 #include <Messages/AssignCharacterRequest.h>
 #include <Messages/AssignCharacterResponse.h>
 #include <Messages/NotifyCharacterAssignmentRejected.h>
+#include <Messages/NotifyFurnitureUseDenied.h>
 #include <Messages/ServerReferencesMoveRequest.h>
 #include <Messages/ClientReferencesMoveRequest.h>
 #include <Messages/CharacterSpawnRequest.h>
@@ -63,6 +64,7 @@
 #include <Messages/NotifyActorTeleport.h>
 #include <Structs/MovementAuthorityPolicy.h>
 #include <Structs/FactionAuthorityPolicy.h>
+#include <Misc/BSFixedString.h>
 
 #include <World.h>
 #include <Games/TES.h>
@@ -87,6 +89,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
     m_assignmentRejectedConnection = m_dispatcher.sink<NotifyCharacterAssignmentRejected>().connect<&CharacterService::OnCharacterAssignmentRejected>(this);
     m_characterSpawnConnection = m_dispatcher.sink<CharacterSpawnRequest>().connect<&CharacterService::OnCharacterSpawn>(this);
     m_referenceMovementSnapshotConnection = m_dispatcher.sink<ServerReferencesMoveRequest>().connect<&CharacterService::OnReferencesMoveRequest>(this);
+    m_furnitureUseDeniedConnection = m_dispatcher.sink<NotifyFurnitureUseDenied>().connect<&CharacterService::OnFurnitureUseDenied>(this);
     m_factionsConnection = m_dispatcher.sink<NotifyFactionsChanges>().connect<&CharacterService::OnFactionsChanges>(this);
     m_ownershipTransferConnection = m_dispatcher.sink<NotifyOwnershipTransfer>().connect<&CharacterService::OnOwnershipTransfer>(this);
     m_removeCharacterConnection = m_dispatcher.sink<NotifyRemoveCharacter>().connect<&CharacterService::OnRemoveCharacter>(this);
@@ -678,6 +681,42 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 #if (!IS_MASTER)
     m_world.emplace_or_replace<ReplayedActionsDebugComponent>(*entity, acMessage.ActionsToReplay);
 #endif
+}
+
+void CharacterService::OnFurnitureUseDenied(const NotifyFurnitureUseDenied& acMessage) const noexcept
+{
+    auto view = m_world.view<LocalComponent, FormIdComponent>();
+    const auto itor = std::find_if(std::begin(view), std::end(view), [id = acMessage.ActorId, view](entt::entity entity)
+    {
+        const auto& local = view.get<LocalComponent>(entity);
+        return local.Id == id && local.OwnershipEpoch == acMessage.OwnershipEpoch;
+    });
+
+    if (itor == std::end(view))
+    {
+        spdlog::debug("Ignored furniture denial for actor {:X} with stale ownership epoch {}",
+                      acMessage.ActorId, acMessage.OwnershipEpoch);
+        return;
+    }
+
+    const auto formId = view.get<FormIdComponent>(*itor).Id;
+    Actor* pActor = Cast<Actor>(TESForm::GetById(formId));
+    if (!pActor)
+    {
+        spdlog::warn("Could not restore actor {:X} after furniture use was denied", acMessage.ActorId);
+        return;
+    }
+
+    BSFixedString getUpEvent("GetUpBegin");
+    const bool getUpSent = pActor->SendAnimationEvent(&getUpEvent);
+    pActor->rotation.x = acMessage.AuthoritativeMovement.Rotation.x;
+    pActor->rotation.z = acMessage.AuthoritativeMovement.Rotation.y;
+    MoveActor(pActor, acMessage.AuthoritativeMovement.WorldSpaceId,
+              acMessage.AuthoritativeMovement.CellId, acMessage.AuthoritativeMovement.Position);
+
+    spdlog::info("Furniture use denied for actor {:X}; sent GetUpBegin: {}, restored position ({:.1f}, {:.1f}, {:.1f})",
+                 acMessage.ActorId, getUpSent, acMessage.AuthoritativeMovement.Position.x,
+                 acMessage.AuthoritativeMovement.Position.y, acMessage.AuthoritativeMovement.Position.z);
 }
 
 void CharacterService::OnReferencesMoveRequest(const ServerReferencesMoveRequest& acMessage) const noexcept

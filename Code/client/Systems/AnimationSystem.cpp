@@ -14,6 +14,8 @@
 #include <Messages/ClientReferencesMoveRequest.h>
 #include <Structs/MovementAuthorityPolicy.h>
 
+#include <string_view>
+
 #include <Components.h>
 #include <World.h>
 
@@ -54,15 +56,40 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
 
         apActor->LoadAnimationVariables(first.Variables);
 
-        aAnimationComponent.LastRanAction = first;
-
         // Play the animation
         TESActionData actionData(first.Type & 0x3, apActor, pAction, pTarget);
         actionData.eventName = BSFixedString(first.EventName.c_str());
         actionData.idleForm = Cast<TESIdleForm>(TESForm::GetById(first.IdleId));
         actionData.someFlag = ((first.Type & 0x4) != 0) ? 1 : 0;
 
+        const std::string_view eventName{first.EventName.data(), first.EventName.size()};
+        const bool isSeatAction = eventName.starts_with("IdleChair") || eventName.starts_with("IdleStool") ||
+                                  eventName.starts_with("IdleSit") || eventName.starts_with("IdleBarCounter") ||
+                                  eventName.starts_with("IdleJarlChair") || eventName.starts_with("IdleTable");
+        const bool isSeatTransition =
+            (isSeatAction && (eventName.find("Enter") != std::string_view::npos ||
+                              eventName.find("Exit") != std::string_view::npos)) ||
+            eventName == "GetUpBegin" || eventName == "GetUpExit";
+
         const auto result = ActorMediator::Get()->ForceAction(&actionData);
+        if (isSeatTransition && result == 0 && aAnimationComponent.FailedSeatActionAttempts < 3)
+        {
+            ++aAnimationComponent.FailedSeatActionAttempts;
+            spdlog::warn("Seat action '{}' was not accepted for remote actor {:X}, target {:X}; retry {}/3",
+                         eventName, apActor->formID, first.TargetId,
+                         static_cast<int>(aAnimationComponent.FailedSeatActionAttempts));
+            return;
+        }
+
+        if (isSeatTransition)
+        {
+            spdlog::info("Replayed seat action '{}' for remote actor {:X}, target {:X}, tick {}, result {}, retries {}",
+                         eventName, apActor->formID, first.TargetId, first.Tick, static_cast<int>(result),
+                         static_cast<int>(aAnimationComponent.FailedSeatActionAttempts));
+        }
+
+        aAnimationComponent.FailedSeatActionAttempts = 0;
+        aAnimationComponent.LastRanAction = first;
 
         if (aAnimationComponent.ReplayCount > 0)
             aAnimationComponent.ReplayCount--;
