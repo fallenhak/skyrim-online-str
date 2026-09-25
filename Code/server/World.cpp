@@ -38,7 +38,7 @@ World::World(
     ctx().emplace<CharacterSaveService>(*this, ctx().at<PersistenceService>().GetCharacterRepository(), m_dispatcher);
     ctx().emplace<PlayerService>(*this, m_dispatcher);
     ctx().emplace<PresenceService>(*this, m_dispatcher);
-    ctx().emplace<CalendarService>(*this, m_dispatcher);
+    ctx().emplace<CalendarService>(*this, m_dispatcher, ctx().at<PersistenceService>().GetWorldClockRepository());
     ctx().emplace<ObjectService>(*this, m_dispatcher, ctx().at<PersistenceService>().GetWorldObjectRepository());
     ctx().emplace<ModsComponent>();
     ctx().emplace<ServerListService>(*this, m_dispatcher);
