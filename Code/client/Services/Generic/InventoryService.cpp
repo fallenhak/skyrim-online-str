@@ -54,6 +54,7 @@ void InventoryService::OnContainerTransferEvent(const ContainerTransferEvent& ac
     RequestContainerTransfer request;
     request.RequestId = ++m_nextTransferId;
     request.ContainerId = acEvent.ContainerServerId;
+    request.TargetKind = acEvent.TargetKind;
     request.Direction = acEvent.Direction;
     request.ExpectedContainerCount = acEvent.ExpectedContainerCount;
     request.Item = acEvent.Item;
@@ -62,8 +63,8 @@ void InventoryService::OnContainerTransferEvent(const ContainerTransferEvent& ac
     m_transport.Send(request);
 
     spdlog::info(
-        "Container transfer {} ({}): item {:X} x{}, container {:X} held {}", request.RequestId, acEvent.Direction == 0 ? "take" : "put",
-        acEvent.Item.BaseId.BaseId, acEvent.Item.Count, acEvent.ContainerFormId, acEvent.ExpectedContainerCount);
+        "Container transfer {} ({}): item {:X} x{}, {} {:X} held {}", request.RequestId, acEvent.Direction == 0 ? "take" : "put",
+        acEvent.Item.BaseId.BaseId, acEvent.Item.Count, acEvent.TargetKind == 1 ? "corpse" : "container", acEvent.ContainerFormId, acEvent.ExpectedContainerCount);
 }
 
 void InventoryService::OnNotifyContainerTransferResult(const NotifyContainerTransferResult& acMessage) noexcept
@@ -81,11 +82,8 @@ void InventoryService::OnNotifyContainerTransferResult(const NotifyContainerTran
     // Rejected: undo both local halves without telling the server again.
     TESObjectREFR* pContainer = Cast<TESObjectREFR>(TESForm::GetById(transfer.ContainerFormId));
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
-    if (!pContainer || !pPlayer)
-    {
-        spdlog::error("Container transfer {} rejected ({}) but the container {:X} is gone; nothing rolled back", acMessage.RequestId, acMessage.Result, transfer.ContainerFormId);
+    if (!pPlayer)
         return;
-    }
 
     const bool isTake = transfer.Direction == 0;
     Inventory::Entry toContainer = transfer.Item;
@@ -94,7 +92,14 @@ void InventoryService::OnNotifyContainerTransferResult(const NotifyContainerTran
     toPlayer.Count = isTake ? -transfer.Item.Count : transfer.Item.Count;
 
     ScopedInventoryOverride _;
-    pContainer->AddOrRemoveItem(toContainer);
+    // An expired corpse can be removed before the rejection arrives; the player half must still
+    // be undone, or the item the server refused stays in the player's inventory.
+    if (pContainer)
+        pContainer->AddOrRemoveItem(toContainer);
+    else
+        spdlog::warn(
+            "Container transfer {} rejected ({}) and the container {:X} is gone; rolling back the player side only", acMessage.RequestId,
+            acMessage.Result, transfer.ContainerFormId);
     pPlayer->AddOrRemoveItem(toPlayer);
 
     spdlog::warn(

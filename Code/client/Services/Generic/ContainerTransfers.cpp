@@ -3,22 +3,57 @@
 #include <World.h>
 #include <Components.h>
 #include <Games/References.h>
+#include <Actor.h>
+#include <PlayerCharacter.h>
 
 #include <algorithm>
 #include <limits>
 
 namespace ContainerTransfers
 {
-std::optional<uint32_t> GetSyncedContainerServerId(const TESObjectREFR* apReference) noexcept
+namespace
 {
-    if (!apReference || !apReference->baseForm || apReference->baseForm->formType != FormType::Container)
+std::optional<Target> GetCorpseTarget(const Actor* apActor) noexcept
+{
+    if (apActor == PlayerCharacter::Get() || !apActor->IsDead())
+        return std::nullopt;
+
+    auto& world = World::Get();
+    const auto view = world.view<FormIdComponent>();
+    for (const auto entity : view)
+    {
+        if (view.get<FormIdComponent>(entity).Id != apActor->formID)
+            continue;
+
+        if (world.all_of<PlayerComponent>(entity))
+            return std::nullopt;
+        if (const auto* pLocal = world.try_get<LocalComponent>(entity))
+            return Target{pLocal->Id, TargetKind::kCorpse};
+        if (const auto* pRemote = world.try_get<RemoteComponent>(entity))
+            return Target{pRemote->Id, TargetKind::kCorpse};
+        return std::nullopt;
+    }
+
+    return std::nullopt;
+}
+} // namespace
+
+std::optional<Target> GetSyncedTarget(const TESObjectREFR* apReference) noexcept
+{
+    if (!apReference)
+        return std::nullopt;
+
+    if (const auto* pActor = Cast<Actor>(apReference))
+        return GetCorpseTarget(pActor);
+
+    if (!apReference->baseForm || apReference->baseForm->formType != FormType::Container)
         return std::nullopt;
 
     const auto view = World::Get().view<FormIdComponent, ObjectComponent>();
     for (const auto entity : view)
     {
         if (view.get<FormIdComponent>(entity).Id == apReference->formID)
-            return view.get<ObjectComponent>(entity).Id;
+            return Target{view.get<ObjectComponent>(entity).Id, TargetKind::kObject};
     }
 
     return std::nullopt;

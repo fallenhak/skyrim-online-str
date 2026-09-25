@@ -11,9 +11,23 @@ struct TESObjectREFR;
 // RequestContainerTransfer instead of two independent inventory changes.
 namespace ContainerTransfers
 {
-// Server id of a container the server tracks; nullopt for anything else (actors,
-// unsynced player-home chests, containers without a server entity yet).
-[[nodiscard]] std::optional<uint32_t> GetSyncedContainerServerId(const TESObjectREFR* apReference) noexcept;
+// Mirrors ContainerTransferTarget on the server.
+enum class TargetKind : uint8_t
+{
+    kObject = 0,
+    kCorpse = 1,
+};
+
+struct Target
+{
+    uint32_t ServerId{};
+    TargetKind Kind{};
+};
+
+// What the server tracks behind this reference: a synced container object, or a dead NPC it
+// knows by server id. nullopt for anything else (living actors, players, unsynced player-home
+// chests, containers without a server entity yet).
+[[nodiscard]] std::optional<Target> GetSyncedTarget(const TESObjectREFR* apReference) noexcept;
 
 // How many units that can merge with acItem the reference currently holds.
 [[nodiscard]] int32_t CountOf(const TESObjectREFR* apReference, const Inventory::Entry& acItem) noexcept;
