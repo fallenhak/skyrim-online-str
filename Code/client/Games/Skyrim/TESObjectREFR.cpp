@@ -917,6 +917,20 @@ void TESObjectREFR::AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSet
     else if (arEntry.Count < 0)
     {
         spdlog::debug("Removing item {:X}, count {}", pObject->formID, -arEntry.Count);
+
+        // A looted corpse gets no unequip message, and the entry's extra data carries no Worn
+        // flag, so RemoveItem lowers the count but leaves the weapon attached to the body. When
+        // the last copy of a wielded weapon leaves, unequip it first so its 3D goes with it.
+        Actor* pActor = Cast<Actor>(this);
+        if (pActor && GetItemCountInInventory(pObject) <= -arEntry.Count)
+        {
+            auto* pEquipManager = EquipManager::Get();
+            if (pActor->GetEquippedWeapon(1) == pObject)
+                pEquipManager->UnEquip(pActor, pObject, nullptr, 1, DefaultObjectManager::Get().rightEquipSlot, false, true, false, false, nullptr);
+            if (pActor->GetEquippedWeapon(0) == pObject)
+                pEquipManager->UnEquip(pActor, pObject, nullptr, 1, DefaultObjectManager::Get().leftEquipSlot, false, true, false, false, nullptr);
+        }
+
         RemoveItem(pObject, -arEntry.Count, ITEM_REMOVE_REASON::kRemove, pExtraDataList, nullptr);
     }
 
