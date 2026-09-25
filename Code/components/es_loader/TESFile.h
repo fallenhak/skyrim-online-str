@@ -58,6 +58,8 @@ private:
 
     TiltedPhoques::Map<String, uint32_t>& m_masterFiles;
     TiltedPhoques::Map<uint8_t, uint32_t> m_parentToFormIdPrefix{};
+    // Resolved form id of the CELL whose children group is being read; zero outside one.
+    uint32_t m_currentCell{};
 };
 
 } // namespace ESLoader

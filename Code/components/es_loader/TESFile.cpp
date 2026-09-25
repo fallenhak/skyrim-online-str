@@ -238,15 +238,34 @@ bool TESFile::ReadGroupOrRecord(
             return false;
 
         const size_t endOfGroup = recordPosition + size;
+
+        // Group types 6 (cell children) and 8-10 (persistent, temporary, visible distant
+        // children) carry the parent CELL form id as their label.
+        uint32_t label = 0;
+        int32_t groupType = 0;
+        std::memcpy(&label, pRecordBytes + 8, sizeof(label));
+        std::memcpy(&groupType, pRecordBytes + 12, sizeof(groupType));
+        const uint32_t previousCell = m_currentCell;
+        if (groupType == 6 || (groupType >= 8 && groupType <= 10))
+        {
+            const auto labelPrefix = GetFormIdPrefix(label, m_parentToFormIdPrefix);
+            m_currentCell = labelPrefix ? *labelPrefix + (label & 0x00FFFFFFu) : 0;
+        }
+
         aReader.Advance(sizeof(Group));
 
+        bool groupValid = true;
         while (aReader.GetBytePosition() < endOfGroup)
         {
             if (!ReadGroupOrRecord(aReader, aRecordCollection, endOfGroup, aGroupDepth + 1))
-                return false;
+            {
+                groupValid = false;
+                break;
+            }
         }
 
-        return aReader.GetBytePosition() == endOfGroup;
+        m_currentCell = previousCell;
+        return groupValid && aReader.GetBytePosition() == endOfGroup;
     }
 
     if (aParentEnd - recordPosition < sizeof(Record) || size > aParentEnd - recordPosition - sizeof(Record))
@@ -299,11 +318,49 @@ bool TESFile::ReadGroupOrRecord(
         case FormEnum::REFR:
         {
             REFR parsedRecord = CopyAndParseRecord<REFR>(pRecord, resolvedFormIdPrefix);
+            parsedRecord.m_parentCell = m_currentCell;
             const uint32_t resolvedFormId = parsedRecord.GetFormId();
             aRecordCollection.m_objectReferences.insert_or_assign(resolvedFormId, std::move(parsedRecord));
             break;
         }
-        case FormEnum::CELL: break;
+        case FormEnum::CELL:
+        {
+            CELL parsedRecord;
+            parsedRecord.CopyRecordData(pRecord);
+            parsedRecord.SetBaseId(resolvedFormIdPrefix);
+            if (parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix))
+                aRecordCollection.m_cells.insert_or_assign(parsedRecord.GetFormId(), std::move(parsedRecord));
+            break;
+        }
+        case FormEnum::LVLI:
+        {
+            LVLI parsedRecord;
+            parsedRecord.CopyRecordData(pRecord);
+            parsedRecord.SetBaseId(resolvedFormIdPrefix);
+            if (parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix))
+                aRecordCollection.m_leveledItems.insert_or_assign(parsedRecord.GetFormId(), std::move(parsedRecord));
+            else
+                spdlog::warn("Plugin {} has malformed leveled item {:X}; skipping record", m_filename, formId);
+            break;
+        }
+        case FormEnum::ECZN:
+        {
+            ECZN parsedRecord;
+            parsedRecord.CopyRecordData(pRecord);
+            parsedRecord.SetBaseId(resolvedFormIdPrefix);
+            if (parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix))
+                aRecordCollection.m_encounterZones.insert_or_assign(parsedRecord.GetFormId(), std::move(parsedRecord));
+            break;
+        }
+        case FormEnum::LCTN:
+        {
+            LCTN parsedRecord;
+            parsedRecord.CopyRecordData(pRecord);
+            parsedRecord.SetBaseId(resolvedFormIdPrefix);
+            if (parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix))
+                aRecordCollection.m_locations.insert_or_assign(parsedRecord.GetFormId(), std::move(parsedRecord));
+            break;
+        }
         case FormEnum::CLMT:
         {
             CLMT parsedRecord = CopyAndParseRecord<CLMT>(pRecord, resolvedFormIdPrefix);

@@ -2,7 +2,11 @@
 
 #include "Records/ACHR.h"
 #include "Records/CLMT.h"
+#include "Records/CELL.h"
 #include "Records/CONT.h"
+#include "Records/ECZN.h"
+#include "Records/LCTN.h"
+#include "Records/LVLI.h"
 #include "Records/GMST.h"
 #include "Records/LVLN.h"
 #include "Records/NAVM.h"
@@ -76,6 +80,46 @@ struct RecordCollection
         return it == m_leveledNpcs.end() ? nullptr : &it->second;
     }
 
+    [[nodiscard]] const LVLI* FindLeveledItemById(uint32_t aFormId) const noexcept
+    {
+        const auto it = m_leveledItems.find(aFormId);
+        return it == m_leveledItems.end() ? nullptr : &it->second;
+    }
+
+    [[nodiscard]] const ECZN* FindEncounterZoneById(uint32_t aFormId) const noexcept
+    {
+        const auto it = m_encounterZones.find(aFormId);
+        return it == m_encounterZones.end() ? nullptr : &it->second;
+    }
+
+    [[nodiscard]] const CELL* FindCellById(uint32_t aFormId) const noexcept
+    {
+        const auto it = m_cells.find(aFormId);
+        return it == m_cells.end() ? nullptr : &it->second;
+    }
+
+    [[nodiscard]] const LCTN* FindLocationById(uint32_t aFormId) const noexcept
+    {
+        const auto it = m_locations.find(aFormId);
+        return it == m_locations.end() ? nullptr : &it->second;
+    }
+
+    [[nodiscard]] const REFR* FindObjectRefById(uint32_t aFormId) const noexcept
+    {
+        const auto it = m_objectReferences.find(aFormId);
+        return it == m_objectReferences.end() ? nullptr : &it->second;
+    }
+
+    [[nodiscard]] const CONT* FindContainerById(uint32_t aFormId) const noexcept
+    {
+        const auto it = m_containers.find(aFormId);
+        return it == m_containers.end() ? nullptr : &it->second;
+    }
+
+    [[nodiscard]] const Map<uint32_t, REFR>& GetObjectReferences() const noexcept { return m_objectReferences; }
+    [[nodiscard]] const Map<uint32_t, ECZN>& GetEncounterZones() const noexcept { return m_encounterZones; }
+    [[nodiscard]] const Map<uint32_t, LCTN>& GetLocations() const noexcept { return m_locations; }
+
     CONT& GetContainerById(uint32_t aFormId) noexcept { return m_containers[aFormId]; }
     GMST& GetGameSettingById(uint32_t aFormId) noexcept { return m_gameSettings[aFormId]; }
     WRLD& GetWorldById(uint32_t aFormId) noexcept { return m_worlds[aFormId]; }
@@ -92,6 +136,10 @@ private:
     Map<uint32_t, RACE> m_races{};
     Map<uint32_t, LVLN> m_leveledNpcs{};
     Map<uint32_t, CONT> m_containers{};
+    Map<uint32_t, LVLI> m_leveledItems{};
+    Map<uint32_t, ECZN> m_encounterZones{};
+    Map<uint32_t, LCTN> m_locations{};
+    Map<uint32_t, CELL> m_cells{};
     Map<uint32_t, GMST> m_gameSettings{};
     Map<uint32_t, WRLD> m_worlds{};
     Map<uint32_t, NAVM> m_navMeshes{};
