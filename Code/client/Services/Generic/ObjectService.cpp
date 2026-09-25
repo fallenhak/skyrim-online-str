@@ -43,6 +43,7 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Trans
 {
     m_disconnectedConnection = aDispatcher.sink<DisconnectedEvent>().connect<&ObjectService::OnDisconnected>(this);
     m_cellChangeConnection = aDispatcher.sink<CellChangeEvent>().connect<&ObjectService::OnCellChange>(this);
+    m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&ObjectService::OnUpdate>(this);
     m_onActivateConnection = aDispatcher.sink<ActivateEvent>().connect<&ObjectService::OnActivate>(this);
     m_activateConnection = aDispatcher.sink<NotifyActivate>().connect<&ObjectService::OnActivateNotify>(this);
     m_lockChangeConnection = aDispatcher.sink<LockChangeEvent>().connect<&ObjectService::OnLockChange>(this);
@@ -236,10 +237,26 @@ bool IsSyncedActivator(const TESObjectREFR* apObject) noexcept
 
 void ObjectService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
+    m_assignObjectsPending = false;
     // TODO(cosideci): clear object components
 }
 
-void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
+void ObjectService::OnCellChange(const CellChangeEvent&) noexcept
+{
+    if (m_transport.IsConnected())
+        m_assignObjectsPending = true;
+}
+
+void ObjectService::OnUpdate(const UpdateEvent&) noexcept
+{
+    if (!m_assignObjectsPending)
+        return;
+
+    m_assignObjectsPending = false;
+    SendAssignObjectsRequest();
+}
+
+void ObjectService::SendAssignObjectsRequest() noexcept
 {
     if (!m_transport.IsConnected())
         return;
@@ -329,6 +346,7 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
         request.Objects.push_back(objectData);
     }
 
+    spdlog::info("[World] assign objects requested for cell {:X}: {} object(s)", pCell->formID, request.Objects.size());
     m_transport.Send(request);
 }
 
@@ -441,10 +459,21 @@ entt::entity ObjectService::CreateObjectEntity(const uint32_t acFormId, const ui
 {
     const auto view = m_world.view<FormIdComponent, ObjectComponent>();
 
-    auto it = std::find_if(view.begin(), view.end(), [acServerId, view](entt::entity entity) { return view.get<ObjectComponent>(entity).Id == acServerId; });
+    // One entity per form: the server prunes unobserved objects and hands out a new id when the
+    // object is discovered again, so an older entity for this form must be re-pointed, not duplicated.
+    // Otherwise lookups by form id (containers, activation) keep resolving to the dead server id.
+    auto it = std::find_if(view.begin(), view.end(), [acFormId, view](entt::entity entity) { return view.get<FormIdComponent>(entity).Id == acFormId; });
 
     if (it != view.end())
+    {
+        auto& objectComponent = view.get<ObjectComponent>(*it);
+        if (objectComponent.Id != acServerId)
+        {
+            spdlog::info("Object entity for form {:X} re-pointed from server id {:X} to {:X}", acFormId, objectComponent.Id, acServerId);
+            objectComponent.Id = acServerId;
+        }
         return *it;
+    }
 
     entt::entity entity = m_world.create();
     spdlog::info("Created object entity, server id: {:X}, form id {:X}", acServerId, acFormId);

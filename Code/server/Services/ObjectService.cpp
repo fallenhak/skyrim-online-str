@@ -282,6 +282,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
     const auto& senderCell = acMessage.pPlayer->GetCellComponent();
 
     AssignObjectsResponse response;
+    std::size_t outOfRange = 0;
 
     for (const ObjectData& object : acMessage.Packet.Objects)
     {
@@ -304,7 +305,10 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             if (!ObjectInteractionPolicy::CanInteract(
                     object.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
                     objectCell.Cell, objectCell.WorldSpaceId, objectCell.CenterCoords))
+            {
+                ++outOfRange;
                 continue;
+            }
 
             entity = *iter;
         }
@@ -317,7 +321,10 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             if (!ObjectInteractionPolicy::CanDiscover(
                     object.Id, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
                     cellId, worldSpaceId, centerCoords))
+            {
+                ++outOfRange;
                 continue;
+            }
 
             entity = m_world.create();
 
@@ -379,6 +386,12 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
 
         response.Objects.push_back(objectData);
     }
+
+    // Every skip here is silent to the client, so a stale sender cell once looked like "nothing syncs".
+    if (outOfRange > 0)
+        spdlog::info("[World] assign objects from player {:X}: {} of {} object(s) out of range (sender cell {:X}:{:X}, first object cell {:X}:{:X})",
+            acMessage.pPlayer->GetId(), outOfRange, acMessage.Packet.Objects.size(), senderCell.Cell.ModId, senderCell.Cell.BaseId,
+            acMessage.Packet.Objects.empty() ? 0u : acMessage.Packet.Objects[0].CellId.ModId, acMessage.Packet.Objects.empty() ? 0u : acMessage.Packet.Objects[0].CellId.BaseId);
 
     if (!response.Objects.empty())
         acMessage.pPlayer->Send(response);

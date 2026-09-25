@@ -577,6 +577,16 @@ void CharacterService::OnCharacterRemoveEvent(const CharacterRemoveEvent& acEven
         return;
 
     const auto entity = *it;
+    // A player left bound to a destroyed character would keep serializing it (actor id reused, epoch 0).
+    for (Player* pPlayer : m_world.GetPlayerManager())
+    {
+        if (IsDisconnectingPlayersCharacter(pPlayer->GetCharacter(), entity))
+        {
+            spdlog::info("Character {:X} removed; unbinding it from player {:X}", acEvent.ServerId, pPlayer->GetId());
+            pPlayer->ClearCharacter();
+        }
+    }
+
     NotifyAndDestroyCharacter(
         acEvent.ServerId, m_world.GetPlayerManager(), [entity] { GameServer::Get()->GetWorld().GetScriptService().HandleCharacterDestoy(entity); },
         // Registry destruction removes the lifecycle component with the canonical

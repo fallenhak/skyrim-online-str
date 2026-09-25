@@ -3,6 +3,7 @@
 #include <Messages/NotifyRemoveCharacter.h>
 
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 /**
@@ -24,4 +25,17 @@ void NotifyAndDestroyCharacter(const std::uint32_t aServerId, TPlayers&& aPlayer
         pPlayer->Send(response);
 
     std::forward<TDestroy>(aDestroy)();
+}
+
+/**
+ * Disconnect cleanup removes the leaving player's own character. A player that never got one
+ * (launcher probe, character select) owns none: "no character" must not decay to entity 0, which
+ * is a real entity, the first one created after a restart. It used to (value_or(0)) and deleted
+ * whoever joined first while leaving that player bound to the destroyed entity; their later cell
+ * changes then serialized it as actor 0 with ownership epoch 0 and every other client ignored them.
+ */
+template <class TEntity>
+[[nodiscard]] constexpr bool IsDisconnectingPlayersCharacter(const std::optional<TEntity>& acCharacter, const TEntity aEntity) noexcept
+{
+    return acCharacter.has_value() && *acCharacter == aEntity;
 }

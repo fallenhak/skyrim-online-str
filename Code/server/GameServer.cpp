@@ -7,6 +7,7 @@
 #include <Events/OwnershipTransferEvent.h>
 #include <Events/PacketEvent.h>
 #include <Events/PlayerJoinEvent.h>
+#include <Services/CharacterRemoval.h>
 #include <Services/AuthTokenVerifier.h>
 #include <Events/PlayerLeaveCellEvent.h>
 #include <Events/PlayerLeaveEvent.h>
@@ -927,13 +928,13 @@ void GameServer::OnDisconnection(const ConnectionId_t aConnectionId, EDisconnect
 
         m_pWorld->GetDispatcher().trigger(PlayerLeaveEvent(pPlayer));
 
-        entt::entity playerCharacter = pPlayer->GetCharacter().value_or(static_cast<entt::entity>(0));
+        const std::optional<entt::entity> playerCharacter = pPlayer->GetCharacter();
 
         // Cleanup all entities that we own
         auto ownerView = m_pWorld->view<OwnerComponent>();
         for (auto entity : ownerView)
         {
-            if (entity == playerCharacter)
+            if (IsDisconnectingPlayersCharacter(playerCharacter, entity))
             {
                 m_pWorld->GetDispatcher().enqueue(CharacterRemoveEvent(World::ToInteger(entity)));
                 continue;
