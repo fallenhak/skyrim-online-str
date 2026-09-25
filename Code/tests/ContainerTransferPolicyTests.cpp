@@ -207,3 +207,17 @@ TEST_CASE("Takes from an orphaned corpse and rejections after expiry or into a c
     REQUIRE(ContainerTransferPolicy::CountOf(corpse, Item(1)) == 1);
     REQUIRE(ContainerTransferPolicy::CountOf(player, Item(1)) == 2);
 }
+
+TEST_CASE("The owner's broadcast seeds a retained corpse until the first take", "[container_transfer][corpse]")
+{
+    // player, dead, marker, removal queued, seed closed
+    // Death items (pelts, DeathItem lists) reach the server after the corpse is marked: still accepted.
+    REQUIRE_FALSE(ContainerTransferPolicy::IgnoresOwnerInventoryBroadcast(false, true, true, false, false));
+    // After someone took from it the server copy is authoritative.
+    REQUIRE(ContainerTransferPolicy::IgnoresOwnerInventoryBroadcast(false, true, true, false, true));
+
+    // Not a server-owned corpse: the broadcast is handled as before.
+    REQUIRE_FALSE(ContainerTransferPolicy::IgnoresOwnerInventoryBroadcast(false, true, false, false, true)); // humanoid corpse
+    REQUIRE_FALSE(ContainerTransferPolicy::IgnoresOwnerInventoryBroadcast(false, true, true, true, true));   // being removed
+    REQUIRE_FALSE(ContainerTransferPolicy::IgnoresOwnerInventoryBroadcast(true, true, true, false, true));   // player
+}

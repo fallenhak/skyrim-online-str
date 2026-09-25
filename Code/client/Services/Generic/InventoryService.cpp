@@ -10,6 +10,7 @@
 #include <Messages/DrawWeaponRequest.h>
 #include <Messages/NotifyDrawWeapon.h>
 #include <Messages/RequestContainerTransfer.h>
+#include <Services/ContainerTransfers.h>
 #include <Messages/NotifyContainerTransferResult.h>
 
 #include <Events/UpdateEvent.h>
@@ -64,7 +65,7 @@ void InventoryService::OnContainerTransferEvent(const ContainerTransferEvent& ac
 
     spdlog::info(
         "Container transfer {} ({}): item {:X} x{}, {} {:X} held {}", request.RequestId, acEvent.Direction == 0 ? "take" : "put",
-        acEvent.Item.BaseId.BaseId, acEvent.Item.Count, acEvent.TargetKind == 1 ? "corpse" : "container", acEvent.ContainerFormId, acEvent.ExpectedContainerCount);
+        acEvent.Item.BaseId.BaseId, acEvent.Item.Count, acEvent.TargetKind == static_cast<uint8_t>(ContainerTransfers::TargetKind::kCorpse) ? "corpse" : "container", acEvent.ContainerFormId, acEvent.ExpectedContainerCount);
 }
 
 void InventoryService::OnNotifyContainerTransferResult(const NotifyContainerTransferResult& acMessage) noexcept

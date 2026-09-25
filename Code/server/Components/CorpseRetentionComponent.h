@@ -15,4 +15,7 @@ struct CorpseRetentionComponent final
 
     std::uint64_t ExpiresAtTick{};
     bool RemovalQueued{};
+    // Set by the first accepted take. Until then the owner's inventory broadcasts still seed the
+    // server copy, so items the engine adds at death (pelts, DeathItem lists) are not lost.
+    bool OwnerSeedClosed{};
 };

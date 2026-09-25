@@ -52,11 +52,12 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     const auto* pOwnerComponent = m_world.try_get<OwnerComponent>(*it);
     const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(*it);
 
-    // A retained corpse's inventory changes only through RequestContainerTransfer; the owner's
-    // broadcast would race the server copy.
+    // Once looting started, a retained corpse's inventory changes only through RequestContainerTransfer;
+    // the owner's broadcast would race the server copy.
     if (const auto* pCorpseMarker = pCharacterComponent ? m_world.try_get<CorpseRetentionComponent>(*it) : nullptr;
-        pCorpseMarker && ContainerTransferPolicy::IsServerOwnedCorpse(
-                             pCharacterComponent->IsPlayer(), pCharacterComponent->IsDead(), true, pCorpseMarker->RemovalQueued))
+        pCorpseMarker && ContainerTransferPolicy::IgnoresOwnerInventoryBroadcast(
+                             pCharacterComponent->IsPlayer(), pCharacterComponent->IsDead(), true, pCorpseMarker->RemovalQueued,
+                             pCorpseMarker->OwnerSeedClosed))
     {
         spdlog::debug("Ignored inventory change from player {:X} for retained corpse {:X}", acMessage.pPlayer->GetId(), message.ServerId);
         return;
@@ -214,7 +215,7 @@ void InventoryService::OnContainerTransfer(const PacketEvent<RequestContainerTra
     const bool isContainerValid = (target == ContainerTransferTarget::kObject || isCorpseTarget) && m_world.valid(containerEntity);
     auto* pObjectComponent = isContainerValid && !isCorpseTarget ? m_world.try_get<ObjectComponent>(containerEntity) : nullptr;
     const auto* pCorpseCharacter = isContainerValid && isCorpseTarget ? m_world.try_get<CharacterComponent>(containerEntity) : nullptr;
-    const auto* pCorpseMarker = pCorpseCharacter ? m_world.try_get<CorpseRetentionComponent>(containerEntity) : nullptr;
+    auto* pCorpseMarker = pCorpseCharacter ? m_world.try_get<CorpseRetentionComponent>(containerEntity) : nullptr;
     const bool hasContainer = pObjectComponent || pCorpseCharacter;
     auto* pContainerInventory = hasContainer ? m_world.try_get<InventoryComponent>(containerEntity) : nullptr;
     const auto* pContainerCell = hasContainer ? m_world.try_get<CellIdComponent>(containerEntity) : nullptr;
@@ -266,6 +267,9 @@ void InventoryService::OnContainerTransfer(const PacketEvent<RequestContainerTra
     // A replayed id is answered again but must not be relayed twice.
     if (!applied || !hasInventories)
         return;
+
+    if (pCorpseMarker)
+        pCorpseMarker->OwnerSeedClosed = true;
 
     const bool isTake = static_cast<ContainerTransferDirection>(message.Direction) == ContainerTransferDirection::kTake;
 

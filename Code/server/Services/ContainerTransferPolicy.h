@@ -70,6 +70,15 @@ struct ContainerTransferPolicy final
         return !aIsPlayer && aIsDead && aHasCorpseMarker && !aRemovalQueued;
     }
 
+    // The owner's broadcast is ignored only once someone has taken from the corpse. Before that it
+    // still seeds the server copy: the engine adds death items on the owner's client right after the
+    // kill, and that broadcast can arrive after the corpse is marked.
+    [[nodiscard]] static constexpr bool IgnoresOwnerInventoryBroadcast(
+        const bool aIsPlayer, const bool aIsDead, const bool aHasCorpseMarker, const bool aRemovalQueued, const bool aOwnerSeedClosed) noexcept
+    {
+        return IsServerOwnedCorpse(aIsPlayer, aIsDead, aHasCorpseMarker, aRemovalQueued) && aOwnerSeedClosed;
+    }
+
     // Any dead NPC can be looted through the server: the client cannot tell a retained creature
     // corpse from a humanoid one, and rejecting the latter would undo loot that works today.
     // Corpses only give items: nothing needs putting into one, and take-only keeps the dupe surface small.
