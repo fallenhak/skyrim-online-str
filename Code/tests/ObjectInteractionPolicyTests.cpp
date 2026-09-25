@@ -171,6 +171,80 @@ TEST_CASE("A harvestable object is harvested once and relayed once", "[object_au
     REQUIRE(relayCount == 1);
 }
 
+TEST_CASE("Object state notifications include peers in nearby cells of the same world", "[object_authority]")
+{
+    const GameId peerCell{0, 1};
+    const GameId objectCell{0, 2};
+    const GameId worldSpace{0, 0x3C};
+    const GameId otherWorldSpace{0, 0x3D};
+
+    REQUIRE(ObjectInteractionPolicy::IsInSenderRange(
+        peerCell, worldSpace, GridCellCoords{10, -10}, objectCell, worldSpace, GridCellCoords{12, -8}));
+    REQUIRE_FALSE(ObjectInteractionPolicy::IsInSenderRange(
+        peerCell, otherWorldSpace, GridCellCoords{10, -10}, objectCell, worldSpace, GridCellCoords{12, -8}));
+}
+
+TEST_CASE("World loot is taken once by a nearby owner and relayed once", "[object_authority][world_loot]")
+{
+    const GameId senderCell{0, 1};
+    const GameId objectCell{0, 2};
+    const GameId worldSpace{0, 0x3C};
+    const GridCellCoords coords{10, -10};
+
+    bool taken = false;
+    std::size_t relayCount = 0;
+    const auto relay = [&] { ++relayCount; };
+
+    REQUIRE(ObjectInteractionPolicy::TryTakeWorldItem(
+        true, taken, true, true, objectCell, senderCell, worldSpace, coords,
+        objectCell, worldSpace, coords, objectCell, worldSpace, coords, relay));
+    REQUIRE(taken);
+    REQUIRE(relayCount == 1);
+
+    REQUIRE_FALSE(ObjectInteractionPolicy::TryTakeWorldItem(
+        true, taken, true, true, objectCell, senderCell, worldSpace, coords,
+        objectCell, worldSpace, coords, objectCell, worldSpace, coords, relay));
+    REQUIRE(taken);
+    REQUIRE(relayCount == 1);
+}
+
+TEST_CASE("World loot rejects containers, foreign actors, forged cells and distant pickups", "[object_authority][world_loot]")
+{
+    const GameId senderCell{0, 1};
+    const GameId objectCell{0, 2};
+    const GameId worldSpace{0, 0x3C};
+    const GridCellCoords coords{10, -10};
+    const GridCellCoords farCoords{20, -10};
+
+    const auto assertRejected = [&](const bool openLoot, const bool actorExists, const bool owned,
+                                    const GameId& requestedCell, const GridCellCoords& activatorCoords)
+    {
+        bool taken = false;
+        std::size_t relayCount = 0;
+        REQUIRE_FALSE(ObjectInteractionPolicy::TryTakeWorldItem(
+            openLoot, taken, actorExists, owned, requestedCell, senderCell, worldSpace, coords,
+            objectCell, worldSpace, activatorCoords, objectCell, worldSpace, coords,
+            [&] { ++relayCount; }));
+        REQUIRE_FALSE(taken);
+        REQUIRE(relayCount == 0);
+    };
+
+    assertRejected(false, true, true, objectCell, coords);  // containers and corpses never enter the open-loot path
+    assertRejected(true, false, true, objectCell, coords);
+    assertRejected(true, true, false, objectCell, coords);
+    assertRejected(true, true, true, GameId{0, 9}, coords);
+    assertRejected(true, true, true, objectCell, farCoords);
+}
+
+TEST_CASE("Harvest and taken world state survive cell cleanup for the required lifetime", "[object_authority][harvest][world_loot]")
+{
+    REQUIRE(ObjectInteractionPolicy::ShouldRetainWorldState(true, false, 0, 100)); // taken loot has no server respawn
+    REQUIRE(ObjectInteractionPolicy::ShouldRetainWorldState(false, true, 200, 100));
+    REQUIRE_FALSE(ObjectInteractionPolicy::ShouldRetainWorldState(false, false, 200, 100));
+    REQUIRE_FALSE(ObjectInteractionPolicy::ShouldRetainWorldState(false, true, 200, 200));
+    REQUIRE_FALSE(ObjectInteractionPolicy::ShouldRetainWorldState(false, true, 200, 201));
+}
+
 TEST_CASE("Harvest rejects non-harvestable, foreign or out-of-range activations", "[object_authority][harvest]")
 {
     const GameId senderCell{0, 1};

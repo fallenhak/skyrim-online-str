@@ -27,6 +27,9 @@ struct ObjectComponent
     bool IsHarvested{};
     bool IsHarvestItem{};
     std::uint64_t HarvestRespawnAtTick{};
+    // Stable, client-discovered world item; the server owns its taken state.
+    bool IsOpenLoot{};
+    bool IsLootTaken{};
     // Set by the discovering client; receivers re-check the local base form type.
     bool IsDoor{};
     DoorState Door{};

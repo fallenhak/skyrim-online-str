@@ -16,6 +16,7 @@ struct ScriptAnimationEvent;
 struct AssignObjectsResponse;
 struct NotifyScriptAnimation;
 struct NotifyObjectHarvested;
+struct NotifyWorldItemTaken;
 
 /**
  * @brief Handles objects in the environment.
@@ -36,6 +37,7 @@ private:
     void OnScriptAnimationEvent(const ScriptAnimationEvent&) noexcept;
     void OnNotifyScriptAnimation(const NotifyScriptAnimation&) noexcept;
     void OnObjectHarvestedNotify(const NotifyObjectHarvested&) noexcept;
+    void OnWorldItemTakenNotify(const NotifyWorldItemTaken&) noexcept;
 
     BSTEventResult OnEvent(const TESActivateEvent*, const EventDispatcher<TESActivateEvent>*) override;
 
@@ -54,4 +56,5 @@ private:
     entt::scoped_connection m_scriptAnimationConnection;
     entt::scoped_connection m_scriptAnimationNotifyConnection;
     entt::scoped_connection m_objectHarvestedConnection;
+    entt::scoped_connection m_worldItemTakenConnection;
 };

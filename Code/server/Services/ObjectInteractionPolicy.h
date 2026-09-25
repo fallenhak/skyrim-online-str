@@ -141,6 +141,48 @@ struct ObjectInteractionPolicy final
         return true;
     }
 
+    template <typename TOnTake>
+    [[nodiscard]] static bool TryTakeWorldItem(
+        const bool aIsOpenLoot,
+        bool& aIsTaken,
+        const bool aActorExists,
+        const bool aOwnedBySender,
+        const GameId& aRequestedCell,
+        const GameId& aSenderCell,
+        const GameId& aSenderWorldSpace,
+        const GridCellCoords& aSenderCoords,
+        const GameId& aActivatorCell,
+        const GameId& aActivatorWorldSpace,
+        const GridCellCoords& aActivatorCoords,
+        const GameId& aObjectCell,
+        const GameId& aObjectWorldSpace,
+        const GridCellCoords& aObjectCoords,
+        TOnTake&& aOnTake)
+    {
+        if (!aIsOpenLoot || aIsTaken)
+            return false;
+
+        if (!CanActivate(
+                true, aActorExists, aOwnedBySender,
+                aRequestedCell, aSenderCell, aSenderWorldSpace, aSenderCoords,
+                aActivatorCell, aActivatorWorldSpace, aActivatorCoords,
+                aObjectCell, aObjectWorldSpace, aObjectCoords))
+            return false;
+
+        aIsTaken = true;
+        std::forward<TOnTake>(aOnTake)();
+        return true;
+    }
+
+    [[nodiscard]] static constexpr bool ShouldRetainWorldState(
+        const bool aIsLootTaken,
+        const bool aIsHarvested,
+        const std::uint64_t aRespawnAtTick,
+        const std::uint64_t aNowTick) noexcept
+    {
+        return aIsLootTaken || (aIsHarvested && aNowTick < aRespawnAtTick);
+    }
+
     // Ticks are whole seconds of server uptime (same unit as RenewableEncounterService).
     static constexpr std::uint64_t kFloraRespawnTicks = 30 * 60;
     static constexpr std::uint64_t kItemRespawnTicks = 60 * 60;

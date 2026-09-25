@@ -1,5 +1,6 @@
 #include <Services/ObjectService.h>
 #include <Services/LocalOnlyActivators.h>
+#include <Services/ObjectSyncPolicy.h>
 
 #include <World.h>
 #include <Utils.h>
@@ -19,6 +20,8 @@
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
 #include <Messages/NotifyObjectHarvested.h>
+#include <Messages/TakeWorldItemRequest.h>
+#include <Messages/NotifyWorldItemTaken.h>
 
 #include <PlayerCharacter.h>
 #include <Forms/TESObjectCELL.h>
@@ -43,6 +46,7 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Trans
     m_scriptAnimationConnection = aDispatcher.sink<ScriptAnimationEvent>().connect<&ObjectService::OnScriptAnimationEvent>(this);
     m_scriptAnimationNotifyConnection = aDispatcher.sink<NotifyScriptAnimation>().connect<&ObjectService::OnNotifyScriptAnimation>(this);
     m_objectHarvestedConnection = aDispatcher.sink<NotifyObjectHarvested>().connect<&ObjectService::OnObjectHarvestedNotify>(this);
+    m_worldItemTakenConnection = aDispatcher.sink<NotifyWorldItemTaken>().connect<&ObjectService::OnWorldItemTakenNotify>(this);
 
     EventDispatcherManager::Get()->activateEvent.RegisterSink(this);
 }
@@ -138,7 +142,7 @@ void ApplyHarvested(TESObjectREFR* apObject) noexcept
     s_harvestDisabledRefs.insert(apObject->formID);
 }
 
-// The server lost or reset the harvest state (cell emptied, respawn).
+// The server reports that the harvest timer has expired.
 void RestoreHarvested(TESObjectREFR* apObject) noexcept
 {
     if (!apObject || !s_harvestDisabledRefs.erase(apObject->formID))
@@ -146,6 +150,15 @@ void RestoreHarvested(TESObjectREFR* apObject) noexcept
 
     spdlog::info("Object {:X} no longer harvested, enabling", apObject->formID);
     apObject->Enable();
+}
+
+void ApplyWorldItemTaken(TESObjectREFR* apObject) noexcept
+{
+    if (!ObjectSyncPolicy::IsOpenLootObject(apObject) || apObject->IsDisabled())
+        return;
+
+    spdlog::info("World item {:X} taken remotely, disabling", apObject->formID);
+    apObject->Disable();
 }
 
 // Load doors teleport the activator, so they are never toggled remotely.
@@ -202,7 +215,9 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
         }
     }
 
-    Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient, FormType::Activator};
+    Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient, FormType::Activator,
+                                  FormType::Armor, FormType::Misc, FormType::Weapon, FormType::Ammo, FormType::Key,
+                                  FormType::Alchemy, FormType::Scroll, FormType::SoulGem, FormType::Light, FormType::Apparatus};
     // Door seemed to be at the wrong form id (29, now 32), verify this.
     Vector<TESObjectREFR*> objects = pCell->GetRefsByFormTypes(formTypes);
 
@@ -214,6 +229,10 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
     {
         const bool cIsHarvestType = pObject->baseForm->formType == FormType::Flora || pObject->baseForm->formType == FormType::Ingredient;
         if (cIsHarvestType && !IsHarvestableObject(pObject))
+            continue;
+
+        const bool cIsOpenLoot = ObjectSyncPolicy::IsOpenLootObject(pObject);
+        if (ObjectSyncPolicy::IsOpenLootFormType(pObject->baseForm->formType) && !cIsOpenLoot)
             continue;
 
         if (pObject->baseForm->formType == FormType::Activator && !IsSyncedActivator(pObject))
@@ -247,6 +266,7 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
 
         objectData.IsHarvestable = cIsHarvestType;
         objectData.IsHarvestItem = pObject->baseForm->formType == FormType::Ingredient;
+        objectData.IsOpenLoot = cIsOpenLoot;
         objectData.IsDoor = IsSyncedDoor(pObject);
         objectData.IsActivator = IsSyncedActivator(pObject);
 
@@ -275,6 +295,9 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
             ApplyHarvested(pObject);
         else if (objectData.IsHarvestable)
             RestoreHarvested(pObject);
+
+        if (objectData.IsOpenLoot && objectData.IsLootTaken)
+            ApplyWorldItemTaken(pObject);
 
         // Late join / re-entry: match the door to the server's open state.
         if (objectData.IsDoor && objectData.IsDoorStateKnown && IsSyncedDoor(pObject))
@@ -446,6 +469,19 @@ void ObjectService::OnObjectHarvestedNotify(const NotifyObjectHarvested& acMessa
         ApplyHarvested(pObject);
     else
         RestoreHarvested(pObject);
+}
+
+void ObjectService::OnWorldItemTakenNotify(const NotifyWorldItemTaken& acMessage) noexcept
+{
+    const uint32_t cObjectId = World::Get().GetModSystem().GetGameId(acMessage.Id);
+    TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(cObjectId));
+    if (!pObject)
+    {
+        spdlog::error("{}: world item not found for form id {:X}", __FUNCTION__, cObjectId);
+        return;
+    }
+
+    ApplyWorldItemTaken(pObject);
 }
 
 void ObjectService::OnLockChange(const LockChangeEvent& acEvent) noexcept

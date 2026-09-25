@@ -5,6 +5,7 @@
 #include <Structs/Skyrim/AnimationGraphDescriptor_VampireLordBehavior.h>
 
 #include <Games/Overrides.h>
+#include <Services/ObjectSyncPolicy.h>
 
 #include <Events/InventoryChangeEvent.h>
 #include <Events/BeastFormChangeEvent.h>
@@ -13,6 +14,7 @@
 #include <Events/RemoveWaypointEvent.h>
 
 #include <World.h>
+#include <Messages/TakeWorldItemRequest.h>
 
 #include <Games/Skyrim/Forms/ActorValueInfo.h>
 #include <Games/Skyrim/ProgressionSkillMapping.h>
@@ -167,6 +169,19 @@ char TP_MAKE_THISCALL(HookPickUpObject, PlayerCharacter, TESObjectREFR* apObject
 {
     auto& modSystem = World::Get().GetModSystem();
 
+    TakeWorldItemRequest worldItemRequest{};
+    bool hasWorldItemRequest = false;
+    const auto ownershipToken = Utils::GetLocalOwnershipToken(apThis->formID);
+    if (ownershipToken && ObjectSyncPolicy::IsOpenLootObject(apObject))
+    {
+        TESObjectCELL* pCell = apObject->GetParentCellEx();
+        hasWorldItemRequest = pCell &&
+            modSystem.GetServerModId(apObject->formID, worldItemRequest.Id) &&
+            modSystem.GetServerModId(pCell->formID, worldItemRequest.CellId);
+        if (hasWorldItemRequest)
+            worldItemRequest.ActivatorId = ownershipToken->ServerId;
+    }
+
     Inventory::Entry item{};
     modSystem.GetServerModId(apObject->baseForm->formID, item.BaseId);
     item.Count = aCount;
@@ -182,7 +197,7 @@ char TP_MAKE_THISCALL(HookPickUpObject, PlayerCharacter, TESObjectREFR* apObject
     bool shouldUpdateClients = apObject->IsTemporary() && !ScopedActivateOverride::IsOverriden();
 
     // The player still needs its server entity and ownership epoch so stale inventory events can be rejected.
-    if (const auto ownershipToken = Utils::GetLocalOwnershipToken(apThis->formID))
+    if (ownershipToken)
     {
         InventoryChangeEvent event(apThis->formID, std::move(item), false, shouldUpdateClients);
         event.ServerId = ownershipToken->ServerId;
@@ -192,7 +207,14 @@ char TP_MAKE_THISCALL(HookPickUpObject, PlayerCharacter, TESObjectREFR* apObject
 
     ScopedInventoryOverride _;
 
-    return TiltedPhoques::ThisCall(RealPickUpObject, apThis, apObject, aCount, aUnk1, aUnk2);
+    const char result = TiltedPhoques::ThisCall(RealPickUpObject, apThis, apObject, aCount, aUnk1, aUnk2);
+    if (result && hasWorldItemRequest && World::Get().GetTransport().IsConnected())
+    {
+        World::Get().GetTransport().Send(worldItemRequest);
+        spdlog::info("Sending world item pickup request for {:X}:{:X}", worldItemRequest.Id.ModId, worldItemRequest.Id.BaseId);
+    }
+
+    return result;
 }
 
 void TP_MAKE_THISCALL(HookSetBeastForm, void, void* apUnk1, void* apUnk2, bool aEntering)

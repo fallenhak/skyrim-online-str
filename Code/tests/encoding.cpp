@@ -117,6 +117,31 @@ TEST_CASE("AssignObjectsResponse carries harvest state", "[encoding.object_autho
     REQUIRE(received->Objects.front() == object);
 }
 
+TEST_CASE("AssignObjectsResponse carries open loot state", "[encoding.object_authority][world_loot]")
+{
+    AssignObjectsResponse sent;
+    ObjectData object{};
+    object.ServerId = 11;
+    object.Id = GameId{1, 0x350};
+    object.IsStateUntrusted = true;
+    object.IsOpenLoot = true;
+    object.IsLootTaken = true;
+    sent.Objects.push_back(object);
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<AssignObjectsResponse>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(received->Objects.size() == 1);
+    REQUIRE(received->Objects.front().IsOpenLoot);
+    REQUIRE(received->Objects.front().IsLootTaken);
+    REQUIRE(received->Objects.front() == object);
+}
+
 TEST_CASE("AssignObjectsResponse carries door state", "[encoding.object_authority][door]")
 {
     AssignObjectsResponse sent;
@@ -153,6 +178,40 @@ TEST_CASE("NotifyObjectHarvested round-trips", "[encoding.object_authority][harv
     Buffer::Reader reader(&buffer);
     const ServerMessageFactory factory;
     auto received = CastUnique<NotifyObjectHarvested>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(*received == sent);
+}
+
+TEST_CASE("TakeWorldItemRequest round-trips", "[encoding.object_authority][world_loot]")
+{
+    TakeWorldItemRequest sent;
+    sent.Id = GameId{2, 0x456};
+    sent.CellId = GameId{0, 0x1234};
+    sent.ActivatorId = 0xABC;
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ClientMessageFactory factory;
+    auto received = CastUnique<TakeWorldItemRequest>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(*received == sent);
+}
+
+TEST_CASE("NotifyWorldItemTaken round-trips", "[encoding.object_authority][world_loot]")
+{
+    NotifyWorldItemTaken sent;
+    sent.Id = GameId{2, 0x456};
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<NotifyWorldItemTaken>(factory.Extract(reader));
     REQUIRE(received);
     REQUIRE(*received == sent);
 }
