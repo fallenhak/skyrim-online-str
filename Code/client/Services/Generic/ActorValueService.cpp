@@ -298,12 +298,42 @@ void ActorValueService::RunDeathStateUpdates() noexcept
         {
             localComponent.IsDead = isDead;
 
+            if (isDead)
+            {
+                localComponent.PendingCorpsePositionSync = true;
+                localComponent.CorpsePositionSyncDeadline = now + 2000ms;
+                spdlog::info(
+                    "[CorpseSync] queued settled position sync actor {:X} form {:X} in 2000ms at ({:.0f}, {:.0f}, {:.0f})",
+                    localComponent.Id, pActor->formID, pActor->position.x, pActor->position.y, pActor->position.z);
+            }
+            else
+            {
+                localComponent.PendingCorpsePositionSync = false;
+            }
+
             RequestDeathStateChange requestChange;
             requestChange.Id = localComponent.Id;
             requestChange.OwnershipEpoch = localComponent.OwnershipEpoch;
             requestChange.IsDead = isDead;
 
             m_transport.Send(requestChange);
+        }
+
+        if (localComponent.IsDead && localComponent.PendingCorpsePositionSync && now >= localComponent.CorpsePositionSyncDeadline)
+        {
+            RequestDeathStateChange requestChange;
+            requestChange.Id = localComponent.Id;
+            requestChange.OwnershipEpoch = localComponent.OwnershipEpoch;
+            requestChange.IsDead = true;
+            requestChange.IsSettledPosition = true;
+
+            if (m_transport.Send(requestChange))
+            {
+                localComponent.PendingCorpsePositionSync = false;
+                spdlog::info(
+                    "[CorpseSync] sent settled position actor {:X} form {:X} at ({:.0f}, {:.0f}, {:.0f})",
+                    localComponent.Id, pActor->formID, pActor->position.x, pActor->position.y, pActor->position.z);
+            }
         }
     }
 }
@@ -483,4 +513,28 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
 
     if (pActor->IsDead() != acMessage.IsDead)
         acMessage.IsDead ? pActor->Kill() : pActor->Respawn();
+
+    if (acMessage.IsSettledPosition && acMessage.IsDead)
+    {
+        NiPoint3 settledPosition;
+        settledPosition.x = acMessage.Position.x;
+        settledPosition.y = acMessage.Position.y;
+        settledPosition.z = acMessage.Position.z;
+        pActor->ForcePosition(settledPosition);
+        if (auto* const pInterpolation = m_world.try_get<InterpolationComponent>(*it))
+        {
+            pInterpolation->Position = acMessage.Position;
+            pInterpolation->TimePoints.clear();
+
+            InterpolationComponent::TimePoint point;
+            point.Tick = m_transport.GetClock().GetCurrentTick() - 300;
+            point.Position = acMessage.Position;
+            point.Rotation = {pActor->rotation.x, 0.f, pActor->rotation.z};
+            pInterpolation->TimePoints.push_back(point);
+        }
+
+        spdlog::info(
+            "[CorpseSync] applied settled position actor {:X} form {:X} at ({:.0f}, {:.0f}, {:.0f})",
+            acMessage.Id, pActor->formID, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
+    }
 }

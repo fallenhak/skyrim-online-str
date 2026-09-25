@@ -15,6 +15,8 @@
 
 #include <Messages/ClientMessageFactory.h>
 #include <Messages/ServerMessageFactory.h>
+#include <Messages/NotifyDeathStateChange.h>
+#include <Messages/RequestDeathStateChange.h>
 #include <Structs/Vector2_NetQuantize.h>
 
 #include <TiltedCore/Math.hpp>
@@ -63,6 +65,44 @@ TEST_CASE("Encoding factory", "[encoding.factory]")
         auto pRequest = CastUnique<PartyAcceptInviteRequest>(std::move(pMessage));
         REQUIRE(pRequest->InviterId == request.InviterId);
     }
+}
+
+TEST_CASE("Death state packets carry settled corpse positions", "[encoding.death_state]")
+{
+    RequestDeathStateChange request;
+    request.Id = 42;
+    request.OwnershipEpoch = 3;
+    request.IsDead = true;
+    request.IsSettledPosition = true;
+
+    Buffer clientBuffer(1000);
+    Buffer::Writer clientWriter(&clientBuffer);
+    request.Serialize(clientWriter);
+
+    Buffer::Reader clientReader(&clientBuffer);
+    const ClientMessageFactory clientFactory;
+    auto decodedRequest = CastUnique<RequestDeathStateChange>(clientFactory.Extract(clientReader));
+    REQUIRE(decodedRequest);
+    REQUIRE(*decodedRequest == request);
+
+    NotifyDeathStateChange notification;
+    notification.Id = 42;
+    notification.OwnershipEpoch = 3;
+    notification.IsDead = true;
+    notification.IsSettledPosition = true;
+    notification.Position.x = -1234.f;
+    notification.Position.y = 5678.f;
+    notification.Position.z = 901.f;
+
+    Buffer serverBuffer(1000);
+    Buffer::Writer serverWriter(&serverBuffer);
+    notification.Serialize(serverWriter);
+
+    Buffer::Reader serverReader(&serverBuffer);
+    const ServerMessageFactory serverFactory;
+    auto decodedNotification = CastUnique<NotifyDeathStateChange>(serverFactory.Extract(serverReader));
+    REQUIRE(decodedNotification);
+    REQUIRE(*decodedNotification == notification);
 }
 
 TEST_CASE("AssignObjectsResponse preserves provisional object state", "[encoding.object_authority]")
