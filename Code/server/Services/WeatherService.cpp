@@ -15,13 +15,21 @@ WeatherService::WeatherService(World& aWorld, entt::dispatcher& aDispatcher) noe
     m_currentWeatherConnection = aDispatcher.sink<PacketEvent<RequestCurrentWeather>>().connect<&WeatherService::OnRequestCurrentWeather>(this);
 }
 
-void WeatherService::OnWeatherChange(const PacketEvent<RequestWeatherChange>& acMessage) const noexcept
+void WeatherService::OnWeatherChange(const PacketEvent<RequestWeatherChange>& acMessage) noexcept
 {
     NotifyWeatherChange notify{};
     notify.Id = acMessage.Packet.Id;
 
-    if (!m_world.GetAuthorityService().TrySetWeatherState(acMessage.pPlayer, notify.Id))
+    if (!m_world.GetAuthorityService().IsWorldAuthority(acMessage.pPlayer))
+    {
+        spdlog::debug("[WeatherService] Ignored weather proposal from non-authority player {}", acMessage.pPlayer->GetId());
         return;
+    }
+
+    if (!m_weatherState.SetCurrent(notify.Id))
+        return;
+
+    spdlog::info("[WeatherService] Server weather changed from player {} to mod {:X}, form {:X}", acMessage.pPlayer->GetId(), notify.Id.ModId, notify.Id.BaseId);
 
     GameServer::Get()->SendToPlayers(notify, acMessage.pPlayer);
 }
@@ -29,8 +37,11 @@ void WeatherService::OnWeatherChange(const PacketEvent<RequestWeatherChange>& ac
 void WeatherService::OnRequestCurrentWeather(const PacketEvent<RequestCurrentWeather>& acMessage) const noexcept
 {
     NotifyWeatherChange notify{};
-    if (!m_world.GetAuthorityService().TryGetWeatherState(acMessage.pPlayer, notify.Id))
-        return;
+    const bool hasWeather = m_weatherState.TryGetCurrent(notify.Id);
+    spdlog::info("[WeatherService] Sent canonical weather to player {} (set={}, mod={:X}, form={:X})", acMessage.pPlayer->GetId(), hasWeather,
+        notify.Id.ModId, notify.Id.BaseId);
 
+    // An empty ID tells a newly elected reporter that the server has not received
+    // an initial weather proposal yet.
     acMessage.pPlayer->Send(notify);
 }

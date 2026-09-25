@@ -46,7 +46,20 @@ Actor authority policy now follows these rules:
 - when an owner relinquishes an actor or becomes unavailable, the server's existing `TransferToNextOwner` path selects another eligible in-range player;
 - a later milestone should add explicit orphan/stale-owner recovery and stronger interest-management policy.
 
-Weather authority is still temporarily backed by party state and is the next authority subsystem that must be made independent.
+Weather proposals still come from the elected in-world client because the dedicated server does not run Skyrim's climate engine. On a fresh server session, that reporter seeds the initial weather; after that, the server owns the canonical weather ID, commits accepted proposals, and sends it to clients that join or become the reporter. A newly elected reporter requests the canonical state before reporting local transitions, so its pre-existing local weather cannot replace shared weather during handoff.
+
+## World clock and weather configuration
+
+The server owns the shared game clock. `Gameplay:uTimeScale` controls the in-game seconds per real second (0 to 1000); `Gameplay:uStartHour` and `Gameplay:uStartMinute` set the server's initial time (defaults: 12:00). For example, in `config/STServer.ini`:
+
+```ini
+[Gameplay]
+uTimeScale=20
+uStartHour=8
+uStartMinute=30
+```
+
+The configured start time is applied before clients join and is not replaced by the first client's local clock. `Gameplay:bSyncPlayerCalendar` still controls whether client dates follow the server; the hour and minute remain server-owned.
 
 ## Persistent-world presence boundary
 

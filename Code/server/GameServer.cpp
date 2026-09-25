@@ -88,6 +88,8 @@ Console::Setting bEnablePvp{"Gameplay:bEnablePvp", "Enables pvp", false};
 Console::Setting bSyncPlayerHomes{"Gameplay:bSyncPlayerHomes", "Sync chests and displays in player homes and other NoResetZones", false};
 Console::Setting bEnableDeathSystem{"Gameplay:bEnableDeathSystem", "Enables the custom multiplayer death system", true};
 Console::Setting uTimeScale{"Gameplay:uTimeScale", "How many seconds pass ingame for every real second (0 to 1000). Changing this can make the game unstable", 20u};
+Console::Setting uStartHour{"Gameplay:uStartHour", "Server world starting hour (0 to 23)", 12u};
+Console::Setting uStartMinute{"Gameplay:uStartMinute", "Server world starting minute (0 to 59)", 0u};
 Console::Setting bSyncPlayerCalendar{"Gameplay:bSyncPlayerCalendar", "Syncs up all player calendars to be the same day, month, and year. This uses the date of the player with the furthest ahead date at connection.", false};
 Console::Setting bAutoPartyJoin{"Gameplay:bAutoPartyJoin", "Join parties automatically, as long as there is only one party in the server", true};
 // ModPolicy Stuff
@@ -813,16 +815,33 @@ void GameServer::UpdateInfo()
 
 void GameServer::UpdateTimeScale()
 {
+    auto& calendar = m_pWorld->GetCalendarService();
     auto timescale = uTimeScale.value_as<float>();
 
-    bool timescale_set_successfully = m_pWorld->GetCalendarService().SetTimeScale(timescale);
+    bool timescale_set_successfully = calendar.SetTimeScale(timescale);
 
     if (!timescale_set_successfully)
     {
         spdlog::warn("TimeScale is invalid (should be from 0 to 1000, current value is {}), setting TimeScale to 20 (default)", timescale);
 
         uTimeScale = 20u;
+        calendar.SetTimeScale(20.f);
     }
+
+    auto startHour = uStartHour.value_as<uint32_t>();
+    auto startMinute = uStartMinute.value_as<uint32_t>();
+    if (startHour > 23 || startMinute > 59)
+    {
+        spdlog::warn("Server start time is invalid (hour {}, minute {}); using 12:00", startHour, startMinute);
+        startHour = 12;
+        startMinute = 0;
+        uStartHour = startHour;
+        uStartMinute = startMinute;
+    }
+
+    const auto effectiveTimeScale = calendar.GetTimeScale();
+    if (calendar.SetTime(static_cast<int>(startHour), static_cast<int>(startMinute), effectiveTimeScale))
+        spdlog::info("[CalendarService] Server clock initialized to {:02}:{:02} with timescale {}", startHour, startMinute, effectiveTimeScale);
 }
 
 void GameServer::OnUpdate()

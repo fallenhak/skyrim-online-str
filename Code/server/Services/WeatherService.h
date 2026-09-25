@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Events/PacketEvent.h>
+#include <Services/WeatherState.h>
 
 struct World;
 struct RequestWeatherChange;
@@ -14,11 +15,12 @@ struct WeatherService
     TP_NOCOPYMOVE(WeatherService);
 
 protected:
-    void OnWeatherChange(const PacketEvent<RequestWeatherChange>& acMessage) const noexcept;
+    void OnWeatherChange(const PacketEvent<RequestWeatherChange>& acMessage) noexcept;
     void OnRequestCurrentWeather(const PacketEvent<RequestCurrentWeather>& acMessage) const noexcept;
 
 private:
     World& m_world;
+    WeatherState m_weatherState;
 
     entt::scoped_connection m_weatherChangeConnection;
     entt::scoped_connection m_currentWeatherConnection;
