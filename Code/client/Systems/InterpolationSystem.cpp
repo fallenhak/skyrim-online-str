@@ -46,6 +46,12 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
     if (!apActor)
         return;
 
+    // A dead remote actor is a local ragdoll here. Forcing it to every movement snapshot fought that
+    // ragdoll and made the corpse jitter and drift; its final spot comes from the owner's settled
+    // position sync instead. The tracked position above is still updated for spawn decisions.
+    if (apActor->IsDead())
+        return;
+
     apActor->ForcePosition(position);
     apActor->LoadAnimationVariables(second.Variables);
 
