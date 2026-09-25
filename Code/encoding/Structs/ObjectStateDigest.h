@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <Structs/GameId.h>
 #include <Structs/Inventory.h>
 
