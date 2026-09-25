@@ -147,34 +147,47 @@ TEST_CASE("A client-discovered provisional object cannot relay a forged activati
     REQUIRE(peerNotificationCount == 0);
 }
 
-TEST_CASE("A client-reported lock result needs more than a trusted baseline", "[object_authority]")
+TEST_CASE("A client-reported lock needs more than a trusted baseline", "[object_authority]")
 {
-    // OnLockChange has no server-side lock outcome resolver, so its client
-    // report cannot mutate canonical state or reach observers even if a
-    // trusted baseline is added later.
-    const auto assertRejectedWithoutValidatedOutcome = [](const bool hasTrustedState)
+    // OnLockChange has no server-side lock outcome resolver, so a reported
+    // lock (or level change) cannot mutate canonical state or reach observers.
+    const auto assertLockRejected = [](const bool hasTrustedState)
+    {
+        LockData canonicalState{};
+        canonicalState.IsLocked = false;
+        canonicalState.LockLevel = 50;
+        std::size_t relayCount = 0;
+
+        REQUIRE_FALSE(ObjectInteractionPolicy::TryHandleLockChange(
+            hasTrustedState, false, canonicalState, true, 100, [&] { ++relayCount; }));
+        REQUIRE_FALSE(canonicalState.IsLocked);
+        REQUIRE(canonicalState.LockLevel == 50);
+        REQUIRE(relayCount == 0);
+    };
+
+    assertLockRejected(false);
+    assertLockRejected(true);
+}
+
+TEST_CASE("A reported unlock is accepted and relayed once", "[object_authority]")
+{
+    for (const bool hasTrustedState : {false, true})
     {
         LockData canonicalState{};
         canonicalState.IsLocked = true;
         canonicalState.LockLevel = 50;
-        bool observerStateIsLocked = true;
         std::size_t relayCount = 0;
+        const auto relay = [&] { ++relayCount; };
 
-        REQUIRE_FALSE(ObjectInteractionPolicy::TryHandleLockChange(
-            hasTrustedState, false, canonicalState, false, 0,
-            [&]
-            {
-                ++relayCount;
-                observerStateIsLocked = false;
-            }));
-        REQUIRE(canonicalState.IsLocked);
+        REQUIRE(ObjectInteractionPolicy::TryHandleLockChange(hasTrustedState, false, canonicalState, false, 0, relay));
+        REQUIRE_FALSE(canonicalState.IsLocked);
         REQUIRE(canonicalState.LockLevel == 50);
-        REQUIRE(observerStateIsLocked);
-        REQUIRE(relayCount == 0);
-    };
+        REQUIRE(relayCount == 1);
 
-    assertRejectedWithoutValidatedOutcome(false); // Provisional object remains rejected.
-    assertRejectedWithoutValidatedOutcome(true);  // A baseline alone cannot validate a client result.
+        // A repeated unlock of a known-open object is not relayed again.
+        REQUIRE(ObjectInteractionPolicy::TryHandleLockChange(hasTrustedState, false, canonicalState, false, 0, relay));
+        REQUIRE(relayCount == (hasTrustedState ? 1u : 2u));
+    }
 }
 
 TEST_CASE("A harvestable object is harvested once and relayed once", "[object_authority][harvest]")

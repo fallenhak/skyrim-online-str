@@ -34,6 +34,9 @@
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>
 #include <Forms/TESActorBase.h>
+#include <Services/PuzzlePillarPolicy.h>
+
+#include <chrono>
 
 #include <Structs/AnimationGraphDescriptorManager.h>
 #include <Structs/AnimationVariables.h>
@@ -368,13 +371,13 @@ void TESObjectREFR::Delete() const noexcept
     s_pDelete(this);
 }
 
-void TESObjectREFR::Disable() const noexcept
+void TESObjectREFR::Disable(bool aFadeOut) const noexcept
 {
     using ObjectReference = TESObjectREFR;
 
     PAPYRUS_FUNCTION(void, ObjectReference, Disable, bool);
 
-    s_pDisable(this, true);
+    s_pDisable(this, aFadeOut);
 }
 
 void TESObjectREFR::Enable() const noexcept
@@ -706,6 +709,12 @@ Inventory TESObjectREFR::GetInventory(std::function<bool(TESForm&)> aFilter) con
                 continue;
             }
 
+            // A leveled list is a recipe, not an item: its rolled result already sits in the
+            // container changes. Reporting it made every other client roll it again on
+            // SetInventory (27 gold on one client, 7 on the other).
+            if (pGameEntry->form->formType == FormType::LeveledItem)
+                continue;
+
             if (!aFilter(*pGameEntry->form))
                 continue;
 
@@ -893,6 +902,14 @@ void TESObjectREFR::AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSet
         return;
     }
 
+    // Never add a leveled list from the network: the game would roll it locally,
+    // so each client would end up with different items (see GetInventory).
+    if (pObject->formType == FormType::LeveledItem)
+    {
+        spdlog::info("{}: skipped leveled list {:X} x{} (only rolled items are synced)", __FUNCTION__, pObject->formID, arEntry.Count);
+        return;
+    }
+
     ExtraDataList* pExtraDataList = GetExtraDataFromItem(arEntry);
 
     if (arEntry.Count > 0)
@@ -1045,6 +1062,19 @@ bool TP_MAKE_THISCALL(HookPlayAnimation, void, uint32_t auiStackID, TESObjectREF
 bool TP_MAKE_THISCALL(HookActivate, TESObjectREFR, TESObjectREFR* apActivator, uint8_t aUnk1, TESBoundObject* apObjectToGet, int32_t aCount, char aDefaultProcessing)
 {
     Actor* pActivator = Cast<Actor>(apActivator);
+
+    if (pActivator && apThis->baseForm && PuzzlePillarPolicy::IsPuzzlePillar(apThis->baseForm->formID))
+    {
+        static PuzzlePillarPolicy::Lockout s_pillarLockout;
+        const auto cNowMs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+        if (!s_pillarLockout.TryActivate(
+                apThis->formID, pActivator == PlayerCharacter::Get() && !PuzzlePillarPolicy::g_isReplayingServerState, cNowMs))
+        {
+            spdlog::info("[World] puzzle pillar {:X} still turning; local activation ignored", apThis->formID);
+            return false;
+        }
+    }
 
     // Exclude books from activation since only reading them removes them from the cell
     // Note: Books are now unsynced 

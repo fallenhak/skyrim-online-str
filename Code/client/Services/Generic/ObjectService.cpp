@@ -4,6 +4,7 @@
 #include <Services/ObjectSyncPolicy.h>
 #include <Services/ActivatorReplayPolicy.h>
 #include <Services/WorldObjectTrackingPolicy.h>
+#include <Services/PuzzlePillarPolicy.h>
 
 #include <World.h>
 #include <Utils.h>
@@ -139,6 +140,9 @@ bool IsHarvestableObject(const TESObjectREFR* apObject) noexcept
 Set<uint32_t> s_harvestDisabledRefs{};
 Set<uint32_t> s_worldItemDisabledRefs{};
 std::unordered_map<uint32_t, uint32_t> s_appliedActivatorActivationCounts{};
+// Last lock state sent per object. The game can re-raise the same lock state many
+// times in a row (e.g. on cell load); only real changes are worth a request.
+std::unordered_map<uint32_t, std::pair<bool, uint8_t>> s_sentLockStates{};
 uint32_t s_replayingActivatorFormId{};
 
 void IncrementAppliedActivatorCount(const uint32_t aFormId) noexcept
@@ -152,13 +156,20 @@ struct ScopedActivatorStateReplay final
 {
     explicit ScopedActivatorStateReplay(const uint32_t aFormId) noexcept
         : PreviousFormId(s_replayingActivatorFormId)
+        , PreviousPillarReplay(PuzzlePillarPolicy::g_isReplayingServerState)
     {
         s_replayingActivatorFormId = aFormId;
+        PuzzlePillarPolicy::g_isReplayingServerState = true;
     }
 
-    ~ScopedActivatorStateReplay() noexcept { s_replayingActivatorFormId = PreviousFormId; }
+    ~ScopedActivatorStateReplay() noexcept
+    {
+        s_replayingActivatorFormId = PreviousFormId;
+        PuzzlePillarPolicy::g_isReplayingServerState = PreviousPillarReplay;
+    }
 
     uint32_t PreviousFormId{};
+    bool PreviousPillarReplay{};
 };
 
 void TrackLocalWorldItemTaken(const uint32_t aFormId) noexcept
@@ -201,7 +212,8 @@ void ApplyWorldItemTaken(TESObjectREFR* apObject) noexcept
         return;
 
     spdlog::info("World item {:X} taken remotely, disabling", apObject->formID);
-    apObject->Disable();
+    // No fade: the item is already in someone else's hands.
+    apObject->Disable(false);
     s_worldItemDisabledRefs.insert(apObject->formID);
 }
 
@@ -239,6 +251,7 @@ bool IsSyncedActivator(const TESObjectREFR* apObject) noexcept
 void ObjectService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
     m_assignObjectsPending = false;
+    s_sentLockStates.clear();
     // TODO(cosideci): clear object components
 }
 
@@ -264,18 +277,8 @@ void ObjectService::SendAssignObjectsRequest() noexcept
 
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
     TESObjectCELL* pCell = pPlayer->parentCell;
-
-    // Player homes should not be synced, so that chest contents,
-    // which are often used as storage, are never accidentally wiped.
-    if (!World::Get().GetServerSettings().SyncPlayerHomes && IsPlayerHome(pCell))
+    if (!pCell)
         return;
-
-    GameId cellId{};
-    if (!m_world.GetModSystem().GetServerModId(pCell->formID, cellId))
-    {
-        spdlog::error("Server cell id not found for cell form id {:X}", pCell->formID);
-        return;
-    }
 
     GameId worldSpaceId{};
     if (TESWorldSpace* pWorldSpace = pPlayer->GetWorldSpace())
@@ -287,67 +290,99 @@ void ObjectService::SendAssignObjectsRequest() noexcept
         }
     }
 
+    // In exteriors the player can reach objects in the neighbouring loaded cells,
+    // and activations report the object's own cell. Register every loaded grid cell,
+    // each object under its own cell, or those activations are dropped as unregistered.
+    Vector<TESObjectCELL*> cells;
+    const TES* pTES = TES::Get();
+    if (pTES && !pTES->interiorCell && pTES->cells && pTES->cells->arr)
+    {
+        const uint32_t cDimension = pTES->cells->dimension;
+        for (uint32_t i = 0; i < cDimension * cDimension; ++i)
+        {
+            TESObjectCELL* pGridCell = pTES->cells->arr[i];
+            if (pGridCell && std::find(cells.begin(), cells.end(), pGridCell) == cells.end())
+                cells.push_back(pGridCell);
+        }
+    }
+    if (std::find(cells.begin(), cells.end(), pCell) == cells.end())
+        cells.push_back(pCell);
+
     Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient, FormType::Furniture, FormType::Activator,
                                   FormType::Armor, FormType::Misc, FormType::Weapon, FormType::Ammo, FormType::Key,
-                                  FormType::Alchemy, FormType::Scroll, FormType::SoulGem, FormType::Light, FormType::Apparatus};
+                                  FormType::Alchemy, FormType::Scroll, FormType::SoulGem, FormType::Light, FormType::Apparatus, FormType::Book};
     // Door seemed to be at the wrong form id (29, now 32), verify this.
-    Vector<TESObjectREFR*> objects = pCell->GetRefsByFormTypes(formTypes);
 
     AssignObjectsRequest request{};
 
     const Set<const TESObjectREFR*> playerStashContainers = GetPlayerStashContainers();
 
-    for (TESObjectREFR* pObject : objects)
+    for (TESObjectCELL* pObjectCell : cells)
     {
-        const bool cIsHarvestType = pObject->baseForm->formType == FormType::Flora || pObject->baseForm->formType == FormType::Ingredient;
-        if (cIsHarvestType && !IsHarvestableObject(pObject))
+        // Player homes should not be synced, so that chest contents,
+        // which are often used as storage, are never accidentally wiped.
+        if (!World::Get().GetServerSettings().SyncPlayerHomes && IsPlayerHome(pObjectCell))
             continue;
 
-        const bool cIsOpenLoot = ObjectSyncPolicy::IsOpenLootObject(pObject);
-        if (ObjectSyncPolicy::IsOpenLootFormType(pObject->baseForm->formType) && !cIsOpenLoot)
-            continue;
-
-        if (pObject->baseForm->formType == FormType::Activator && !IsSyncedActivator(pObject))
-            continue;
-
-        if (!ShouldSyncObject(pObject, playerStashContainers))
+        GameId cellId{};
+        if (!m_world.GetModSystem().GetServerModId(pObjectCell->formID, cellId))
         {
-            spdlog::warn("Excluding sync for {:X}", pObject->formID);
+            spdlog::error("Server cell id not found for cell form id {:X}", pObjectCell->formID);
             continue;
         }
 
-        ObjectData objectData{};
-        objectData.CellId = cellId;
-        objectData.WorldSpaceId = worldSpaceId;
-        objectData.CurrentCoords = GridCellCoords::CalculateGridCellCoords(pObject->position.x, pObject->position.y);
-
-        if (!m_world.GetModSystem().GetServerModId(pObject->formID, objectData.Id))
+        for (TESObjectREFR* pObject : pObjectCell->GetRefsByFormTypes(formTypes))
         {
-            spdlog::error("Server form id not found for object with form id {:X}", pObject->formID);
-            continue;
+            const bool cIsHarvestType = pObject->baseForm->formType == FormType::Flora || pObject->baseForm->formType == FormType::Ingredient;
+            if (cIsHarvestType && !IsHarvestableObject(pObject))
+                continue;
+
+            const bool cIsOpenLoot = ObjectSyncPolicy::IsOpenLootObject(pObject);
+            if (ObjectSyncPolicy::IsOpenLootFormType(pObject->baseForm->formType) && !cIsOpenLoot)
+                continue;
+
+            if (pObject->baseForm->formType == FormType::Activator && !IsSyncedActivator(pObject))
+                continue;
+
+            if (!ShouldSyncObject(pObject, playerStashContainers))
+            {
+                spdlog::warn("Excluding sync for {:X}", pObject->formID);
+                continue;
+            }
+
+            ObjectData objectData{};
+            objectData.CellId = cellId;
+            objectData.WorldSpaceId = worldSpaceId;
+            objectData.CurrentCoords = GridCellCoords::CalculateGridCellCoords(pObject->position.x, pObject->position.y);
+
+            if (!m_world.GetModSystem().GetServerModId(pObject->formID, objectData.Id))
+            {
+                spdlog::error("Server form id not found for object with form id {:X}", pObject->formID);
+                continue;
+            }
+
+            if (Lock* pLock = pObject->GetLock())
+            {
+                objectData.CurrentLockData.IsLocked = pLock->IsLocked();
+                objectData.CurrentLockData.LockLevel = pLock->lockLevel;
+            }
+
+            if (pObject->baseForm->formType == FormType::Container)
+                objectData.CurrentInventory = pObject->GetInventory();
+
+            objectData.IsHarvestable = cIsHarvestType;
+            objectData.IsHarvestItem = pObject->baseForm->formType == FormType::Ingredient;
+            objectData.IsOpenLoot = cIsOpenLoot;
+            objectData.IsFurniture = pObject->baseForm->formType == FormType::Furniture;
+            objectData.IsDoor = IsSyncedDoor(pObject);
+            objectData.IsActivator = IsSyncedActivator(pObject);
+            objectData.IsContainer = pObject->baseForm->formType == FormType::Container;
+
+            request.Objects.push_back(objectData);
         }
-
-        if (Lock* pLock = pObject->GetLock())
-        {
-            objectData.CurrentLockData.IsLocked = pLock->IsLocked();
-            objectData.CurrentLockData.LockLevel = pLock->lockLevel;
-        }
-
-        if (pObject->baseForm->formType == FormType::Container)
-            objectData.CurrentInventory = pObject->GetInventory();
-
-        objectData.IsHarvestable = cIsHarvestType;
-        objectData.IsHarvestItem = pObject->baseForm->formType == FormType::Ingredient;
-        objectData.IsOpenLoot = cIsOpenLoot;
-        objectData.IsFurniture = pObject->baseForm->formType == FormType::Furniture;
-        objectData.IsDoor = IsSyncedDoor(pObject);
-        objectData.IsActivator = IsSyncedActivator(pObject);
-        objectData.IsContainer = pObject->baseForm->formType == FormType::Container;
-
-        request.Objects.push_back(objectData);
     }
 
-    spdlog::info("[World] assign objects requested for cell {:X}: {} object(s)", pCell->formID, request.Objects.size());
+    spdlog::info("[World] assign objects requested for cell {:X} ({} loaded cell(s)): {} object(s)", pCell->formID, cells.size(), request.Objects.size());
     m_transport.Send(request);
 }
 
@@ -718,6 +753,15 @@ void ObjectService::OnLockChange(const LockChangeEvent& acEvent) noexcept
 
     request.IsLocked = acEvent.IsLocked;
     request.LockLevel = acEvent.LockLevel;
+
+    const std::pair<bool, uint8_t> cLockState{request.IsLocked, static_cast<uint8_t>(request.LockLevel)};
+    const auto [it, inserted] = s_sentLockStates.try_emplace(acEvent.FormId, cLockState);
+    if (!inserted)
+    {
+        if (it->second == cLockState)
+            return;
+        it->second = cLockState;
+    }
 
     m_transport.Send(request);
 }
