@@ -149,6 +149,30 @@ TEST(PersistenceCharacterRepository, InitializesAndPersistsOwnerScopedRecords)
     EXPECT_FALSE(repository.GetCharacterForOwner(characterId, character.OwnerProfileId).has_value());
 }
 
+TEST(PersistenceCharacterRepository, StoresTheLookOwnerScopedAndLeavesOtherColumnsAlone)
+{
+    Persistence::Database database(":memory:");
+    database.Migrate();
+    Persistence::CharacterRepository repository(database);
+
+    auto character = MakeCharacter("look-owner", "Lookable");
+    const auto characterId = repository.CreateCharacter(character);
+    ASSERT_GT(characterId, 0);
+
+    EXPECT_FALSE(repository.GetCharacterLook(characterId, character.OwnerProfileId).has_value());
+    EXPECT_FALSE(repository.UpdateCharacterLook(characterId, "another-profile", "4C4B31"));
+    ASSERT_TRUE(repository.UpdateCharacterLook(characterId, character.OwnerProfileId, "4C4B31"));
+
+    const auto look = repository.GetCharacterLook(characterId, character.OwnerProfileId);
+    ASSERT_TRUE(look.has_value());
+    EXPECT_EQ(*look, "4C4B31");
+    EXPECT_FALSE(repository.GetCharacterLook(characterId, "another-profile").has_value());
+
+    const auto loaded = repository.GetCharacterForOwner(characterId, character.OwnerProfileId);
+    ASSERT_TRUE(loaded.has_value());
+    CheckCharacterValues(character, *loaded);
+}
+
 TEST(PersistenceCharacterRepository, PersistsRecordsAfterReopeningAnOnDiskDatabase)
 {
     const auto uniqueSuffix = std::chrono::steady_clock::now().time_since_epoch().count();

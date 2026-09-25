@@ -36,6 +36,8 @@
 #include <Messages/NewPackageRequest.h>
 #include <Messages/NotifyNewPackage.h>
 #include <Messages/RequestRespawn.h>
+#include <Messages/UpdatePlayerAppearanceRequest.h>
+#include <Services/CharacterLookCodec.h>
 #include <Messages/NotifyRespawn.h>
 #include <Messages/DialogueRequest.h>
 #include <Messages/NotifyDialogue.h>
@@ -57,6 +59,32 @@ namespace
 constexpr std::uint32_t kHealthActorValue = 24;
 constexpr std::uint32_t kMagickaActorValue = 25;
 constexpr std::uint32_t kStaminaActorValue = 26;
+
+CharacterLookCodec::Look ToLook(const uint32_t aChangeFlags, const TiltedPhoques::String& acAppearance, const Tints& acTints)
+{
+    CharacterLookCodec::Look look;
+    look.ChangeFlags = aChangeFlags;
+    look.Appearance.assign(acAppearance.c_str(), acAppearance.size());
+    for (const auto& entry : acTints.Entries)
+        look.Tints.push_back({entry.Type, entry.Color, entry.Alpha, std::string(entry.Name.c_str(), entry.Name.size())});
+    return look;
+}
+
+void ApplyLook(const CharacterLookCodec::Look& acLook, CharacterComponent& aCharacter)
+{
+    aCharacter.ChangeFlags = acLook.ChangeFlags;
+    aCharacter.SaveBuffer = TiltedPhoques::String(acLook.Appearance.data(), acLook.Appearance.size());
+    aCharacter.FaceTints = {};
+    for (const auto& tint : acLook.Tints)
+    {
+        Tints::Entry entry{};
+        entry.Name = TiltedPhoques::String(tint.Name.data(), tint.Name.size());
+        entry.Alpha = tint.Alpha;
+        entry.Color = tint.Color;
+        entry.Type = tint.Type;
+        aCharacter.FaceTints.Entries.push_back(entry);
+    }
+}
 
 bool CanRelayNpcPresentation(World& aWorld, const Player& acSender, const uint32_t aServerId) noexcept
 {
@@ -99,6 +127,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
     , m_mountConnection(aDispatcher.sink<PacketEvent<MountRequest>>().connect<&CharacterService::OnMountRequest>(this))
     , m_newPackageConnection(aDispatcher.sink<PacketEvent<NewPackageRequest>>().connect<&CharacterService::OnNewPackageRequest>(this))
     , m_requestRespawnConnection(aDispatcher.sink<PacketEvent<RequestRespawn>>().connect<&CharacterService::OnRequestRespawn>(this))
+    , m_updatePlayerAppearanceConnection(aDispatcher.sink<PacketEvent<UpdatePlayerAppearanceRequest>>().connect<&CharacterService::OnUpdatePlayerAppearance>(this))
     , m_dialogueConnection(aDispatcher.sink<PacketEvent<DialogueRequest>>().connect<&CharacterService::OnDialogueRequest>(this))
     , m_subtitleConnection(aDispatcher.sink<PacketEvent<SubtitleRequest>>().connect<&CharacterService::OnSubtitleRequest>(this))
 {
@@ -937,6 +966,53 @@ void CharacterService::OnNewPackageRequest(const PacketEvent<NewPackageRequest>&
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }
 
+void CharacterService::OnUpdatePlayerAppearance(const PacketEvent<UpdatePlayerAppearanceRequest>& acMessage) const noexcept
+{
+    Player* const pPlayer = acMessage.pPlayer;
+    const auto character = pPlayer->GetCharacter();
+    auto* pCharacterComponent = character ? m_world.try_get<CharacterComponent>(*character) : nullptr;
+    const auto* pOwnerComponent = character ? m_world.try_get<OwnerComponent>(*character) : nullptr;
+    if (!pCharacterComponent || !pCharacterComponent->IsPlayer() || !pOwnerComponent || pOwnerComponent->GetOwner() != pPlayer)
+    {
+        spdlog::warn("Ignored appearance update from player {:X}: no bound player character", pPlayer->GetId());
+        return;
+    }
+
+    const auto& packet = acMessage.Packet;
+    const auto look = ToLook(packet.ChangeFlags, packet.AppearanceBuffer, packet.FaceTints);
+    const auto encoded = CharacterLookCodec::Encode(look);
+    if (!encoded)
+    {
+        spdlog::warn("Ignored appearance update from player {:X}: empty or oversized ({} bytes, {} tints)", pPlayer->GetId(), look.Appearance.size(), look.Tints.size());
+        return;
+    }
+
+    ApplyLook(look, *pCharacterComponent);
+    const bool persisted = m_world.GetSessionService().UpdateSelectedCharacterLook(pPlayer->GetConnectionId(), CharacterLookCodec::ToHex(*encoded));
+
+    // Peers built this character from the pre-RaceMenu assignment; they rebuild it from the new look.
+    const auto entity = *character;
+    NotifyRemoveCharacter removeMessage;
+    removeMessage.ServerId = World::ToInteger(entity);
+    CharacterSpawnRequest spawnMessage;
+    Serialize(m_world, entity, &spawnMessage);
+
+    const auto& characterCell = m_world.get<CellIdComponent>(entity);
+    std::size_t peers = 0;
+    for (Player* pPeer : m_world.GetPlayerManager())
+    {
+        if (pPeer == pPlayer || !pPeer->GetCellComponent().IsInRange(characterCell, false))
+            continue;
+
+        pPeer->Send(removeMessage);
+        pPeer->Send(spawnMessage);
+        ++peers;
+    }
+
+    spdlog::info("[Appearance] player {:X} character {:X}: {} bytes, {} tints, persisted {}, rebuilt for {} peer(s)", pPlayer->GetId(), removeMessage.ServerId,
+                 look.Appearance.size(), look.Tints.size(), persisted, peers);
+}
+
 void CharacterService::OnRequestRespawn(const PacketEvent<RequestRespawn>& acMessage) noexcept
 {
     auto view = m_world.view<OwnerComponent, CharacterComponent>();
@@ -1110,6 +1186,18 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
         actorValuesComponent.CurrentActorValues.ActorValuesList[kHealthActorValue] = persistentCharacter->Health;
         actorValuesComponent.CurrentActorValues.ActorValuesList[kMagickaActorValue] = persistentCharacter->Magicka;
         actorValuesComponent.CurrentActorValues.ActorValuesList[kStaminaActorValue] = persistentCharacter->Stamina;
+
+        // The assignment carries the client's current NPC, which after a relog is the stored race on
+        // default features; the stored RaceMenu look is the one other players must see.
+        if (const auto storedLook = m_world.GetSessionService().GetSelectedCharacterLook(acMessage.pPlayer->GetConnectionId()))
+        {
+            const auto bytes = CharacterLookCodec::FromHex(*storedLook);
+            const auto look = bytes ? CharacterLookCodec::Decode(*bytes) : std::nullopt;
+            if (look)
+                ApplyLook(*look, characterComponent);
+            else
+                spdlog::error("[Appearance] stored look of character {} is unreadable; using the assignment's", persistentCharacter->Id);
+        }
 
         auto& persistentComponent = m_world.emplace<PersistentCharacterComponent>(cEntity);
         persistentComponent.CharacterId = persistentCharacter->Id;

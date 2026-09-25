@@ -21,6 +21,7 @@
 #include <Messages/NotifyCharacterCreateResult.h>
 #include <Messages/NotifyCharacterSlots.h>
 #include <Messages/UpdateCharacterAppearanceRequest.h>
+#include <Messages/UpdatePlayerAppearanceRequest.h>
 #include <Messages/RequestCharacterList.h>
 #include <Messages/RequestHealthChangeBroadcast.h>
 #include <Messages/InterruptCastRequest.h>
@@ -69,6 +70,8 @@ TEST_CASE("Character load snapshot round trips all server-authoritative fields",
     sent.Health = 321.5f;
     sent.Magicka = 222.25f;
     sent.Stamina = 111.75f;
+    sent.AppearanceChangeFlags = 0x2000800;
+    sent.Appearance = TiltedPhoques::String("npc\0look", 8);
 
     TiltedPhoques::Buffer buffer(1024);
     TiltedPhoques::Buffer::Writer writer(&buffer);
@@ -134,6 +137,25 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(appearanceMessage);
         auto parsedAppearanceRequest = TiltedPhoques::CastUnique<UpdateCharacterAppearanceRequest>(std::move(appearanceMessage));
         REQUIRE(*parsedAppearanceRequest == appearanceRequest);
+
+        UpdatePlayerAppearanceRequest lookRequest{};
+        lookRequest.ChangeFlags = 0x2000800;
+        lookRequest.AppearanceBuffer = String("npc-appearance\0bytes", 20);
+        Tints::Entry tint{};
+        tint.Name = String("Actors/Character/Character Assets/TintMasks/SkinTone.dds");
+        tint.Alpha = 0.75f;
+        tint.Color = 0xFF8844CC;
+        tint.Type = 6;
+        lookRequest.FaceTints.Entries.push_back(tint);
+        TiltedPhoques::Buffer lookBuffer(1024);
+        TiltedPhoques::Buffer::Writer lookWriter(&lookBuffer);
+        lookRequest.Serialize(lookWriter);
+
+        TiltedPhoques::Buffer::Reader lookReader(&lookBuffer);
+        auto lookMessage = clientFactory.Extract(lookReader);
+        REQUIRE(lookMessage);
+        auto parsedLookRequest = TiltedPhoques::CastUnique<UpdatePlayerAppearanceRequest>(std::move(lookMessage));
+        REQUIRE(*parsedLookRequest == lookRequest);
 
         CharacterReadyRequest readyRequest{};
         readyRequest.CharacterId = std::numeric_limits<std::uint64_t>::max();
@@ -524,7 +546,8 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(static_cast<unsigned>(kServerOpcodeMax) == static_cast<unsigned>(kNotifyContainerTransferResult) + 1);
         REQUIRE(static_cast<unsigned>(kTakeWorldItemRequest) == static_cast<unsigned>(kUpdateCharacterAppearanceRequest) + 1);
         REQUIRE(static_cast<unsigned>(kRequestContainerTransfer) == static_cast<unsigned>(kTakeWorldItemRequest) + 1);
-        REQUIRE(static_cast<unsigned>(kClientOpcodeMax) == static_cast<unsigned>(kRequestContainerTransfer) + 1);
+        REQUIRE(static_cast<unsigned>(kUpdatePlayerAppearanceRequest) == static_cast<unsigned>(kRequestContainerTransfer) + 1);
+        REQUIRE(static_cast<unsigned>(kClientOpcodeMax) == static_cast<unsigned>(kUpdatePlayerAppearanceRequest) + 1);
     }
 }
 
@@ -556,6 +579,9 @@ TEST_CASE("Character load snapshot validation rejects unsafe values", "[encoding
     snapshot.Race = GameId(0, 0x00013746);
     snapshot.CellId = GameId{};
     REQUIRE(ValidateCharacterLoadSnapshot(snapshot) == CharacterLoadSnapshotValidationError::kInvalidCell);
+    snapshot.CellId = GameId(0, 0x0000003C);
+    snapshot.Appearance = TiltedPhoques::String(64 * 1024 + 1, 'x');
+    REQUIRE(ValidateCharacterLoadSnapshot(snapshot) == CharacterLoadSnapshotValidationError::kInvalidAppearance);
 }
 
 TEST_CASE("Character outbound protocol policy keeps pre-world traffic narrow", "[encoding.character_session]")

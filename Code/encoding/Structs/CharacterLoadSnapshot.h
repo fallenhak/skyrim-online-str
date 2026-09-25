@@ -35,4 +35,7 @@ struct CharacterLoadSnapshot final
     float Magicka{};
     float Stamina{};
     bool NeedsRaceMenu{};
+    // Stored RaceMenu look (TESNPC save buffer); empty until the character finished RaceMenu once.
+    std::uint32_t AppearanceChangeFlags{};
+    TiltedPhoques::String Appearance;
 };

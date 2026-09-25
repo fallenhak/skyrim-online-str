@@ -14,7 +14,7 @@ namespace Persistence
 {
 namespace
 {
-constexpr int kCurrentSchemaVersion = 4;
+constexpr int kCurrentSchemaVersion = 5;
 
 [[noreturn]] void ThrowSqliteError(sqlite3* apDatabase, const int aResult, const std::string_view acOperation)
 {
@@ -338,6 +338,13 @@ void Database::Migrate()
             ) WITHOUT ROWID;
         )sql");
         Execute("UPDATE schema_version SET version = 4 WHERE id = 1;");
+    }
+
+    if (schemaVersion < 5)
+    {
+        // RaceMenu result (appearance buffer + face tints), hex of CharacterLookCodec. NULL until set.
+        Execute("ALTER TABLE characters ADD COLUMN look TEXT NULL;");
+        Execute("UPDATE schema_version SET version = 5 WHERE id = 1;");
     }
 
     transaction.Commit();

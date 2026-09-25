@@ -44,6 +44,9 @@ struct CharacterRepository final
     [[nodiscard]] bool UpdateCharacterRuntimeState(CharacterId aCharacterId, std::string_view acOwnerProfileId, const CharacterRuntimeState& acState);
     [[nodiscard]] bool UpdateCharacterSpawnPosition(CharacterId aCharacterId, std::string_view acOwnerProfileId, float aPositionX, float aPositionY, float aPositionZ);
     [[nodiscard]] bool UpdateCharacterAppearance(CharacterId aCharacterId, std::string_view acOwnerProfileId, GameId aRace, std::int32_t aSex);
+    // Opaque, already validated look text; the repository only stores it owner-scoped.
+    [[nodiscard]] bool UpdateCharacterLook(CharacterId aCharacterId, std::string_view acOwnerProfileId, std::string_view acLook);
+    [[nodiscard]] std::optional<std::string> GetCharacterLook(CharacterId aCharacterId, std::string_view acOwnerProfileId) const;
     [[nodiscard]] bool DeleteCharacter(CharacterId aCharacterId, std::string_view acOwnerProfileId);
 
 private:

@@ -27,6 +27,10 @@ CharacterLoadSnapshotValidationError ValidateCharacterLoadSnapshot(const Charact
     if (!std::isfinite(acSnapshot.Health) || !std::isfinite(acSnapshot.Magicka) || !std::isfinite(acSnapshot.Stamina) || acSnapshot.Health < 0.f || acSnapshot.Magicka < 0.f || acSnapshot.Stamina < 0.f)
         return CharacterLoadSnapshotValidationError::kInvalidVitals;
 
+    // Same bound the server stores (CharacterLookCodec::kMaxAppearanceBytes).
+    if (acSnapshot.Appearance.size() > 64 * 1024)
+        return CharacterLoadSnapshotValidationError::kInvalidAppearance;
+
     return CharacterLoadSnapshotValidationError::kNone;
 }
 
