@@ -521,6 +521,9 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
         settledPosition.y = acMessage.Position.y;
         settledPosition.z = acMessage.Position.z;
         pActor->ForcePosition(settledPosition);
+        // ForcePosition moves the reference and its 3D root, not the ragdoll bodies: the corpse looked right
+        // but crosshair activation (E) still hit the bodies where the local ragdoll had settled. Warp them.
+        pActor->Update3DPosition(true);
         if (auto* const pInterpolation = m_world.try_get<InterpolationComponent>(*it))
         {
             pInterpolation->Position = acMessage.Position;
