@@ -28,56 +28,46 @@ void WeatherService::OnUpdate(const UpdateEvent& acEvent) noexcept
 
 void WeatherService::OnDisconnected(const DisconnectedEvent& acEvent) noexcept
 {
+    m_hasWorldAuthoritySource = false;
+    m_lastWorldAuthorityPlayerId = 0;
+    m_waitingForServerWeather = false;
     ToggleGameWeatherSystem(true);
 }
 
 void WeatherService::OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept
 {
+    if (m_hasWorldAuthoritySource == acEvent.HasWorldAuthoritySource &&
+        m_lastWorldAuthorityPlayerId == acEvent.WorldAuthorityPlayerId)
+        return;
+
+    m_hasWorldAuthoritySource = acEvent.HasWorldAuthoritySource;
+    m_lastWorldAuthorityPlayerId = acEvent.WorldAuthorityPlayerId;
+
     if (!acEvent.HasWorldAuthoritySource)
     {
+        spdlog::debug("[WeatherService] No world authority source; restoring local weather");
         ToggleGameWeatherSystem(true);
         return;
     }
 
-    if (!acEvent.HasLocalWorldAuthority)
-    {
-        ToggleGameWeatherSystem(false);
-        return;
-    }
-
-    Sky* pSky = Sky::Get();
-    if (!pSky)
-        return;
-
-    TESWeather* pWeather = pSky->GetWeather();
-    if (!pWeather)
-    {
-        m_cachedWeatherId = 0;
-        return;
-    }
-
-    // Potentially sets cached weather to map weather.
-    // When the player closes the map, it'll send out the proper weather on the next update.
-    m_cachedWeatherId = pWeather->formID;
-
-    // This is the map weather, should not be synced.
-    if (pWeather->formID == 0xA6858)
-        return;
-
-    RequestWeatherChange request{};
-
-    auto& modSystem = m_world.GetModSystem();
-    if (!modSystem.GetServerModId(pWeather->formID, request.Id))
-    {
-        spdlog::error(__FUNCTION__ ": weather server ID not found, form id: {:X}", pWeather->formID);
-        return;
-    }
-
-    m_transport.Send(request);
+    spdlog::info("[WeatherService] World weather reporter changed to player {}; requesting server state (local={})", acEvent.WorldAuthorityPlayerId,
+        acEvent.HasLocalWorldAuthority);
+    ToggleGameWeatherSystem(false);
 }
 
 void WeatherService::OnWeatherChange(const NotifyWeatherChange& acMessage) noexcept
 {
+    if (!acMessage.Id)
+    {
+        m_waitingForServerWeather = false;
+        m_cachedWeatherId = 0;
+        spdlog::debug("[WeatherService] Server has no canonical weather yet");
+
+        if (m_world.GetAuthorityService().HasLocalWorldAuthority())
+            SendCurrentWeatherProposal();
+        return;
+    }
+
     auto& modSystem = m_world.GetModSystem();
     const uint32_t weatherId = modSystem.GetGameId(acMessage.Id);
     TESWeather* pWeather = Cast<TESWeather>(TESForm::GetById(weatherId));
@@ -88,13 +78,18 @@ void WeatherService::OnWeatherChange(const NotifyWeatherChange& acMessage) noexc
         return;
     }
 
+    m_waitingForServerWeather = false;
     Sky::Get()->ForceWeather(pWeather);
 
     m_cachedWeatherId = weatherId;
+    spdlog::info("[WeatherService] Applied server weather mod {:X}, form {:X}", acMessage.Id.ModId, acMessage.Id.BaseId);
 }
 
 void WeatherService::RunWeatherUpdates(const double acDelta) noexcept
 {
+    if (m_waitingForServerWeather)
+        return;
+
     Sky* pSky = Sky::Get();
     if (!pSky)
         return;
@@ -119,20 +114,7 @@ void WeatherService::RunWeatherUpdates(const double acDelta) noexcept
         return;
 
     if (m_world.GetAuthorityService().HasLocalWorldAuthority())
-    {
-        m_cachedWeatherId = pWeather->formID;
-
-        RequestWeatherChange request{};
-
-        auto& modSystem = m_world.GetModSystem();
-        if (!modSystem.GetServerModId(pWeather->formID, request.Id))
-        {
-            spdlog::error(__FUNCTION__ ": weather server ID not found, form id: {:X}", pWeather->formID);
-            return;
-        }
-
-        m_transport.Send(request);
-    }
+        SendCurrentWeatherProposal();
     else
     {
         SetCachedWeather();
@@ -142,11 +124,38 @@ void WeatherService::RunWeatherUpdates(const double acDelta) noexcept
 void WeatherService::ToggleGameWeatherSystem(bool aToggle) noexcept
 {
     if (aToggle)
+    {
+        m_waitingForServerWeather = false;
         Sky::Get()->ReleaseWeatherOverride();
+    }
     else
+    {
+        m_waitingForServerWeather = true;
         m_transport.Send(RequestCurrentWeather());
+    }
 
     m_cachedWeatherId = 0;
+}
+
+void WeatherService::SendCurrentWeatherProposal() noexcept
+{
+    Sky* pSky = Sky::Get();
+    TESWeather* pWeather = pSky ? pSky->GetWeather() : nullptr;
+    if (!pWeather || pWeather->formID == 0xA6858 || pWeather->formID == m_cachedWeatherId)
+        return;
+
+    RequestWeatherChange request{};
+
+    auto& modSystem = m_world.GetModSystem();
+    if (!modSystem.GetServerModId(pWeather->formID, request.Id))
+    {
+        spdlog::error(__FUNCTION__ ": weather server ID not found, form id: {:X}", pWeather->formID);
+        return;
+    }
+
+    m_cachedWeatherId = pWeather->formID;
+    spdlog::debug("[WeatherService] Proposing local weather mod {:X}, form {:X} to the server", request.Id.ModId, request.Id.BaseId);
+    m_transport.Send(request);
 }
 
 void WeatherService::SetCachedWeather() noexcept

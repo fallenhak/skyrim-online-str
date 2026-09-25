@@ -1,5 +1,6 @@
 #include <Services/ObjectService.h>
 #include <Services/LocalOnlyActivators.h>
+#include <Services/ObjectSyncPolicy.h>
 
 #include <World.h>
 #include <Utils.h>
@@ -19,6 +20,8 @@
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
 #include <Messages/NotifyObjectHarvested.h>
+#include <Messages/TakeWorldItemRequest.h>
+#include <Messages/NotifyWorldItemTaken.h>
 
 #include <PlayerCharacter.h>
 #include <Forms/TESObjectCELL.h>
@@ -43,6 +46,7 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Trans
     m_scriptAnimationConnection = aDispatcher.sink<ScriptAnimationEvent>().connect<&ObjectService::OnScriptAnimationEvent>(this);
     m_scriptAnimationNotifyConnection = aDispatcher.sink<NotifyScriptAnimation>().connect<&ObjectService::OnNotifyScriptAnimation>(this);
     m_objectHarvestedConnection = aDispatcher.sink<NotifyObjectHarvested>().connect<&ObjectService::OnObjectHarvestedNotify>(this);
+    m_worldItemTakenConnection = aDispatcher.sink<NotifyWorldItemTaken>().connect<&ObjectService::OnWorldItemTakenNotify>(this);
 
     EventDispatcherManager::Get()->activateEvent.RegisterSink(this);
 }
@@ -130,7 +134,12 @@ Set<uint32_t> s_harvestDisabledRefs{};
 // Another player took it: hide it here too. Only the harvester receives the item.
 void ApplyHarvested(TESObjectREFR* apObject) noexcept
 {
-    if (!IsHarvestableObject(apObject) || apObject->IsDisabled())
+    if (!IsHarvestableObject(apObject))
+        return;
+
+    // A local activation is recorded in OnActivate before we reach here. Leave other
+    // disabled references untracked so quest/script state is never re-enabled by respawn.
+    if (apObject->IsDisabled())
         return;
 
     spdlog::info("Object {:X} harvested remotely, disabling", apObject->formID);
@@ -138,14 +147,26 @@ void ApplyHarvested(TESObjectREFR* apObject) noexcept
     s_harvestDisabledRefs.insert(apObject->formID);
 }
 
-// The server lost or reset the harvest state (cell emptied, respawn).
+// The server reports that the harvest timer has expired.
 void RestoreHarvested(TESObjectREFR* apObject) noexcept
 {
     if (!apObject || !s_harvestDisabledRefs.erase(apObject->formID))
         return;
 
-    spdlog::info("Object {:X} no longer harvested, enabling", apObject->formID);
-    apObject->Enable();
+    if (apObject->IsDisabled())
+    {
+        spdlog::info("Object {:X} no longer harvested, enabling", apObject->formID);
+        apObject->Enable();
+    }
+}
+
+void ApplyWorldItemTaken(TESObjectREFR* apObject) noexcept
+{
+    if (!ObjectSyncPolicy::IsOpenLootObject(apObject) || apObject->IsDisabled())
+        return;
+
+    spdlog::info("World item {:X} taken remotely, disabling", apObject->formID);
+    apObject->Disable();
 }
 
 // Load doors teleport the activator, so they are never toggled remotely.
@@ -202,7 +223,9 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
         }
     }
 
-    Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient, FormType::Activator};
+    Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient, FormType::Furniture, FormType::Activator,
+                                  FormType::Armor, FormType::Misc, FormType::Weapon, FormType::Ammo, FormType::Key,
+                                  FormType::Alchemy, FormType::Scroll, FormType::SoulGem, FormType::Light, FormType::Apparatus};
     // Door seemed to be at the wrong form id (29, now 32), verify this.
     Vector<TESObjectREFR*> objects = pCell->GetRefsByFormTypes(formTypes);
 
@@ -214,6 +237,10 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
     {
         const bool cIsHarvestType = pObject->baseForm->formType == FormType::Flora || pObject->baseForm->formType == FormType::Ingredient;
         if (cIsHarvestType && !IsHarvestableObject(pObject))
+            continue;
+
+        const bool cIsOpenLoot = ObjectSyncPolicy::IsOpenLootObject(pObject);
+        if (ObjectSyncPolicy::IsOpenLootFormType(pObject->baseForm->formType) && !cIsOpenLoot)
             continue;
 
         if (pObject->baseForm->formType == FormType::Activator && !IsSyncedActivator(pObject))
@@ -247,6 +274,8 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
 
         objectData.IsHarvestable = cIsHarvestType;
         objectData.IsHarvestItem = pObject->baseForm->formType == FormType::Ingredient;
+        objectData.IsOpenLoot = cIsOpenLoot;
+        objectData.IsFurniture = pObject->baseForm->formType == FormType::Furniture;
         objectData.IsDoor = IsSyncedDoor(pObject);
         objectData.IsActivator = IsSyncedActivator(pObject);
 
@@ -275,6 +304,9 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
             ApplyHarvested(pObject);
         else if (objectData.IsHarvestable)
             RestoreHarvested(pObject);
+
+        if (objectData.IsOpenLoot && objectData.IsLootTaken)
+            ApplyWorldItemTaken(pObject);
 
         // Late join / re-entry: match the door to the server's open state.
         if (objectData.IsDoor && objectData.IsDoorStateKnown && IsSyncedDoor(pObject))
@@ -343,18 +375,50 @@ entt::entity ObjectService::CreateObjectEntity(const uint32_t acFormId, const ui
 
 void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
 {
+    const bool wasDisabled = acEvent.pObject && acEvent.pObject->IsDisabled();
+    const bool trackLocalHarvest = acEvent.ActivateFlag &&
+        ObjectSyncPolicy::ShouldTrackLocalHarvest(
+            IsHarvestableObject(acEvent.pObject),
+            acEvent.pActivator == PlayerCharacter::Get(),
+            wasDisabled);
+
     if (acEvent.ActivateFlag)
     {
         acEvent.pObject->Activate(acEvent.pActivator, acEvent.Unk1, acEvent.pObjectToGet, acEvent.Count, acEvent.DefaultProcessing);
     }
 
+    // The harvesting client is excluded from the server's relay and its game may disable the plant locally.
+    // Track this reference so the later server respawn notification can re-enable it.
+    if (trackLocalHarvest)
+        s_harvestDisabledRefs.insert(acEvent.pObject->formID);
+
+    const bool cIsSyncedDoor = IsSyncedDoor(acEvent.pObject);
+    const bool cIsSyncedActivator = IsSyncedActivator(acEvent.pObject);
+    const bool cIsTrackedActivation = cIsSyncedDoor || cIsSyncedActivator;
+
     if (!m_transport.IsConnected())
+    {
+        if (cIsTrackedActivation)
+            spdlog::warn("[World] activation not sent: transport is disconnected (object {:X})", acEvent.pObject->formID);
         return;
+    }
+
+    // A relayed activator runs with the original player's actor on observers.
+    // Do not echo that remote replay back as a fresh request from this client.
+    if ((cIsSyncedDoor || cIsSyncedActivator) && acEvent.pActivator != PlayerCharacter::Get())
+        return;
+
+    if (cIsTrackedActivation)
+        spdlog::info("[World] captured {} activation for form {:X} (state {}, actor form {:X})", cIsSyncedDoor ? "door" : "activator", acEvent.pObject->formID, static_cast<uint8_t>(acEvent.PreActivationOpenState), acEvent.pActivator->formID);
 
     if (Lock* pLock = acEvent.pObject->GetLock())
     {
         if (pLock->flags & 0xFF)
+        {
+            if (cIsTrackedActivation)
+                spdlog::info("[World] activation not sent: object {:X} is locked", acEvent.pObject->formID);
             return;
+        }
     }
 
     ActivateRequest request;
@@ -383,53 +447,77 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
 
     if (pEntity == std::end(view))
     {
-        // spdlog::error("Activator entity not found for form id {:X}", acEvent.pActivator->formID);
+        if (cIsTrackedActivation)
+            spdlog::warn("[World] activation not sent: local actor {:X} has no server entity (object {:X})", acEvent.pActivator->formID, acEvent.pObject->formID);
         return;
     }
 
     std::optional<uint32_t> serverIdRes = Utils::GetServerId(*pEntity);
     if (!serverIdRes.has_value())
+    {
+        if (cIsTrackedActivation)
+            spdlog::warn("[World] activation not sent: local actor {:X} has no server id (object {:X})", acEvent.pActivator->formID, acEvent.pObject->formID);
         return;
+    }
 
     request.ActivatorId = serverIdRes.value();
     request.PreActivationOpenState = acEvent.PreActivationOpenState;
 
     m_transport.Send(request);
+
+    if (cIsTrackedActivation)
+        spdlog::info("[World] sent {} activation for form {:X} (server id {:X}:{:X}, cell {:X}:{:X}, pre-state {}, actor {:X})", cIsSyncedDoor ? "door" : "activator", acEvent.pObject->formID, request.Id.ModId, request.Id.BaseId, request.CellId.ModId, request.CellId.BaseId, request.PreActivationOpenState, request.ActivatorId);
 }
 
 void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
 {
-    Actor* pActor = Utils::GetByServerId<Actor>(acMessage.ActivatorId);
-    if (!pActor)
-    {
-        spdlog::error("{}: could not find actor server id {:X}", __FUNCTION__, acMessage.ActivatorId);
-        return;
-    }
-
     const uint32_t cObjectId = World::Get().GetModSystem().GetGameId(acMessage.Id);
     TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(cObjectId));
     if (!pObject)
     {
-        spdlog::error("Failed to retrieve object to activate.");
+        spdlog::error("[World] remote activation could not find object {:X}:{:X} (local form {:X})", acMessage.Id.ModId, acMessage.Id.BaseId, cObjectId);
         return;
     }
 
-    if (pObject->baseForm->formType == FormType::Door)
+    if (IsSyncedDoor(pObject))
     {
-        auto remotePreActivationState = static_cast<TESObjectREFR::OpenState>(acMessage.PreActivationOpenState);
-        TESObjectREFR::OpenState localState = pObject->GetOpenState();
-
-        if (remotePreActivationState != localState)
+        const auto cPreActivationState = static_cast<TESObjectREFR::OpenState>(acMessage.PreActivationOpenState);
+        bool cWasOpen = false;
+        if (cPreActivationState == TESObjectREFR::kOpen || cPreActivationState == TESObjectREFR::kOpening)
+            cWasOpen = true;
+        else if (cPreActivationState != TESObjectREFR::kClosed && cPreActivationState != TESObjectREFR::kClosing)
         {
-            // The doors are unsynced at this point. If we'll Activate the one on our side
-            // it'll just continue to be unsynced (open remotely, closed locally and vice versa)
+            spdlog::warn("[World] ignored door notification for {:X}:{:X}: invalid pre-state {}", acMessage.Id.ModId, acMessage.Id.BaseId, acMessage.PreActivationOpenState);
             return;
         }
+
+        const bool cTargetOpen = !cWasOpen;
+        const auto cLocalState = pObject->GetOpenState();
+        const bool cLocalOpen = cLocalState == TESObjectREFR::kOpen || cLocalState == TESObjectREFR::kOpening;
+        if (cLocalOpen != cTargetOpen)
+        {
+            // The server accepted this toggle, so apply its resulting state directly.
+            // Replaying Activate is timing-sensitive and can leave observers behind.
+            pObject->SetOpen(cTargetOpen);
+        }
+
+        spdlog::info("[World] applied remote door activation {:X}:{:X} (local form {:X}, pre-state {}, local state {}, now {})", acMessage.Id.ModId, acMessage.Id.BaseId, pObject->formID, acMessage.PreActivationOpenState, static_cast<uint8_t>(cLocalState), cTargetOpen ? "open" : "closed");
+        return;
+    }
+
+    Actor* pActor = Utils::GetByServerId<Actor>(acMessage.ActivatorId);
+    if (!pActor)
+    {
+        spdlog::error("[World] remote activation for {:X}:{:X} could not find actor server id {:X}", acMessage.Id.ModId, acMessage.Id.BaseId, acMessage.ActivatorId);
+        return;
     }
 
     // unsure if these flags are the best, but these are passed with the papyrus Activate fn
     // might be an idea to have the client send the flags through NotifyActivate
     pObject->Activate(pActor, 0, nullptr, 1, 0);
+
+    if (IsSyncedActivator(pObject))
+        spdlog::info("[World] applied remote activator activation {:X}:{:X} (local form {:X}, actor {:X})", acMessage.Id.ModId, acMessage.Id.BaseId, pObject->formID, acMessage.ActivatorId);
 }
 
 void ObjectService::OnObjectHarvestedNotify(const NotifyObjectHarvested& acMessage) noexcept
@@ -446,6 +534,19 @@ void ObjectService::OnObjectHarvestedNotify(const NotifyObjectHarvested& acMessa
         ApplyHarvested(pObject);
     else
         RestoreHarvested(pObject);
+}
+
+void ObjectService::OnWorldItemTakenNotify(const NotifyWorldItemTaken& acMessage) noexcept
+{
+    const uint32_t cObjectId = World::Get().GetModSystem().GetGameId(acMessage.Id);
+    TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(cObjectId));
+    if (!pObject)
+    {
+        spdlog::error("{}: world item not found for form id {:X}", __FUNCTION__, cObjectId);
+        return;
+    }
+
+    ApplyWorldItemTaken(pObject);
 }
 
 void ObjectService::OnLockChange(const LockChangeEvent& acEvent) noexcept

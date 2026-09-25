@@ -10,8 +10,10 @@
 #include <Events/UpdateEvent.h>
 
 #include <Messages/ActivateRequest.h>
+#include <Messages/TakeWorldItemRequest.h>
 #include <Messages/NotifyActivate.h>
 #include <Messages/NotifyObjectHarvested.h>
+#include <Messages/NotifyWorldItemTaken.h>
 #include <Messages/LockChangeRequest.h>
 #include <Messages/NotifyLockChange.h>
 #include <Messages/AssignObjectsRequest.h>
@@ -19,12 +21,42 @@
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
 
+#include <cstddef>
+
+namespace
+{
+bool IsPlayerInObjectRange(const Player& acPlayer, const CellIdComponent& acObjectCell) noexcept
+{
+    const auto& playerCell = acPlayer.GetCellComponent();
+    return ObjectInteractionPolicy::CanInteract(
+        acObjectCell.Cell, playerCell.Cell, playerCell.WorldSpaceId, playerCell.CenterCoords,
+        acObjectCell.Cell, acObjectCell.WorldSpaceId, acObjectCell.CenterCoords);
+}
+
+template <typename TMessage>
+std::size_t NotifyObjectPeersInRange(World& aWorld, const TMessage& acMessage, const CellIdComponent& acObjectCell, const Player* apExcluded) noexcept
+{
+    std::size_t notifiedPlayers = 0;
+    for (Player* pPlayer : aWorld.GetPlayerManager())
+    {
+        if (pPlayer == apExcluded || !IsPlayerInObjectRange(*pPlayer, acObjectCell))
+            continue;
+
+        pPlayer->Send(acMessage);
+        ++notifiedPlayers;
+    }
+
+    return notifiedPlayers;
+}
+} // namespace
+
 ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher)
     : m_world(aWorld)
 {
     m_leaveCellConnection = aDispatcher.sink<PlayerLeaveCellEvent>().connect<&ObjectService::OnPlayerLeaveCellEvent>(this);
     m_assignObjectConnection = aDispatcher.sink<PacketEvent<AssignObjectsRequest>>().connect<&ObjectService::OnAssignObjectsRequest>(this);
     m_activateConnection = aDispatcher.sink<PacketEvent<ActivateRequest>>().connect<&ObjectService::OnActivate>(this);
+    m_takeWorldItemConnection = aDispatcher.sink<PacketEvent<TakeWorldItemRequest>>().connect<&ObjectService::OnTakeWorldItem>(this);
     m_lockChangeConnection = aDispatcher.sink<PacketEvent<LockChangeRequest>>().connect<&ObjectService::OnLockChange>(this);
     m_scriptAnimationConnection = aDispatcher.sink<PacketEvent<ScriptAnimationRequest>>().connect<&ObjectService::OnScriptAnimationRequest>(this);
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&ObjectService::OnUpdate>(this);
@@ -33,31 +65,40 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher)
 // TODO(cosideci): the cell handling of objects need to be revamped.
 // We already store the location and worldspace of the mod through CellIdComponent.
 // Clients need a message saying the entity was destroyed.
-void ObjectService::OnPlayerLeaveCellEvent(const PlayerLeaveCellEvent& acEvent) noexcept
+void ObjectService::OnPlayerLeaveCellEvent(const PlayerLeaveCellEvent&) noexcept
 {
-    for (Player* pPlayer : m_world.GetPlayerManager())
-    {
-        if (pPlayer->GetCellComponent().Cell == acEvent.OldCell)
-            return;
-    }
+    PruneUnobservedObjects();
+}
 
+void ObjectService::PruneUnobservedObjects() noexcept
+{
     auto objectView = m_world.view<ObjectComponent, CellIdComponent>();
     Vector<entt::entity> toDestroy;
 
-    for (auto entity : objectView)
+    for (const auto entity : objectView)
     {
-        const auto& cellIdComponent = objectView.get<CellIdComponent>(entity);
+        const auto& objectComponent = objectView.get<ObjectComponent>(entity);
+        const auto& objectCell = objectView.get<CellIdComponent>(entity);
 
-        if (cellIdComponent.Cell != acEvent.OldCell)
+        if (ObjectInteractionPolicy::ShouldRetainWorldState(
+                objectComponent.IsLootTaken, objectComponent.IsHarvested, objectComponent.HarvestRespawnAtTick, m_tick))
             continue;
 
-        toDestroy.push_back(entity);
+        bool hasNearbyPlayer = false;
+        for (Player* pPlayer : m_world.GetPlayerManager())
+        {
+            if (IsPlayerInObjectRange(*pPlayer, objectCell))
+            {
+                hasNearbyPlayer = true;
+                break;
+            }
+        }
+        if (!hasNearbyPlayer)
+            toDestroy.push_back(entity);
     }
 
-    for (auto& entity : toDestroy)
-    {
+    for (const auto entity : toDestroy)
         m_world.destroy(entity);
-    }
 }
 
 // NOTE: this whole system kinda relies on all objects in a cell being static.
@@ -101,6 +142,9 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.IsHarvestable = objectComponent.IsHarvestable;
             objectData.IsHarvestItem = objectComponent.IsHarvestItem;
             objectData.IsHarvested = objectComponent.IsHarvested;
+            objectData.IsOpenLoot = objectComponent.IsOpenLoot;
+            objectData.IsLootTaken = objectComponent.IsLootTaken;
+            objectData.IsFurniture = objectComponent.IsFurniture;
             objectData.IsDoor = objectComponent.IsDoor;
             objectData.IsDoorStateKnown = objectComponent.Door.IsKnown;
             objectData.IsDoorOpen = objectComponent.Door.IsOpen;
@@ -128,6 +172,8 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             auto& objectComponent = m_world.emplace<ObjectComponent>(cEntity, acMessage.pPlayer);
             objectComponent.IsHarvestable = object.IsHarvestable;
             objectComponent.IsHarvestItem = object.IsHarvestable && object.IsHarvestItem;
+            objectComponent.IsOpenLoot = object.IsOpenLoot && !object.IsHarvestable;
+            objectComponent.IsFurniture = object.IsFurniture;
             objectComponent.IsDoor = object.IsDoor;
             objectComponent.IsActivator = object.IsActivator && !object.IsDoor && !object.IsHarvestable;
 
@@ -140,6 +186,8 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.IsStateUntrusted = true;
             objectData.IsHarvestable = object.IsHarvestable;
             objectData.IsHarvestItem = objectComponent.IsHarvestItem;
+            objectData.IsOpenLoot = objectComponent.IsOpenLoot;
+            objectData.IsFurniture = objectComponent.IsFurniture;
             objectData.IsDoor = object.IsDoor;
             objectData.IsActivator = objectComponent.IsActivator;
 
@@ -149,6 +197,50 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
 
     if (!response.Objects.empty())
         acMessage.pPlayer->Send(response);
+}
+
+void ObjectService::OnTakeWorldItem(const PacketEvent<TakeWorldItemRequest>& acMessage) noexcept
+{
+    const auto& packet = acMessage.Packet;
+    const auto objectView = m_world.view<FormIdComponent, ObjectComponent, CellIdComponent>();
+    const auto objectIt = std::find_if(
+        objectView.begin(), objectView.end(),
+        [objectView, id = packet.Id](const auto entity) { return objectView.get<FormIdComponent>(entity).Id == id; });
+    if (objectIt == objectView.end())
+        return;
+
+    const auto& senderCell = acMessage.pPlayer->GetCellComponent();
+    const auto& objectCell = objectView.get<CellIdComponent>(*objectIt);
+    auto& objectComponent = objectView.get<ObjectComponent>(*objectIt);
+
+    const auto activatorEntity = static_cast<entt::entity>(packet.ActivatorId);
+    const auto activatorView = m_world.view<CharacterComponent, OwnerComponent, CellIdComponent>();
+    const auto activatorIt = activatorView.find(activatorEntity);
+    const bool activatorExists = activatorIt != activatorView.end();
+    const bool ownedBySender = activatorExists && activatorView.get<OwnerComponent>(*activatorIt).GetOwner() == acMessage.pPlayer;
+    if (!activatorExists)
+        return;
+
+    const auto& activatorCell = activatorView.get<CellIdComponent>(*activatorIt);
+    std::size_t notifiedPlayers = 0;
+    const bool taken = ObjectInteractionPolicy::TryTakeWorldItem(
+        true, // No server-side static object records yet; client discovery is the only source. Tighten once they exist.
+        objectComponent.IsOpenLoot && !objectComponent.IsHarvestable,
+        objectComponent.IsLootTaken, activatorExists, ownedBySender,
+        packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+        activatorCell.Cell, activatorCell.WorldSpaceId, activatorCell.CenterCoords,
+        objectCell.Cell, objectCell.WorldSpaceId, objectCell.CenterCoords,
+        [&]
+        {
+            NotifyWorldItemTaken notify{};
+            notify.Id = packet.Id;
+            notifiedPlayers = NotifyObjectPeersInRange(m_world, notify, objectCell, acMessage.pPlayer);
+        });
+
+    if (taken)
+        spdlog::info("[World] loot {:X}:{:X} taken; notified {} peer(s)", packet.Id.ModId, packet.Id.BaseId, notifiedPlayers);
+    else
+        spdlog::debug("World loot pickup {:X}:{:X} rejected (already taken or not authorized/in range)", packet.Id.ModId, packet.Id.BaseId);
 }
 
 void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) const noexcept
@@ -183,6 +275,7 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
 
     if (objectComponent.IsHarvestable)
     {
+        std::size_t notifiedPlayers = 0;
         const bool harvested = ObjectInteractionPolicy::TryHarvest(
             true, objectComponent.IsHarvested, activatorExists, ownedBySender,
             packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
@@ -194,14 +287,13 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
                 notifyHarvested.Id = packet.Id;
                 notifyHarvested.IsHarvested = true;
 
-                for (Player* pPlayer : m_world.GetPlayerManager())
-                {
-                    if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == packet.CellId)
-                        pPlayer->Send(notifyHarvested);
-                }
+                notifiedPlayers = NotifyObjectPeersInRange(m_world, notifyHarvested, objectCell, acMessage.pPlayer);
             });
         if (harvested)
+        {
             objectComponent.HarvestRespawnAtTick = ObjectInteractionPolicy::HarvestRespawnTick(m_tick, objectComponent.IsHarvestItem);
+            spdlog::info("[World] harvest {:X}:{:X} accepted; notified {} peer(s)", packet.Id.ModId, packet.Id.BaseId, notifiedPlayers);
+        }
         else
             spdlog::info("Harvest of {:X}:{:X} rejected (already harvested or out of range)", packet.Id.ModId, packet.Id.BaseId);
         return;
@@ -209,6 +301,7 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
 
     if (objectComponent.IsDoor)
     {
+        std::size_t recipientCount = 0;
         const bool toggled = ObjectInteractionPolicy::TryToggleDoor(
             true, objectComponent.Door, packet.PreActivationOpenState, activatorExists, ownedBySender,
             packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
@@ -220,20 +313,18 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
                 notifyActivate.Id = packet.Id;
                 notifyActivate.ActivatorId = packet.ActivatorId;
                 notifyActivate.PreActivationOpenState = packet.PreActivationOpenState;
-
-                for (Player* pPlayer : m_world.GetPlayerManager())
-                {
-                    if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == packet.CellId)
-                        pPlayer->Send(notifyActivate);
-                }
+                recipientCount = NotifyObjectPeersInRange(m_world, notifyActivate, objectCell, acMessage.pPlayer);
             });
-        if (!toggled)
-            spdlog::info("Door toggle of {:X}:{:X} rejected (stale state {} or not allowed)", packet.Id.ModId, packet.Id.BaseId, packet.PreActivationOpenState);
+        if (toggled)
+            spdlog::info("[World] door {:X}:{:X} is now {} (player {:X}, cell {:X}:{:X}, peers {})", packet.Id.ModId, packet.Id.BaseId, objectComponent.Door.IsOpen ? "open" : "closed", acMessage.pPlayer->GetId(), objectCell.Cell.ModId, objectCell.Cell.BaseId, recipientCount);
+        else
+            spdlog::info("[World] door {:X}:{:X} toggle rejected (player {:X}, pre-state {}, requested cell {:X}:{:X}, object cell {:X}:{:X})", packet.Id.ModId, packet.Id.BaseId, acMessage.pPlayer->GetId(), packet.PreActivationOpenState, packet.CellId.ModId, packet.CellId.BaseId, objectCell.Cell.ModId, objectCell.Cell.BaseId);
         return;
     }
 
     if (objectComponent.IsActivator)
     {
+        std::size_t recipientCount = 0;
         const bool relayed = ObjectInteractionPolicy::TryRelayActivator(
             true, objectComponent.Activator, m_tick, activatorExists, ownedBySender,
             packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
@@ -245,17 +336,12 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
                 notifyActivate.Id = packet.Id;
                 notifyActivate.ActivatorId = packet.ActivatorId;
                 notifyActivate.PreActivationOpenState = packet.PreActivationOpenState;
-
-                for (Player* pPlayer : m_world.GetPlayerManager())
-                {
-                    if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == packet.CellId)
-                        pPlayer->Send(notifyActivate);
-                }
+                recipientCount = NotifyObjectPeersInRange(m_world, notifyActivate, objectCell, acMessage.pPlayer);
             });
         if (relayed)
-            spdlog::info("[World] activator {:X}:{:X} activation #{}", packet.Id.ModId, packet.Id.BaseId, objectComponent.Activator.ActivationCount);
+            spdlog::info("[World] activator {:X}:{:X} activation #{} from player {:X}, cell {:X}:{:X}, peers {}", packet.Id.ModId, packet.Id.BaseId, objectComponent.Activator.ActivationCount, acMessage.pPlayer->GetId(), objectCell.Cell.ModId, objectCell.Cell.BaseId, recipientCount);
         else
-            spdlog::info("Activator {:X}:{:X} activation rejected (cooldown or not allowed)", packet.Id.ModId, packet.Id.BaseId);
+            spdlog::info("[World] activator {:X}:{:X} activation rejected (player {:X}, requested cell {:X}:{:X}, object cell {:X}:{:X}, cooldown or range/ownership)", packet.Id.ModId, packet.Id.BaseId, acMessage.pPlayer->GetId(), packet.CellId.ModId, packet.CellId.BaseId, objectCell.Cell.ModId, objectCell.Cell.BaseId);
         return;
     }
 
@@ -271,13 +357,7 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
     notifyActivate.ActivatorId = packet.ActivatorId;
     notifyActivate.PreActivationOpenState = packet.PreActivationOpenState;
 
-    for (auto pPlayer : m_world.GetPlayerManager())
-    {
-        if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == packet.CellId)
-        {
-            pPlayer->Send(notifyActivate);
-        }
-    }
+    NotifyObjectPeersInRange(m_world, notifyActivate, objectCell, acMessage.pPlayer);
 }
 
 void ObjectService::OnUpdate(const UpdateEvent& acEvent) noexcept
@@ -310,15 +390,13 @@ void ObjectService::RespawnHarvestedObjects() noexcept
         notifyRespawned.Id = view.get<FormIdComponent>(entity).Id;
         notifyRespawned.IsHarvested = false;
 
-        const auto& cell = view.get<CellIdComponent>(entity).Cell;
-        for (Player* pPlayer : m_world.GetPlayerManager())
-        {
-            if (pPlayer->GetCellComponent().Cell == cell)
-                pPlayer->Send(notifyRespawned);
-        }
+        const auto& objectCell = view.get<CellIdComponent>(entity);
+        const std::size_t notifiedPlayers = NotifyObjectPeersInRange(m_world, notifyRespawned, objectCell, nullptr);
 
-        spdlog::info("[World] harvest respawn {:X}:{:X} tick={}", notifyRespawned.Id.ModId, notifyRespawned.Id.BaseId, m_tick);
+        spdlog::info("[World] harvest respawn {:X}:{:X} tick={} notified={}", notifyRespawned.Id.ModId, notifyRespawned.Id.BaseId, m_tick, notifiedPlayers);
     }
+
+    PruneUnobservedObjects();
 }
 
 void ObjectService::OnLockChange(const PacketEvent<LockChangeRequest>& acMessage) const noexcept

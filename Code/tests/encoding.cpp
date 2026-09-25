@@ -15,6 +15,8 @@
 
 #include <Messages/ClientMessageFactory.h>
 #include <Messages/ServerMessageFactory.h>
+#include <Messages/NotifyDeathStateChange.h>
+#include <Messages/RequestDeathStateChange.h>
 #include <Structs/Vector2_NetQuantize.h>
 
 #include <TiltedCore/Math.hpp>
@@ -63,6 +65,44 @@ TEST_CASE("Encoding factory", "[encoding.factory]")
         auto pRequest = CastUnique<PartyAcceptInviteRequest>(std::move(pMessage));
         REQUIRE(pRequest->InviterId == request.InviterId);
     }
+}
+
+TEST_CASE("Death state packets carry settled corpse positions", "[encoding.death_state]")
+{
+    RequestDeathStateChange request;
+    request.Id = 42;
+    request.OwnershipEpoch = 3;
+    request.IsDead = true;
+    request.IsSettledPosition = true;
+
+    Buffer clientBuffer(1000);
+    Buffer::Writer clientWriter(&clientBuffer);
+    request.Serialize(clientWriter);
+
+    Buffer::Reader clientReader(&clientBuffer);
+    const ClientMessageFactory clientFactory;
+    auto decodedRequest = CastUnique<RequestDeathStateChange>(clientFactory.Extract(clientReader));
+    REQUIRE(decodedRequest);
+    REQUIRE(*decodedRequest == request);
+
+    NotifyDeathStateChange notification;
+    notification.Id = 42;
+    notification.OwnershipEpoch = 3;
+    notification.IsDead = true;
+    notification.IsSettledPosition = true;
+    notification.Position.x = -1234.f;
+    notification.Position.y = 5678.f;
+    notification.Position.z = 901.f;
+
+    Buffer serverBuffer(1000);
+    Buffer::Writer serverWriter(&serverBuffer);
+    notification.Serialize(serverWriter);
+
+    Buffer::Reader serverReader(&serverBuffer);
+    const ServerMessageFactory serverFactory;
+    auto decodedNotification = CastUnique<NotifyDeathStateChange>(serverFactory.Extract(serverReader));
+    REQUIRE(decodedNotification);
+    REQUIRE(*decodedNotification == notification);
 }
 
 TEST_CASE("AssignObjectsResponse preserves provisional object state", "[encoding.object_authority]")
@@ -117,6 +157,53 @@ TEST_CASE("AssignObjectsResponse carries harvest state", "[encoding.object_autho
     REQUIRE(received->Objects.front() == object);
 }
 
+TEST_CASE("AssignObjectsResponse carries furniture discovery state", "[encoding.object_authority][furniture]")
+{
+    AssignObjectsResponse sent;
+    ObjectData object{};
+    object.ServerId = 13;
+    object.Id = GameId{1, 0x360};
+    object.IsFurniture = true;
+    sent.Objects.push_back(object);
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<AssignObjectsResponse>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(received->Objects.size() == 1);
+    REQUIRE(received->Objects.front().IsFurniture);
+    REQUIRE(received->Objects.front() == object);
+}
+
+TEST_CASE("AssignObjectsResponse carries open loot state", "[encoding.object_authority][world_loot]")
+{
+    AssignObjectsResponse sent;
+    ObjectData object{};
+    object.ServerId = 11;
+    object.Id = GameId{1, 0x350};
+    object.IsStateUntrusted = true;
+    object.IsOpenLoot = true;
+    object.IsLootTaken = true;
+    sent.Objects.push_back(object);
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<AssignObjectsResponse>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(received->Objects.size() == 1);
+    REQUIRE(received->Objects.front().IsOpenLoot);
+    REQUIRE(received->Objects.front().IsLootTaken);
+    REQUIRE(received->Objects.front() == object);
+}
+
 TEST_CASE("AssignObjectsResponse carries door state", "[encoding.object_authority][door]")
 {
     AssignObjectsResponse sent;
@@ -153,6 +240,40 @@ TEST_CASE("NotifyObjectHarvested round-trips", "[encoding.object_authority][harv
     Buffer::Reader reader(&buffer);
     const ServerMessageFactory factory;
     auto received = CastUnique<NotifyObjectHarvested>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(*received == sent);
+}
+
+TEST_CASE("TakeWorldItemRequest round-trips", "[encoding.object_authority][world_loot]")
+{
+    TakeWorldItemRequest sent;
+    sent.Id = GameId{2, 0x456};
+    sent.CellId = GameId{0, 0x1234};
+    sent.ActivatorId = 0xABC;
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ClientMessageFactory factory;
+    auto received = CastUnique<TakeWorldItemRequest>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(*received == sent);
+}
+
+TEST_CASE("NotifyWorldItemTaken round-trips", "[encoding.object_authority][world_loot]")
+{
+    NotifyWorldItemTaken sent;
+    sent.Id = GameId{2, 0x456};
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<NotifyWorldItemTaken>(factory.Extract(reader));
     REQUIRE(received);
     REQUIRE(*received == sent);
 }
@@ -271,7 +392,7 @@ TEST_CASE("Differential structures", "[encoding.differential]")
         sendAction.IdleId = 87964;
         sendAction.State2 = 8963;
         sendAction.TargetEventName = "toast";
-        sendAction.TargetId = 963741;
+        sendAction.TargetId = GameId{0x12, 963741};
         sendAction.Type = 4;
 
         {
@@ -315,7 +436,7 @@ TEST_CASE("Differential structures", "[encoding.differential]")
         sendAction.IdleId = 87964;
         sendAction.State2 = 8963;
         sendAction.TargetEventName = "toast";
-        sendAction.TargetId = 963741;
+        sendAction.TargetId = GameId{0x12, 963741};
         sendAction.Type = 4;
 
         {
@@ -498,7 +619,7 @@ TEST_CASE("Packets", "[encoding.packets]")
         sendAction.IdleId = 87964;
         sendAction.State2 = 8963;
         sendAction.TargetEventName = "toast";
-        sendAction.TargetId = 963741;
+        sendAction.TargetId = GameId{0x12, 963741};
         sendAction.Type = 4;
 
         AssignCharacterRequest sendMessage, recvMessage;
@@ -617,4 +738,31 @@ TEST_CASE("AssignObjectsResponse carries activator state", "[encoding.object_aut
     REQUIRE(received->Objects.size() == 1);
     REQUIRE(received->Objects.front().ActivationCount == 300);
     REQUIRE(received->Objects.front() == object);
+}
+
+TEST_CASE("Furniture denial carries the authoritative position to the owning client", "[encoding.furniture]")
+{
+    NotifyFurnitureUseDenied sent;
+    sent.ActorId = 45;
+    sent.OwnershipEpoch = 3;
+    sent.AuthoritativeMovement.WorldSpaceId = GameId{2, 0x100};
+    sent.AuthoritativeMovement.CellId = GameId{1, 0x200};
+    sent.AuthoritativeMovement.Position.x = 120.f;
+    sent.AuthoritativeMovement.Position.y = -42.f;
+    sent.AuthoritativeMovement.Position.z = 96.f;
+    sent.AuthoritativeMovement.Rotation.x = 15.f;
+    sent.AuthoritativeMovement.Rotation.y = -35.f;
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<NotifyFurnitureUseDenied>(factory.Extract(reader));
+
+    REQUIRE(received);
+    REQUIRE(received->ActorId == sent.ActorId);
+    REQUIRE(received->OwnershipEpoch == sent.OwnershipEpoch);
+    REQUIRE(received->AuthoritativeMovement == sent.AuthoritativeMovement);
 }

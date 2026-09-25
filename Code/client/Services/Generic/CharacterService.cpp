@@ -2,6 +2,7 @@
 #include "Forms/TESWorldSpace.h"
 #include "Services/PapyrusService.h"
 #include <Services/CharacterService.h>
+#include <Services/CharacterInventoryPolicy.h>
 #include <Services/QuestService.h>
 #include <Services/TransportService.h>
 
@@ -41,6 +42,7 @@
 #include <Messages/AssignCharacterRequest.h>
 #include <Messages/AssignCharacterResponse.h>
 #include <Messages/NotifyCharacterAssignmentRejected.h>
+#include <Messages/NotifyFurnitureUseDenied.h>
 #include <Messages/ServerReferencesMoveRequest.h>
 #include <Messages/ClientReferencesMoveRequest.h>
 #include <Messages/CharacterSpawnRequest.h>
@@ -63,6 +65,7 @@
 #include <Messages/NotifyActorTeleport.h>
 #include <Structs/MovementAuthorityPolicy.h>
 #include <Structs/FactionAuthorityPolicy.h>
+#include <Misc/BSFixedString.h>
 
 #include <World.h>
 #include <Games/TES.h>
@@ -87,6 +90,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
     m_assignmentRejectedConnection = m_dispatcher.sink<NotifyCharacterAssignmentRejected>().connect<&CharacterService::OnCharacterAssignmentRejected>(this);
     m_characterSpawnConnection = m_dispatcher.sink<CharacterSpawnRequest>().connect<&CharacterService::OnCharacterSpawn>(this);
     m_referenceMovementSnapshotConnection = m_dispatcher.sink<ServerReferencesMoveRequest>().connect<&CharacterService::OnReferencesMoveRequest>(this);
+    m_furnitureUseDeniedConnection = m_dispatcher.sink<NotifyFurnitureUseDenied>().connect<&CharacterService::OnFurnitureUseDenied>(this);
     m_factionsConnection = m_dispatcher.sink<NotifyFactionsChanges>().connect<&CharacterService::OnFactionsChanges>(this);
     m_ownershipTransferConnection = m_dispatcher.sink<NotifyOwnershipTransfer>().connect<&CharacterService::OnOwnershipTransfer>(this);
     m_removeCharacterConnection = m_dispatcher.sink<NotifyRemoveCharacter>().connect<&CharacterService::OnRemoveCharacter>(this);
@@ -678,6 +682,42 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 #if (!IS_MASTER)
     m_world.emplace_or_replace<ReplayedActionsDebugComponent>(*entity, acMessage.ActionsToReplay);
 #endif
+}
+
+void CharacterService::OnFurnitureUseDenied(const NotifyFurnitureUseDenied& acMessage) const noexcept
+{
+    auto view = m_world.view<LocalComponent, FormIdComponent>();
+    const auto itor = std::find_if(std::begin(view), std::end(view), [id = acMessage.ActorId, epoch = acMessage.OwnershipEpoch, view](entt::entity entity)
+    {
+        const auto& local = view.get<LocalComponent>(entity);
+        return local.Id == id && local.OwnershipEpoch == epoch;
+    });
+
+    if (itor == std::end(view))
+    {
+        spdlog::debug("Ignored furniture denial for actor {:X} with stale ownership epoch {}",
+                      acMessage.ActorId, acMessage.OwnershipEpoch);
+        return;
+    }
+
+    const auto formId = view.get<FormIdComponent>(*itor).Id;
+    Actor* pActor = Cast<Actor>(TESForm::GetById(formId));
+    if (!pActor)
+    {
+        spdlog::warn("Could not restore actor {:X} after furniture use was denied", acMessage.ActorId);
+        return;
+    }
+
+    BSFixedString getUpEvent("GetUpBegin");
+    const bool getUpSent = pActor->SendAnimationEvent(&getUpEvent);
+    pActor->rotation.x = acMessage.AuthoritativeMovement.Rotation.x;
+    pActor->rotation.z = acMessage.AuthoritativeMovement.Rotation.y;
+    MoveActor(pActor, acMessage.AuthoritativeMovement.WorldSpaceId,
+              acMessage.AuthoritativeMovement.CellId, acMessage.AuthoritativeMovement.Position);
+
+    spdlog::info("Furniture use denied for actor {:X}; sent GetUpBegin: {}, restored position ({:.1f}, {:.1f}, {:.1f})",
+                 acMessage.ActorId, getUpSent, acMessage.AuthoritativeMovement.Position.x,
+                 acMessage.AuthoritativeMovement.Position.y, acMessage.AuthoritativeMovement.Position.z);
 }
 
 void CharacterService::OnReferencesMoveRequest(const ServerReferencesMoveRequest& acMessage) const noexcept
@@ -1899,7 +1939,12 @@ void CharacterService::ProcessLeveledConforms() noexcept
                 if (const auto inventoryIt = m_conformInventories.find(it->first); inventoryIt != m_conformInventories.end())
                 {
                     if (pActor->GetExtension()->IsRemote())
+                    {
+                        const auto wornEntries = std::count_if(inventoryIt->second.Entries.begin(), inventoryIt->second.Entries.end(), [](const auto& aEntry) { return aEntry.IsWorn(); });
+                        spdlog::info("Reapplying preserved inventory for remote actor {:X} after leveled NPC reconciliation ({} entries, {} worn)",
+                            it->first, inventoryIt->second.Entries.size(), wornEntries);
                         pActor->SetActorInventory(inventoryIt->second);
+                    }
 
                     m_conformInventories.erase(inventoryIt);
                 }
@@ -1955,7 +2000,25 @@ void CharacterService::ProcessLeveledConforms() noexcept
         // Wait for the disabled flag and old 3D removal before changing the base.
         // A restarted rebuild keeps the first snapshot; the current equipment may already be the reset one.
         if (pActor->GetExtension()->IsRemote())
-            m_conformInventories.try_emplace(it->first, pActor->GetActorInventory());
+        {
+            const Inventory currentInventory = pActor->GetActorInventory();
+            const auto waitingView = m_world.view<FormIdComponent, WaitingFor3D>();
+            const auto waitingIt = std::find_if(waitingView.begin(), waitingView.end(), [waitingView, formId = it->first](const auto aEntity)
+            {
+                return waitingView.get<FormIdComponent>(aEntity).Id == formId;
+            });
+            const Inventory* pPendingSpawnInventory = waitingIt != waitingView.end()
+                ? &waitingView.get<WaitingFor3D>(*waitingIt).SpawnRequest.InventoryContent
+                : nullptr;
+            const Inventory& inventorySnapshot = CharacterInventoryPolicy::GetLeveledConformSnapshot(currentInventory, pPendingSpawnInventory);
+            const auto [inventoryIt, inserted] = m_conformInventories.try_emplace(it->first, inventorySnapshot);
+            if (inserted)
+            {
+                const auto wornEntries = std::count_if(inventoryIt->second.Entries.begin(), inventoryIt->second.Entries.end(), [](const auto& aEntry) { return aEntry.IsWorn(); });
+                spdlog::info("Captured {} inventory snapshot for remote actor {:X} before leveled NPC reconciliation ({} entries, {} worn)",
+                    pPendingSpawnInventory ? "pending spawn" : "current actor", it->first, inventoryIt->second.Entries.size(), wornEntries);
+            }
+        }
 
         pActor->DisableImpl();
         stage = ReconciliationStage::WaitingForDisable;

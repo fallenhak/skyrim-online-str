@@ -42,6 +42,7 @@ struct NotifySubtitle;
 struct NotifyActorTeleport;
 struct AuthorityChangedEvent;
 struct NotifyCharacterAssignmentRejected;
+struct NotifyFurnitureUseDenied;
 
 struct Actor;
 struct World;
@@ -71,6 +72,7 @@ struct CharacterService
     void OnAssignCharacter(const AssignCharacterResponse& acMessage) noexcept;
     void OnCharacterAssignmentRejected(const NotifyCharacterAssignmentRejected& acMessage) noexcept;
     void OnCharacterSpawn(const CharacterSpawnRequest& acMessage) const noexcept;
+    void OnFurnitureUseDenied(const NotifyFurnitureUseDenied& acMessage) const noexcept;
     void OnReferencesMoveRequest(const ServerReferencesMoveRequest& acMessage) const noexcept;
     void OnActionEvent(const ActionEvent& acActionEvent) const noexcept;
     void OnFactionsChanges(const NotifyFactionsChanges& acEvent) const noexcept;
@@ -137,8 +139,8 @@ private:
     // Actor form ID -> pick form ID. The active stage lives in ActorExtension.
     // Written from const message handlers, drained by ProcessLeveledConforms.
     mutable Map<uint32_t, uint32_t> m_pendingLeveledConforms{};
-    // Owner inventory of remote actors under reconciliation. Swapping the base resets the
-    // equipment, so it is reapplied once the rebuilt 3D is ready.
+    // Owner inventory of remote actors under reconciliation. Use the spawn snapshot while
+    // 3D is pending because the actor inventory may not be materialized yet; reapply after rebuild.
     mutable Map<uint32_t, Inventory> m_conformInventories{};
     mutable PopulationDisableTracker m_populationDisableTracker{};
 
@@ -157,6 +159,7 @@ private:
     entt::scoped_connection m_assignmentRejectedConnection;
     entt::scoped_connection m_characterSpawnConnection;
     entt::scoped_connection m_referenceMovementSnapshotConnection;
+    entt::scoped_connection m_furnitureUseDeniedConnection;
     entt::scoped_connection m_mountConnection;
     entt::scoped_connection m_notifyMountConnection;
     entt::scoped_connection m_initPackageConnection;

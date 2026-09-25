@@ -11,4 +11,5 @@ struct RemoteAnimationComponent
     ActionEvent LastProcessedAction;
     uint32_t ReplayCount;
     bool ResetAnimationGraphForReplay{false};
+    uint8_t FailedSeatActionAttempts{};
 };

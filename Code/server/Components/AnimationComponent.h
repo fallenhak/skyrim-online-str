@@ -6,10 +6,15 @@
 
 #include <Game/Animation/ActionReplayCache.h>
 #include <Structs/ActionEvent.h>
+#include <Structs/GameId.h>
 
 struct AnimationComponent
 {
     Vector<ActionEvent> Actions;
     ActionEvent CurrentAction;
     ActionReplayCache ActionsReplayCache;
+    GameId FurnitureUseTargetId{};
+    GameId RejectedFurnitureTargetId{};
+    bool HasEnteredFurniture{};
+    bool RejectedFurnitureSawActiveState{};
 };

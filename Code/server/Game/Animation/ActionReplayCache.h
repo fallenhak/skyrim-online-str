@@ -3,6 +3,7 @@
 #include <Structs/ActionEvent.h>
 #include <Structs/ActionReplayChain.h>
 #include <optional>
+#include <string_view>
 
 //
 // Note: the _best_ solution to the 'proper animation state' problem is to implement animation graphs serialization,
@@ -19,6 +20,10 @@ public:
     static constexpr uint32_t kReplayCacheMaxSize = 32;
 
     ActionReplayChain FormRefinedReplayChain() noexcept;
+
+    // Live movement actions are replayed after the client's interpolation delay too.
+    // Use the same instant entry variant used for late-join replay.
+    static ActionEvent NormalizeForImmediateReplay(const ActionEvent& acAction) noexcept;
 
     /// Appends actions to the replay cache
     void AppendAll(const Vector<ActionEvent>& acActions) noexcept;

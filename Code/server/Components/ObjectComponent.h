@@ -16,8 +16,8 @@ struct ObjectComponent
     }
 
     Player* pLastSender;
-    // ObjectService has no authoritative static-reference location or state source.
-    // Client-discovered inventory and lock snapshots remain untrusted until one exists.
+    // ObjectService has no authoritative static-reference type, placement, or state source.
+    // Client-discovered data remains untrusted until one exists.
     bool HasTrustedState{};
     LockData CurrentLockData{};
     // Set by the discovering client and fixed for the entity's lifetime. Receivers
@@ -27,6 +27,11 @@ struct ObjectComponent
     bool IsHarvested{};
     bool IsHarvestItem{};
     std::uint64_t HarvestRespawnAtTick{};
+    // Stable, client-discovered world item; the server owns its taken state.
+    bool IsOpenLoot{};
+    bool IsLootTaken{};
+    // Furniture identity supplied during object discovery; interactions still require a matching server record and range.
+    bool IsFurniture{};
     // Set by the discovering client; receivers re-check the local base form type.
     bool IsDoor{};
     DoorState Door{};

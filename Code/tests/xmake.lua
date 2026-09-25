@@ -6,6 +6,7 @@ target("TPTests")
         ".", "../encoding", "../client", "../server")
     add_headerfiles("**.h")
     add_files("*.cpp|PersistenceTests.cpp|RenewableEncounterRepositoryTests.cpp|SessionServiceTests.cpp|ActorPopulationTests.cpp|CharacterNamePolicyTests.cpp|AuthTokenVerifierTests.cpp")
+    add_files("../server/Game/Animation/ActionReplayCache.cpp", "../server/Game/Animation/AnimationEventLists.cpp")
     add_deps("SkyrimEncoding")
     add_packages(
         "tiltedcore",

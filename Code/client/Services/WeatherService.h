@@ -8,7 +8,7 @@ struct AuthorityChangedEvent;
 struct NotifyWeatherChange;
 
 /**
- * @brief Responsible for weather changes, which is controlled by the shared world's elected authority client.
+ * @brief Replicates the server's canonical weather while one client reports engine-generated transitions.
  */
 struct WeatherService
 {
@@ -27,6 +27,7 @@ protected:
 
     void ToggleGameWeatherSystem(bool aToggle) noexcept;
     void SetCachedWeather() noexcept;
+    void SendCurrentWeatherProposal() noexcept;
 
 private:
     World& m_world;
@@ -34,10 +35,13 @@ private:
 
     /**
     * This variable has two uses:
-    * For the party leader, it is used to detect weather changes.
-    * For non-leaders, it is used to reapply the server weather if it changes.
+    * For the elected reporter, it detects local weather transitions.
+    * For other clients, it reapplies the server's canonical weather.
     */
     uint32_t m_cachedWeatherId{};
+    uint32_t m_lastWorldAuthorityPlayerId{};
+    bool m_hasWorldAuthoritySource{};
+    bool m_waitingForServerWeather{};
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_disconnectConnection;

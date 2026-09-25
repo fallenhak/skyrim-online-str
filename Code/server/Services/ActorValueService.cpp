@@ -8,6 +8,7 @@
 #include <Services/ActorNonOwnerDamagePolicy.h>
 #include <Services/SessionService.h>
 #include <Services/CanonicalCreatureDeathPolicy.h>
+#include <Services/FurnitureUsePolicy.h>
 #include <Events/AcceptedCanonicalHealthDecreaseEvent.h>
 #include <Events/AcceptedCanonicalCreatureDeathEvent.h>
 #include <World.h>
@@ -215,27 +216,56 @@ void ActorValueService::OnDeathStateChange(const PacketEvent<RequestDeathStateCh
 
     auto& characterComponent = characterView.get<CharacterComponent>(*it);
     const bool wasDead = characterComponent.IsDead();
-    if (wasDead == message.IsDead)
+    if (message.IsSettledPosition && !message.IsDead)
         return;
 
-    characterComponent.SetDead(message.IsDead);
+    if (wasDead == message.IsDead && !message.IsSettledPosition)
+        return;
 
     const auto entity = *it;
-    const auto* const pPopulationIdentity = m_world.try_get<ActorPopulationIdentityComponent>(entity);
-    auto* const pLifecycle = m_world.try_get<ActorLifecycleComponent>(entity);
-    if (CanonicalCreatureDeathPolicy::TryAcceptTransition(
-            wasDead, &characterComponent, pPopulationIdentity, pLifecycle))
+    if (wasDead != message.IsDead)
     {
-        m_dispatcher.trigger(AcceptedCanonicalCreatureDeathEvent{
-            World::ToInteger(entity), pLifecycle->GetGeneration()});
+        characterComponent.SetDead(message.IsDead);
+
+        if (auto* const pAnimationComponent = m_world.try_get<AnimationComponent>(entity))
+            FurnitureUsePolicy::ClearReservation(
+                pAnimationComponent->FurnitureUseTargetId,
+                pAnimationComponent->RejectedFurnitureTargetId,
+                pAnimationComponent->HasEnteredFurniture,
+                pAnimationComponent->RejectedFurnitureSawActiveState);
+
+        const auto* const pPopulationIdentity = m_world.try_get<ActorPopulationIdentityComponent>(entity);
+        auto* const pLifecycle = m_world.try_get<ActorLifecycleComponent>(entity);
+        if (CanonicalCreatureDeathPolicy::TryAcceptTransition(
+                wasDead, &characterComponent, pPopulationIdentity, pLifecycle))
+        {
+            m_dispatcher.trigger(AcceptedCanonicalCreatureDeathEvent{
+                World::ToInteger(entity), pLifecycle->GetGeneration()});
+        }
     }
 
-    spdlog::debug("Updating death state {:x}:{}", message.Id, message.IsDead);
+    const auto* const pMovement = message.IsSettledPosition ? m_world.try_get<MovementComponent>(entity) : nullptr;
+    if (message.IsSettledPosition && !pMovement)
+        spdlog::warn("[CorpseSync] cannot relay settled position for actor {:X}: movement state is unavailable", message.Id);
 
     NotifyDeathStateChange notify;
     notify.OwnershipEpoch = message.OwnershipEpoch;
     notify.Id = message.Id;
     notify.IsDead = message.IsDead;
+    notify.IsSettledPosition = pMovement != nullptr;
+    if (pMovement)
+        notify.Position = pMovement->Position;
+
+    if (message.IsDead && pMovement)
+    {
+        spdlog::info(
+            "[CorpseSync] relaying settled position actor {:X} epoch {} at ({:.0f}, {:.0f}, {:.0f})",
+            message.Id, message.OwnershipEpoch, pMovement->Position.x, pMovement->Position.y, pMovement->Position.z);
+    }
+    else
+    {
+        spdlog::debug("Updating death state {:x}:{}", message.Id, message.IsDead);
+    }
 
     const entt::entity cEntity = static_cast<entt::entity>(message.Id);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cEntity, acMessage.pPlayer))

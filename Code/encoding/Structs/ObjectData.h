@@ -29,6 +29,10 @@ struct ObjectData
     // Placed ingredient (item) rather than flora: respawns on the longer timer.
     bool IsHarvestItem{};
     bool IsHarvested{};
+    // Stable plugin-placed pickupable item (not a temporary player drop).
+    bool IsOpenLoot{};
+    bool IsLootTaken{};
+    bool IsFurniture{};
     // A non-load door; the open state is owned by the server once known.
     bool IsDoor{};
     bool IsDoorStateKnown{};

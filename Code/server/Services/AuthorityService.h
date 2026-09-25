@@ -1,7 +1,5 @@
 #pragma once
 
-#include <Structs/GameId.h>
-
 struct World;
 struct Player;
 
@@ -20,10 +18,7 @@ struct AuthorityService
 
     [[nodiscard]] bool CanClaimActor(Player* apClaimant, Player* apCurrentOwner) const noexcept;
     [[nodiscard]] bool IsWorldAuthority(const Player* apPlayer) const noexcept;
-    bool TrySetWeatherState(Player* apPlayer, const GameId& acWeather) noexcept;
-    [[nodiscard]] bool TryGetWeatherState(Player* apPlayer, GameId& aWeather) const noexcept;
 
 private:
     World& m_world;
-    GameId m_weatherState{};
 };
