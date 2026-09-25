@@ -1062,7 +1062,7 @@ void TP_MAKE_THISCALL(HookAddInventoryItem, TESObjectREFR, TESBoundObject* apIte
             apThis->GetItemFromExtraData(item, apExtraData);
 
         // The container half of a player "put"; the server applies it with RequestContainerTransfer.
-        const bool isContainerTransfer = apOldOwner == PlayerCharacter::Get() && ContainerTransfers::GetSyncedContainerServerId(apThis);
+        const bool isContainerTransfer = apOldOwner == PlayerCharacter::Get() && ContainerTransfers::GetSyncedTarget(apThis);
         if (!isContainerTransfer)
             QueueReferenceInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item)), apOldOwner);
     }
@@ -1094,13 +1094,14 @@ TP_MAKE_THISCALL(HookRemoveInventoryItem, TESObjectREFR, BSPointerHandle<TESObje
         // The other half (the add on the receiving side) is suppressed in its hook.
         const TESObjectREFR* pPlayer = PlayerCharacter::Get();
         TESObjectREFR* pContainer = apMoveToRef == pPlayer ? apThis : (apThis == pPlayer ? apMoveToRef : nullptr);
-        const auto containerServerId = ContainerTransfers::GetSyncedContainerServerId(pContainer);
+        const auto target = ContainerTransfers::GetSyncedTarget(pContainer);
 
-        if (containerServerId && aCount > 0)
+        if (target && aCount > 0)
         {
             ContainerTransferEvent transfer{};
             transfer.ContainerFormId = pContainer->formID;
-            transfer.ContainerServerId = *containerServerId;
+            transfer.ContainerServerId = target->ServerId;
+            transfer.TargetKind = static_cast<uint8_t>(target->Kind);
             transfer.Direction = apThis == pContainer ? 0 : 1;
             transfer.Item = item;
             transfer.Item.Count = aCount;

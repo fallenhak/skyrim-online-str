@@ -146,3 +146,78 @@ TEST_CASE("A put is checked against the container, not the owner-reported player
     REQUIRE(ContainerTransferPolicy::TryTransfer(other, 1, 10, true, kPut, Item(1), 1, chest, otherPack) == ContainerTransferResult::kStale);
     REQUIRE(ContainerTransferPolicy::CountOf(chest, Item(1)) == 4);
 }
+
+TEST_CASE("Only a dead NPC corpse accepts takes", "[container_transfer][corpse]")
+{
+    // player, dead, removal queued, direction, in range
+    REQUIRE(ContainerTransferPolicy::IsCorpseTransferAllowed(false, true, false, kTake, true));
+
+    REQUIRE_FALSE(ContainerTransferPolicy::IsCorpseTransferAllowed(false, false, false, kTake, true)); // living actor
+    REQUIRE_FALSE(ContainerTransferPolicy::IsCorpseTransferAllowed(true, true, false, kTake, true));   // player corpse
+    REQUIRE_FALSE(ContainerTransferPolicy::IsCorpseTransferAllowed(false, true, true, kTake, true));   // expired, being removed
+    REQUIRE_FALSE(ContainerTransferPolicy::IsCorpseTransferAllowed(false, true, false, kPut, true));   // putting into a corpse
+    REQUIRE_FALSE(ContainerTransferPolicy::IsCorpseTransferAllowed(false, true, false, kTake, false)); // out of range
+}
+
+TEST_CASE("A retained creature corpse's inventory is server-owned until it is queued for removal", "[container_transfer][corpse]")
+{
+    // player, dead, marker, removal queued
+    REQUIRE(ContainerTransferPolicy::IsServerOwnedCorpse(false, true, true, false));
+
+    REQUIRE_FALSE(ContainerTransferPolicy::IsServerOwnedCorpse(false, true, false, false)); // humanoid corpse: no marker
+    REQUIRE_FALSE(ContainerTransferPolicy::IsServerOwnedCorpse(false, false, true, false)); // respawned
+    REQUIRE_FALSE(ContainerTransferPolicy::IsServerOwnedCorpse(true, true, true, false));
+    REQUIRE_FALSE(ContainerTransferPolicy::IsServerOwnedCorpse(false, true, true, true));
+}
+
+TEST_CASE("Two players taking the last item from a corpse: one wins and nothing is duplicated", "[container_transfer][corpse]")
+{
+    ContainerTransferSession alice;
+    ContainerTransferSession bob;
+    Inventory corpse = Holding(1);
+    Inventory alicePack = Holding(0);
+    Inventory bobPack = Holding(0);
+    const bool allowed = ContainerTransferPolicy::IsCorpseTransferAllowed(false, true, false, kTake, true);
+
+    REQUIRE(ContainerTransferPolicy::TryTransfer(alice, 1, 10, allowed, kTake, Item(1), 1, corpse, alicePack) == kAccepted);
+    REQUIRE(ContainerTransferPolicy::TryTransfer(bob, 1, 10, allowed, kTake, Item(1), 1, corpse, bobPack) == ContainerTransferResult::kStale);
+
+    REQUIRE(ContainerTransferPolicy::CountOf(corpse, Item(1)) == 0);
+    REQUIRE(ContainerTransferPolicy::CountOf(alicePack, Item(1)) == 1);
+    REQUIRE(ContainerTransferPolicy::CountOf(bobPack, Item(1)) == 0);
+}
+
+TEST_CASE("Takes from an orphaned corpse and rejections after expiry or into a corpse leave inventories untouched", "[container_transfer][corpse]")
+{
+    ContainerTransferSession session;
+    Inventory corpse = Holding(2);
+    Inventory player = Holding(1);
+
+    // No owner is involved: the server applies the take for whoever is in range.
+    REQUIRE(ContainerTransferPolicy::TryTransfer(
+                session, 1, 10, ContainerTransferPolicy::IsCorpseTransferAllowed(false, true, false, kTake, true), kTake, Item(1), 2, corpse,
+                player) == kAccepted);
+
+    const bool expired = ContainerTransferPolicy::IsCorpseTransferAllowed(false, true, true, kTake, true);
+    REQUIRE(ContainerTransferPolicy::TryTransfer(session, 2, 10, expired, kTake, Item(1), 1, corpse, player) == ContainerTransferResult::kNotAllowed);
+
+    const bool put = ContainerTransferPolicy::IsCorpseTransferAllowed(false, true, false, kPut, true);
+    REQUIRE(ContainerTransferPolicy::TryTransfer(session, 3, 10, put, kPut, Item(1), 1, corpse, player) == ContainerTransferResult::kNotAllowed);
+
+    REQUIRE(ContainerTransferPolicy::CountOf(corpse, Item(1)) == 1);
+    REQUIRE(ContainerTransferPolicy::CountOf(player, Item(1)) == 2);
+}
+
+TEST_CASE("The owner's broadcast seeds a retained corpse until the first take", "[container_transfer][corpse]")
+{
+    // player, dead, marker, removal queued, seed closed
+    // Death items (pelts, DeathItem lists) reach the server after the corpse is marked: still accepted.
+    REQUIRE_FALSE(ContainerTransferPolicy::IgnoresOwnerInventoryBroadcast(false, true, true, false, false));
+    // After someone took from it the server copy is authoritative.
+    REQUIRE(ContainerTransferPolicy::IgnoresOwnerInventoryBroadcast(false, true, true, false, true));
+
+    // Not a server-owned corpse: the broadcast is handled as before.
+    REQUIRE_FALSE(ContainerTransferPolicy::IgnoresOwnerInventoryBroadcast(false, true, false, false, true)); // humanoid corpse
+    REQUIRE_FALSE(ContainerTransferPolicy::IgnoresOwnerInventoryBroadcast(false, true, true, true, true));   // being removed
+    REQUIRE_FALSE(ContainerTransferPolicy::IgnoresOwnerInventoryBroadcast(true, true, true, false, true));   // player
+}

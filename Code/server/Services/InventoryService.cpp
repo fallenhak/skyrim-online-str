@@ -51,6 +51,18 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
 
     const auto* pOwnerComponent = m_world.try_get<OwnerComponent>(*it);
     const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(*it);
+
+    // Once looting started, a retained corpse's inventory changes only through RequestContainerTransfer;
+    // the owner's broadcast would race the server copy.
+    if (const auto* pCorpseMarker = pCharacterComponent ? m_world.try_get<CorpseRetentionComponent>(*it) : nullptr;
+        pCorpseMarker && ContainerTransferPolicy::IgnoresOwnerInventoryBroadcast(
+                             pCharacterComponent->IsPlayer(), pCharacterComponent->IsDead(), true, pCorpseMarker->RemovalQueued,
+                             pCorpseMarker->OwnerSeedClosed))
+    {
+        spdlog::debug("Ignored inventory change from player {:X} for retained corpse {:X}", acMessage.pPlayer->GetId(), message.ServerId);
+        return;
+    }
+
     const auto* pCellComponent = m_world.try_get<CellIdComponent>(*it);
     const auto* pPersistentCharacterComponent = m_world.try_get<PersistentCharacterComponent>(*it);
     const auto* pObjectComponent = m_world.try_get<ObjectComponent>(*it);
@@ -197,10 +209,16 @@ void InventoryService::OnContainerTransfer(const PacketEvent<RequestContainerTra
     const uint64_t nowSecond = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 
+    const auto target = static_cast<ContainerTransferTarget>(message.TargetKind);
+    const bool isCorpseTarget = target == ContainerTransferTarget::kCorpse;
     const auto containerEntity = static_cast<entt::entity>(message.ContainerId);
-    auto* pObjectComponent = m_world.valid(containerEntity) ? m_world.try_get<ObjectComponent>(containerEntity) : nullptr;
-    auto* pContainerInventory = pObjectComponent ? m_world.try_get<InventoryComponent>(containerEntity) : nullptr;
-    const auto* pContainerCell = pObjectComponent ? m_world.try_get<CellIdComponent>(containerEntity) : nullptr;
+    const bool isContainerValid = (target == ContainerTransferTarget::kObject || isCorpseTarget) && m_world.valid(containerEntity);
+    auto* pObjectComponent = isContainerValid && !isCorpseTarget ? m_world.try_get<ObjectComponent>(containerEntity) : nullptr;
+    const auto* pCorpseCharacter = isContainerValid && isCorpseTarget ? m_world.try_get<CharacterComponent>(containerEntity) : nullptr;
+    auto* pCorpseMarker = pCorpseCharacter ? m_world.try_get<CorpseRetentionComponent>(containerEntity) : nullptr;
+    const bool hasContainer = pObjectComponent || pCorpseCharacter;
+    auto* pContainerInventory = hasContainer ? m_world.try_get<InventoryComponent>(containerEntity) : nullptr;
+    const auto* pContainerCell = hasContainer ? m_world.try_get<CellIdComponent>(containerEntity) : nullptr;
 
     const auto characterEntity = pPlayer->GetCharacter();
     auto* pPlayerInventory = characterEntity ? m_world.try_get<InventoryComponent>(*characterEntity) : nullptr;
@@ -211,15 +229,22 @@ void InventoryService::OnContainerTransfer(const PacketEvent<RequestContainerTra
     const bool hasInventories = pContainerInventory && pPlayerInventory && pContainerCell && pCharacterCell;
 
     bool allowed = false;
-    if (hasInventories && pObjectComponent->IsContainer && pObjectComponent->HasTrustedState)
+    if (hasInventories)
     {
         const auto& senderCell = pPlayer->GetCellComponent();
-        allowed = ObjectInteractionPolicy::CanInteract(
-                      pContainerCell->Cell, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
-                      pContainerCell->Cell, pContainerCell->WorldSpaceId, pContainerCell->CenterCoords) &&
+        const bool inRange = ObjectInteractionPolicy::CanInteract(
+                                 pContainerCell->Cell, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
+                                 pContainerCell->Cell, pContainerCell->WorldSpaceId, pContainerCell->CenterCoords) &&
             ObjectInteractionPolicy::IsInSenderRange(
-                      pCharacterCell->Cell, pCharacterCell->WorldSpaceId, pCharacterCell->CenterCoords,
-                      pContainerCell->Cell, pContainerCell->WorldSpaceId, pContainerCell->CenterCoords);
+                                 pCharacterCell->Cell, pCharacterCell->WorldSpaceId, pCharacterCell->CenterCoords,
+                                 pContainerCell->Cell, pContainerCell->WorldSpaceId, pContainerCell->CenterCoords);
+
+        if (pObjectComponent)
+            allowed = pObjectComponent->IsContainer && pObjectComponent->HasTrustedState && inRange;
+        else
+            allowed = ContainerTransferPolicy::IsCorpseTransferAllowed(
+                pCorpseCharacter->IsPlayer(), pCorpseCharacter->IsDead(), pCorpseMarker && pCorpseMarker->RemovalQueued,
+                static_cast<ContainerTransferDirection>(message.Direction), inRange);
     }
 
     bool applied = false;
@@ -234,8 +259,8 @@ void InventoryService::OnContainerTransfer(const PacketEvent<RequestContainerTra
     if (result != ContainerTransferResult::kAccepted)
     {
         spdlog::info(
-            "Container transfer {} from player {:X} rejected ({}): container {:X}, item {:X} x{}", message.RequestId, pPlayer->GetId(),
-            static_cast<int>(result), message.ContainerId, message.Item.BaseId.BaseId, message.Item.Count);
+            "Container transfer {} from player {:X} rejected ({}): {} {:X}, item {:X} x{}", message.RequestId, pPlayer->GetId(),
+            static_cast<int>(result), isCorpseTarget ? "corpse" : "container", message.ContainerId, message.Item.BaseId.BaseId, message.Item.Count);
         return;
     }
 
@@ -243,10 +268,16 @@ void InventoryService::OnContainerTransfer(const PacketEvent<RequestContainerTra
     if (!applied || !hasInventories)
         return;
 
+    if (pCorpseMarker)
+        pCorpseMarker->OwnerSeedClosed = true;
+
     const bool isTake = static_cast<ContainerTransferDirection>(message.Direction) == ContainerTransferDirection::kTake;
 
     NotifyInventoryChanges containerNotify;
     containerNotify.ServerId = message.ContainerId;
+    // Clients resolve actor inventory updates by server id and ownership epoch.
+    if (const auto* pCorpseOwner = isCorpseTarget ? m_world.try_get<OwnerComponent>(containerEntity) : nullptr)
+        containerNotify.OwnershipEpoch = pCorpseOwner->OwnershipEpoch;
     containerNotify.Item = message.Item;
     containerNotify.Item.Count = isTake ? -message.Item.Count : message.Item.Count;
     if (!GameServer::Get()->SendToPlayersInRange(containerNotify, containerEntity, pPlayer))

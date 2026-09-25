@@ -774,6 +774,7 @@ TEST_CASE("RequestContainerTransfer round-trips", "[encoding.container_transfer]
     RequestContainerTransfer sent;
     sent.RequestId = 77;
     sent.ContainerId = 1234;
+    sent.TargetKind = 1;
     sent.Direction = 1;
     sent.ExpectedContainerCount = 5;
     sent.Item.BaseId = GameId{0, 0x13989};

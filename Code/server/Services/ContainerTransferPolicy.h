@@ -21,6 +21,13 @@ enum class ContainerTransferDirection : uint8_t
     kPut = 1,  // player -> container
 };
 
+// What RequestContainerTransfer::ContainerId names.
+enum class ContainerTransferTarget : uint8_t
+{
+    kObject = 0, // a synced container object
+    kCorpse = 1, // a retained creature corpse; its inventory is server-owned
+};
+
 enum class ContainerTransferResult : uint8_t
 {
     kAccepted = 0,
@@ -54,6 +61,33 @@ struct ContainerTransferPolicy final
 {
     // "Take all" on a full chest sends one transfer per item stack in the same second.
     static constexpr uint32_t kMaxTransfersPerSecond = 64;
+
+    // A retained creature corpse (#65) outlives its owner, so its inventory belongs to the server.
+    // Dead, marked and not yet queued for removal; player corpses are never retained.
+    [[nodiscard]] static constexpr bool IsServerOwnedCorpse(
+        const bool aIsPlayer, const bool aIsDead, const bool aHasCorpseMarker, const bool aRemovalQueued) noexcept
+    {
+        return !aIsPlayer && aIsDead && aHasCorpseMarker && !aRemovalQueued;
+    }
+
+    // The owner's broadcast is ignored only once someone has taken from the corpse. Before that it
+    // still seeds the server copy: the engine adds death items on the owner's client right after the
+    // kill, and that broadcast can arrive after the corpse is marked.
+    [[nodiscard]] static constexpr bool IgnoresOwnerInventoryBroadcast(
+        const bool aIsPlayer, const bool aIsDead, const bool aHasCorpseMarker, const bool aRemovalQueued, const bool aOwnerSeedClosed) noexcept
+    {
+        return IsServerOwnedCorpse(aIsPlayer, aIsDead, aHasCorpseMarker, aRemovalQueued) && aOwnerSeedClosed;
+    }
+
+    // Any dead NPC can be looted through the server: the client cannot tell a retained creature
+    // corpse from a humanoid one, and rejecting the latter would undo loot that works today.
+    // Corpses only give items: nothing needs putting into one, and take-only keeps the dupe surface small.
+    [[nodiscard]] static constexpr bool IsCorpseTransferAllowed(
+        const bool aIsPlayer, const bool aIsDead, const bool aRemovalQueued, const ContainerTransferDirection aDirection,
+        const bool aInRange) noexcept
+    {
+        return !aIsPlayer && aIsDead && !aRemovalQueued && aDirection == ContainerTransferDirection::kTake && aInRange;
+    }
 
     [[nodiscard]] static int64_t CountOf(const Inventory& acInventory, const Inventory::Entry& acItem) noexcept
     {
