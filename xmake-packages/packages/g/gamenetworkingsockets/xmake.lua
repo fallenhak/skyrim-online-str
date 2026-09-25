@@ -32,6 +32,9 @@ package("gamenetworkingsockets")
 
     add_configs("webrtc", {description = "Enable P2P with Google's WebRTC.", default = false, type = "boolean"})
     add_configs("ice", {description = "Enable P2P with ICE.", default = true, type = "boolean"})
+    -- Not read by the build: configs are part of the package build hash, so this forces a rebuild
+    -- instead of reusing a cached GNS that the upstream recipe compiled against OpenSSL 3.
+    add_configs("openssl_line", {description = "OpenSSL line GNS is built against (cache key only).", default = "1.1", type = "string"})
 
     on_load("windows", "linux", "macosx", function(package)
         if package:version():gt("1.4.1") then
