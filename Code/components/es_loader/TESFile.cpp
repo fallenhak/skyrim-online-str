@@ -361,6 +361,15 @@ bool TESFile::ReadGroupOrRecord(
                 aRecordCollection.m_locations.insert_or_assign(parsedRecord.GetFormId(), std::move(parsedRecord));
             break;
         }
+        case FormEnum::GLOB:
+        {
+            GLOB parsedRecord;
+            parsedRecord.CopyRecordData(pRecord);
+            parsedRecord.SetBaseId(resolvedFormIdPrefix);
+            if (parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix))
+                aRecordCollection.m_globals.insert_or_assign(parsedRecord.GetFormId(), std::move(parsedRecord));
+            break;
+        }
         case FormEnum::CLMT:
         {
             CLMT parsedRecord = CopyAndParseRecord<CLMT>(pRecord, resolvedFormIdPrefix);

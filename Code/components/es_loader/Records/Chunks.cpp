@@ -116,9 +116,9 @@ ScriptProperty::Type ScriptProperty::GetPropertyType(Type aArrayType) noexcept
     return static_cast<Type>(static_cast<int>(aArrayType) - 10);
 }
 
-CNTO::CNTO(Buffer::Reader& aReader)
+CNTO::CNTO(Buffer::Reader& aReader, Map<uint8_t, uint32_t>& aParentToFormIdPrefix)
 {
-    aReader.ReadBytes(reinterpret_cast<uint8_t*>(&m_formId), 4);
+    m_formId = ReadFormId(aReader, aParentToFormIdPrefix);
     aReader.ReadBytes(reinterpret_cast<uint8_t*>(&m_count), 4);
 }
 

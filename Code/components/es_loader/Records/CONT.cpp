@@ -15,7 +15,7 @@ void CONT::ParseChunks(CONT& aSourceRecord, Map<uint8_t, uint32_t>& aParentToFor
                 // aParsedRecord.m_name = ESLoader::ReadZString(aReader);
                 break;
             case ChunkId::CNTO_ID:
-                Chunks::CNTO cnto(aReader);
+                Chunks::CNTO cnto(aReader, aParentToFormIdPrefix);
                 m_objects.push_back(cnto);
                 break;
             }
