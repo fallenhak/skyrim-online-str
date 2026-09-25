@@ -3,6 +3,7 @@
 #include <Components.h>
 #include <GameServer.h>
 #include <Services/AddTargetAuthorityPolicy.h>
+#include <Services/DropLog.h>
 #include <World.h>
 
 #include <Messages/SpellCastRequest.h>
@@ -29,19 +30,32 @@ void MagicService::OnSpellCastRequest(const PacketEvent<SpellCastRequest>& acMes
 {
     const auto& message = acMessage.Packet;
     if (message.CastingSource < 0 || message.CastingSource >= 4)
+    {
+        DropLog::Info("spell cast: invalid casting source", "player {:X}, caster {:X}, source {}",
+            acMessage.pPlayer->GetId(), message.CasterId, message.CastingSource);
         return;
+    }
 
     const auto characterView = m_world.view<CharacterComponent, OwnerComponent>();
     const auto it = characterView.find(static_cast<entt::entity>(message.CasterId));
     if (it == characterView.end() || !characterView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
+    {
+        DropLog::Info("spell cast: caster not found or not owner", "player {:X}, caster {:X}: {}, epoch {} (current {})",
+            acMessage.pPlayer->GetId(), message.CasterId, it == characterView.end() ? "caster not found" : "not owner", message.OwnershipEpoch,
+            it == characterView.end() ? 0u : characterView.get<OwnerComponent>(*it).OwnershipEpoch);
         return;
+    }
 
     if (message.DesiredTarget != 0)
     {
         const auto targetEntity = static_cast<entt::entity>(message.DesiredTarget);
         if (!m_world.valid(targetEntity) ||
             (!m_world.all_of<CharacterComponent>(targetEntity) && !m_world.all_of<ObjectComponent>(targetEntity)))
+        {
+            DropLog::Info("spell cast: desired target not found", "player {:X}, caster {:X}, target {:X}",
+                acMessage.pPlayer->GetId(), message.CasterId, message.DesiredTarget);
             return;
+        }
     }
 
     NotifySpellCast notify;
@@ -61,12 +75,20 @@ void MagicService::OnInterruptCastRequest(const PacketEvent<InterruptCastRequest
 {
     const auto& message = acMessage.Packet;
     if (message.CastingSource < 0 || message.CastingSource >= 4)
+    {
+        DropLog::Info("interrupt cast: invalid casting source", "player {:X}, caster {:X}, source {}",
+            acMessage.pPlayer->GetId(), message.CasterId, message.CastingSource);
         return;
+    }
 
     const auto characterView = m_world.view<CharacterComponent, OwnerComponent>();
     const auto it = characterView.find(static_cast<entt::entity>(message.CasterId));
     if (it == characterView.end() || !characterView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
+    {
+        DropLog::Info("interrupt cast: caster not found or not owner", "player {:X}, caster {:X}: {}, epoch {}",
+            acMessage.pPlayer->GetId(), message.CasterId, it == characterView.end() ? "caster not found" : "not owner", message.OwnershipEpoch);
         return;
+    }
 
     NotifyInterruptCast notify;
     notify.CasterId = message.CasterId;
@@ -82,7 +104,11 @@ void MagicService::OnAddTargetRequest(const PacketEvent<AddTargetRequest>& acMes
 {
     const auto& message = acMessage.Packet;
     if (!std::isfinite(message.Magnitude))
+    {
+        DropLog::Info("add target: magnitude not finite", "player {:X}, target {:X}, spell {:X}",
+            acMessage.pPlayer->GetId(), message.TargetId, message.SpellId.LogFormat());
         return;
+    }
 
     const auto targetEntity = static_cast<entt::entity>(message.TargetId);
     const bool targetExists = m_world.valid(targetEntity) && m_world.all_of<CharacterComponent>(targetEntity);
@@ -109,7 +135,12 @@ void MagicService::OnAddTargetRequest(const PacketEvent<AddTargetRequest>& acMes
     if (!AddTargetAuthorityPolicy::IsAuthorized(
             targetExists, targetHasOwner, senderOwnsTarget, message.TargetOwnershipEpoch, currentTargetOwnershipEpoch,
             casterIdProvided, casterExists, casterHasOwner, senderOwnsCaster, message.CasterOwnershipEpoch, currentCasterOwnershipEpoch))
+    {
+        DropLog::Info("add target: not authorized", "player {:X}; target {:X} exists {}, owned by sender {}, epoch {} (current {}); caster {:X} exists {}, owned by sender {}, epoch {} (current {})",
+            acMessage.pPlayer->GetId(), message.TargetId, targetExists, senderOwnsTarget, message.TargetOwnershipEpoch, currentTargetOwnershipEpoch,
+            message.CasterId, casterExists, senderOwnsCaster, message.CasterOwnershipEpoch, currentCasterOwnershipEpoch);
         return;
+    }
 
     NotifyAddTarget notify;
     notify.TargetId = message.TargetId;
@@ -135,7 +166,11 @@ void MagicService::OnRemoveSpellRequest(const PacketEvent<RemoveSpellRequest>& a
     const auto it = characterView.find(static_cast<entt::entity>(message.TargetId));
     if (it == characterView.end() ||
         !characterView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.GetSender(), message.OwnershipEpoch))
+    {
+        DropLog::Info("remove spell: target not found or not owner", "player {:X}, target {:X}: {}, epoch {}",
+            acMessage.pPlayer->GetId(), message.TargetId, it == characterView.end() ? "target not found" : "not owner", message.OwnershipEpoch);
         return;
+    }
 
     NotifyRemoveSpell notify;
     notify.TargetId = message.TargetId;

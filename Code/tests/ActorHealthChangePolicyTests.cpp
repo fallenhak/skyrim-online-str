@@ -4,6 +4,7 @@
 #include <catch2/catch.hpp>
 
 #include <limits>
+#include <string>
 
 TEST_CASE("Health authority requires the current owned entity incarnation", "[actor_authority]")
 {
@@ -79,4 +80,21 @@ TEST_CASE("Non-owner damage reports are bounded, current and in range", "[actor_
     REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, false, true, false, 7, 7, -25.f));
     // Player targets are rejected regardless of PvP settings.
     REQUIRE_FALSE(ActorNonOwnerDamagePolicy::IsAccepted(true, false, true, true, true, 7, 7, -25.f));
+}
+
+TEST_CASE("Non-owner damage rejections name their reason", "[actor_authority]")
+{
+    using Result = ActorNonOwnerDamagePolicy::Result;
+
+    REQUIRE(ActorNonOwnerDamagePolicy::Evaluate(true, false, false, true, true, 7, 7, -25.f) == Result::kAccepted);
+    REQUIRE(ActorNonOwnerDamagePolicy::Evaluate(false, false, false, true, true, 7, 7, -25.f) == Result::kNoTarget);
+    REQUIRE(ActorNonOwnerDamagePolicy::Evaluate(true, true, false, true, true, 7, 7, -25.f) == Result::kTargetDead);
+    REQUIRE(ActorNonOwnerDamagePolicy::Evaluate(true, false, true, true, true, 7, 7, -25.f) == Result::kTargetIsPlayer);
+    REQUIRE(ActorNonOwnerDamagePolicy::Evaluate(true, false, false, false, true, 7, 7, -25.f) == Result::kSenderNotInWorld);
+    REQUIRE(ActorNonOwnerDamagePolicy::Evaluate(true, false, false, true, false, 7, 7, -25.f) == Result::kSenderOutOfRange);
+    REQUIRE(ActorNonOwnerDamagePolicy::Evaluate(true, false, false, true, true, 7, 0, -25.f) == Result::kMissingEpoch);
+    REQUIRE(ActorNonOwnerDamagePolicy::Evaluate(true, false, false, true, true, 8, 7, -25.f) == Result::kStaleEpoch);
+    REQUIRE(ActorNonOwnerDamagePolicy::Evaluate(true, false, false, true, true, 7, 7, 10.f) == Result::kInvalidDelta);
+
+    REQUIRE(std::string(ActorNonOwnerDamagePolicy::ToString(Result::kStaleEpoch)) == "non-owner damage: stale ownership epoch");
 }

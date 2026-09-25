@@ -100,12 +100,15 @@ void CombatService::OnProjectileLaunchedEvent(const ProjectileLaunchedEvent& acE
 
 void CombatService::OnNotifyProjectileLaunch(const NotifyProjectileLaunch& acMessage) const noexcept
 {
-    if (acMessage.OwnershipEpoch == 0 || acMessage.CastingSource < 0 || acMessage.CastingSource >= 4 ||
+    // Only spell projectiles must name a magic casting source; arrows and bolts relay the engine's value.
+    const bool invalidCastingSource = acMessage.SpellID && (acMessage.CastingSource < 0 || acMessage.CastingSource >= 4);
+    if (acMessage.OwnershipEpoch == 0 || invalidCastingSource ||
         !std::isfinite(acMessage.OriginX) || !std::isfinite(acMessage.OriginY) || !std::isfinite(acMessage.OriginZ) ||
         !std::isfinite(acMessage.ZAngle) || !std::isfinite(acMessage.XAngle) || !std::isfinite(acMessage.YAngle) ||
         !std::isfinite(acMessage.Power) || !std::isfinite(acMessage.Scale))
     {
-        spdlog::warn("[Projectile] ignored notify for shooter {:X}: invalid epoch, casting source or parameters", acMessage.ShooterID);
+        spdlog::warn("[Projectile] ignored notify for shooter {:X}: invalid epoch, casting source or parameters (epoch {}, spell {:X}, casting source {})",
+            acMessage.ShooterID, acMessage.OwnershipEpoch, acMessage.SpellID.LogFormat(), acMessage.CastingSource);
         return;
     }
 

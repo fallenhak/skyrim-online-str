@@ -23,3 +23,16 @@ TEST_CASE("Projectile launch numeric parameters must be finite", "[actor_authori
     REQUIRE_FALSE(ProjectileLaunchAuthorityPolicy::HasFiniteParameters(
         0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, -std::numeric_limits<float>::infinity()));
 }
+
+TEST_CASE("Only spell projectiles must name a magic casting source", "[actor_authority]")
+{
+    for (int32_t source = 0; source < 4; ++source)
+        REQUIRE(ProjectileLaunchAuthorityPolicy::HasValidCastingSource(true, source));
+    REQUIRE_FALSE(ProjectileLaunchAuthorityPolicy::HasValidCastingSource(true, -1));
+    REQUIRE_FALSE(ProjectileLaunchAuthorityPolicy::HasValidCastingSource(true, 4));
+
+    // Bow and crossbow shots have no spell, so their casting source is not validated.
+    REQUIRE(ProjectileLaunchAuthorityPolicy::HasValidCastingSource(false, -1));
+    REQUIRE(ProjectileLaunchAuthorityPolicy::HasValidCastingSource(false, 4));
+    REQUIRE(ProjectileLaunchAuthorityPolicy::HasValidCastingSource(false, 1));
+}

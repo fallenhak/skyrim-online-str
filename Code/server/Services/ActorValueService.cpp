@@ -4,6 +4,7 @@
 #include <Messages/RequestHealthChangeBroadcast.h>
 #include <Messages/RequestDeathStateChange.h>
 #include <Services/ActorValueService.h>
+#include <Services/DropLog.h>
 #include <Services/ActorHealthChangePolicy.h>
 #include <Services/ActorNonOwnerDamagePolicy.h>
 #include <Services/SessionService.h>
@@ -22,6 +23,15 @@
 
 #include <cmath>
 #include <utility>
+
+namespace
+{
+uint32_t CurrentEpochOf(const World& acWorld, const entt::entity aEntity) noexcept
+{
+    const auto* const pOwner = acWorld.valid(aEntity) ? acWorld.try_get<OwnerComponent>(aEntity) : nullptr;
+    return pOwner ? pOwner->OwnershipEpoch : 0;
+}
+} // namespace
 
 namespace
 {
@@ -59,7 +69,12 @@ void ActorValueService::OnActorValueChanges(const PacketEvent<RequestActorValueC
     auto it = actorValuesView.find(static_cast<entt::entity>(message.Id));
 
     if (it == actorValuesView.end() || !actorValuesView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
+    {
+        DropLog::Info("actor values: actor not found or not owner", "player {:X}, actor {:X}: {}, epoch {} (current {})",
+            acMessage.pPlayer->GetId(), message.Id, it == actorValuesView.end() ? "actor not found" : "not owner", message.OwnershipEpoch,
+            CurrentEpochOf(m_world, static_cast<entt::entity>(message.Id)));
         return;
+    }
 
     auto& actorValuesComponent = actorValuesView.get<ActorValuesComponent>(*it);
     auto& actorValues = actorValuesComponent.CurrentActorValues.ActorValuesList;
@@ -106,7 +121,12 @@ void ActorValueService::OnActorMaxValueChanges(const PacketEvent<RequestActorMax
     auto it = actorValuesView.find(static_cast<entt::entity>(message.Id));
 
     if (it == actorValuesView.end() || !actorValuesView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
+    {
+        DropLog::Info("actor max values: actor not found or not owner", "player {:X}, actor {:X}: {}, epoch {} (current {})",
+            acMessage.pPlayer->GetId(), message.Id, it == actorValuesView.end() ? "actor not found" : "not owner", message.OwnershipEpoch,
+            CurrentEpochOf(m_world, static_cast<entt::entity>(message.Id)));
         return;
+    }
 
     auto& actorValuesComponent = actorValuesView.get<ActorValuesComponent>(*it);
     TiltedPhoques::Map<uint32_t, float> acceptedValues;
@@ -154,15 +174,19 @@ bool ActorValueService::IsAcceptedNonOwnerDamage(const PacketEvent<RequestHealth
     const bool senderInWorld = m_world.GetSessionService().CanProcessGameplay(acMessage.pPlayer->GetConnectionId());
     const bool senderInRange = entityExists && acMessage.pPlayer->GetCellComponent().IsInRange(*pCell, pCharacter->IsDragon());
 
-    const bool accepted = ActorNonOwnerDamagePolicy::IsAccepted(
+    const uint32_t currentEpoch = entityExists ? pOwner->OwnershipEpoch : 0;
+    const auto result = ActorNonOwnerDamagePolicy::Evaluate(
         entityExists, entityExists && pCharacter->IsDead(),
         targetIsPlayer, senderInWorld, senderInRange,
-        entityExists ? pOwner->OwnershipEpoch : 0, message.OwnershipEpoch, message.DeltaHealth);
+        currentEpoch, message.OwnershipEpoch, message.DeltaHealth);
 
-    if (!accepted)
-        spdlog::debug("Rejected health change from non-owner player {:X} for actor {:X}, delta {}", acMessage.pPlayer->GetId(), message.Id, message.DeltaHealth);
+    if (result == ActorNonOwnerDamagePolicy::Result::kAccepted)
+        return true;
 
-    return accepted;
+    DropLog::Info(ActorNonOwnerDamagePolicy::ToString(result),
+        "player {:X}, actor {:X}, delta {}, epoch {} (current {}), in world {}, in range {}", acMessage.pPlayer->GetId(), message.Id,
+        message.DeltaHealth, message.OwnershipEpoch, currentEpoch, senderInWorld, senderInRange);
+    return false;
 }
 
 void ActorValueService::OnHealthChangeBroadcast(const PacketEvent<RequestHealthChangeBroadcast>& acMessage) const noexcept
@@ -175,7 +199,15 @@ void ActorValueService::OnHealthChangeBroadcast(const PacketEvent<RequestHealthC
     const bool entityExists = it != actorValuesView.end();
     const bool isCurrentOwner = entityExists && actorValuesView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch);
     // The non-owner path below dereferences the same view entity, so it needs the entity too.
-    if (!entityExists || (!ActorHealthChangePolicy::IsAuthorized(entityExists, entityExists, isCurrentOwner, message.OwnershipEpoch) && !IsAcceptedNonOwnerDamage(acMessage)))
+    if (!entityExists)
+    {
+        DropLog::Info("health change: actor not found", "player {:X}, actor {:X}, delta {}",
+            acMessage.pPlayer->GetId(), message.Id, message.DeltaHealth);
+        return;
+    }
+
+    // IsAcceptedNonOwnerDamage logs its own drop reason.
+    if (!ActorHealthChangePolicy::IsAuthorized(entityExists, entityExists, isCurrentOwner, message.OwnershipEpoch) && !IsAcceptedNonOwnerDamage(acMessage))
         return;
 
     auto& actorValuesComponent = actorValuesView.get<ActorValuesComponent>(*it);
@@ -188,7 +220,11 @@ void ActorValueService::OnHealthChangeBroadcast(const PacketEvent<RequestHealthC
     // the resulting canonical value can produce a decrease signal; the
     // submitted delta is not forwarded as combat evidence.
     if (!ActorHealthChangePolicy::TryApplySignedDelta(actorValues, message.DeltaHealth))
+    {
+        DropLog::Info("health change: delta not applicable", "player {:X}, actor {:X}, delta {}",
+            acMessage.pPlayer->GetId(), message.Id, message.DeltaHealth);
         return;
+    }
 
     const auto updatedHealthIt = actorValues.find(ActorHealthChangePolicy::kHealthActorValue);
     if (hadCanonicalHealth && updatedHealthIt != actorValues.end())
@@ -213,7 +249,12 @@ void ActorValueService::OnDeathStateChange(const PacketEvent<RequestDeathStateCh
     const auto it = characterView.find(static_cast<entt::entity>(message.Id));
 
     if (it == characterView.end() || !characterView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
+    {
+        DropLog::Info("death state: actor not found or not owner", "player {:X}, actor {:X}: {}, dead {}, epoch {} (current {})",
+            acMessage.pPlayer->GetId(), message.Id, it == characterView.end() ? "actor not found" : "not owner", message.IsDead,
+            message.OwnershipEpoch, CurrentEpochOf(m_world, static_cast<entt::entity>(message.Id)));
         return;
+    }
 
     auto& characterComponent = characterView.get<CharacterComponent>(*it);
     const bool wasDead = characterComponent.IsDead();
