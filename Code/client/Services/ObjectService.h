@@ -3,8 +3,12 @@
 #include <Events/EventDispatcher.h>
 #include <Games/Events.h>
 
+#include <Structs/GameId.h>
+
 #include <cstdint>
 
+struct TESObjectREFR;
+struct TESObjectCELL;
 struct ServerTimeSettings;
 struct DisconnectedEvent;
 struct World;
@@ -34,6 +38,7 @@ private:
     void OnCellChange(const CellChangeEvent&) noexcept;
     void OnUpdate(const UpdateEvent&) noexcept;
     void SendAssignObjectsRequest() noexcept;
+    void SendObjectStateReport() noexcept;
     void OnAssignObjectsResponse(const AssignObjectsResponse&) noexcept;
     void OnActivate(const ActivateEvent&) noexcept;
     void OnActivateNotify(const NotifyActivate&) noexcept;
@@ -48,11 +53,25 @@ private:
 
     entt::entity CreateObjectEntity(const uint32_t acFormId, const uint32_t acServerId) noexcept;
 
+    // A reference in the loaded cells that is registered with the server.
+    struct SyncedObject
+    {
+        TESObjectREFR* pObject{};
+        GameId CellId{};
+        GameId Id{};
+        bool IsHarvestType{};
+        bool IsOpenLoot{};
+    };
+    bool CollectSyncedObjects(Vector<SyncedObject>& aObjects, GameId& aWorldSpaceId, TESObjectCELL*& apCell, size_t& aCellCount) noexcept;
+
     World& m_world;
     TransportService& m_transport;
     // Set on a cell change, sent on the next update: PlayerService reports the new cell in the same
     // CellChangeEvent dispatch but is connected after us, and the server range-checks against it.
     bool m_assignObjectsPending{false};
+    // Desync detector report period, in seconds.
+    static constexpr double kStateReportInterval = 5.0;
+    double m_stateReportTimer{};
 
     entt::scoped_connection m_disconnectedConnection;
     entt::scoped_connection m_cellChangeConnection;

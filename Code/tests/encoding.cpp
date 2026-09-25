@@ -17,6 +17,7 @@
 #include <Messages/ServerMessageFactory.h>
 #include <Messages/NotifyDeathStateChange.h>
 #include <Messages/RequestDeathStateChange.h>
+#include <Messages/ObjectStateReport.h>
 #include <Structs/Vector2_NetQuantize.h>
 
 #include <TiltedCore/Math.hpp>
@@ -920,4 +921,54 @@ TEST_CASE("A malformed object count is refused instead of allocated", "[encoding
     REQUIRE(received.Objects.empty());
     // The server drops such a message with a [Drop] line instead of handling an empty list.
     REQUIRE(received.OverLimitCount == 1'000'000'000);
+}
+
+TEST_CASE("ObjectStateReport round-trips", "[encoding.object_authority][desync]")
+{
+    ObjectStateReport sent;
+    ObjectStateDigest door;
+    door.Id = GameId{0, 0x99535};
+    door.CellId = GameId{0, 0x1234};
+    door.StateFlags = ObjectStateDigest::kLocked | ObjectStateDigest::kDoorOpen;
+    door.LockLevel = 50;
+    ObjectStateDigest chest;
+    chest.Id = GameId{2, 0x456};
+    chest.CellId = GameId{0, 0x1234};
+    chest.StateFlags = ObjectStateDigest::kHasInventory;
+    chest.Items = {{GameId{0, 0xF}, 7}, {GameId{0, 0xA44AE}, 1}};
+    sent.Objects = {door, chest};
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ClientMessageFactory factory;
+    auto received = CastUnique<ObjectStateReport>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE_FALSE(received->IsMalformed);
+    REQUIRE(*received == sent);
+}
+
+TEST_CASE("ObjectStateDigest canonicalizes inventories", "[desync]")
+{
+    Inventory inventory;
+    Inventory::Entry gold;
+    gold.BaseId = GameId{0, 0xF};
+    gold.Count = 5;
+    Inventory::Entry moreGold = gold;
+    moreGold.Count = 2;
+    Inventory::Entry removed;
+    removed.BaseId = GameId{0, 0x10};
+    removed.Count = 0;
+    Inventory::Entry scroll;
+    scroll.BaseId = GameId{0, 0x9};
+    scroll.Count = 1;
+    inventory.Entries = {gold, removed, scroll, moreGold};
+
+    const auto items = ObjectStateDigest::Canonicalize(inventory);
+    REQUIRE(items.size() == 2);
+    REQUIRE(items[0].BaseId == GameId{0, 0x9});
+    REQUIRE(items[1].BaseId == GameId{0, 0xF});
+    REQUIRE(items[1].Count == 7);
 }

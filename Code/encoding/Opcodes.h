@@ -62,6 +62,7 @@ enum ClientOpcode : unsigned char
     kTakeWorldItemRequest,
     kRequestContainerTransfer,
     kUpdatePlayerAppearanceRequest,
+    kObjectStateReport,
     kClientOpcodeMax
 };
 

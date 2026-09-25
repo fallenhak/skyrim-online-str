@@ -9,6 +9,7 @@
 #include <Services/InventoryInteractionPolicy.h>
 
 #include <Events/PlayerLeaveCellEvent.h>
+#include <Events/PlayerLeaveEvent.h>
 #include <Events/UpdateEvent.h>
 
 #include <Messages/ActivateRequest.h>
@@ -22,9 +23,11 @@
 #include <Messages/AssignObjectsResponse.h>
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
+#include <Messages/ObjectStateReport.h>
 
 #include <algorithm>
 #include <chrono>
+#include <unordered_map>
 #include <cstddef>
 #include <exception>
 
@@ -74,6 +77,8 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Persi
     m_takeWorldItemConnection = aDispatcher.sink<PacketEvent<TakeWorldItemRequest>>().connect<&ObjectService::OnTakeWorldItem>(this);
     m_lockChangeConnection = aDispatcher.sink<PacketEvent<LockChangeRequest>>().connect<&ObjectService::OnLockChange>(this);
     m_scriptAnimationConnection = aDispatcher.sink<PacketEvent<ScriptAnimationRequest>>().connect<&ObjectService::OnScriptAnimationRequest>(this);
+    m_objectStateReportConnection = aDispatcher.sink<PacketEvent<ObjectStateReport>>().connect<&ObjectService::OnObjectStateReport>(this);
+    m_playerLeaveConnection = aDispatcher.sink<PlayerLeaveEvent>().connect<&ObjectService::OnPlayerLeave>(this);
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&ObjectService::OnUpdate>(this);
 }
 
@@ -751,4 +756,80 @@ void ObjectService::OnScriptAnimationRequest(const PacketEvent<ScriptAnimationRe
 
     if (!GameServer::Get()->SendToPlayersInRange(message, source, acMessage.GetSender()))
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
+}
+
+void ObjectService::OnObjectStateReport(const PacketEvent<ObjectStateReport>& acMessage) noexcept
+{
+    const auto& packet = acMessage.Packet;
+    const uint32_t cPlayerId = acMessage.pPlayer->GetId();
+    if (packet.IsMalformed)
+    {
+        DropLog::Info("object state report: malformed", "player {:X}", cPlayerId);
+        return;
+    }
+
+    auto view = m_world.view<FormIdComponent, ObjectComponent, CellIdComponent, InventoryComponent>();
+    // A report carries every synced reference of the loaded cells; index once instead of a view scan per digest.
+    std::unordered_multimap<GameId, entt::entity> entitiesById;
+    for (auto entity : view)
+        entitiesById.emplace(view.get<FormIdComponent>(entity).Id, entity);
+
+    std::size_t mismatched = 0;
+
+    for (const ObjectStateDigest& digest : packet.Objects)
+    {
+        entt::entity entity = entt::null;
+        const auto [first, last] = entitiesById.equal_range(digest.Id);
+        for (auto it = first; it != last; ++it)
+        {
+            if (view.get<CellIdComponent>(it->second).Cell == digest.CellId)
+            {
+                entity = it->second;
+                break;
+            }
+        }
+
+        // Not registered yet (or pruned): nothing server-owned to compare.
+        if (entity == entt::null)
+            continue;
+
+        const auto& object = view.get<ObjectComponent>(entity);
+        DesyncPolicy::ServerView server{};
+        server.HasTrustedState = object.HasTrustedState;
+        server.IsHarvestable = object.IsHarvestable;
+        server.IsHarvested = object.IsHarvested;
+        server.IsOpenLoot = object.IsOpenLoot;
+        server.IsLootTaken = object.IsLootTaken;
+        server.IsDoor = object.IsDoor;
+        server.IsDoorStateKnown = object.Door.IsKnown;
+        server.IsDoorOpen = object.Door.IsOpen;
+        server.IsContainer = object.IsContainer;
+        server.IsLocked = object.CurrentLockData.IsLocked;
+        server.LockLevel = object.CurrentLockData.LockLevel;
+        if (object.IsContainer)
+            server.Items = ObjectStateDigest::Canonicalize(view.get<InventoryComponent>(entity).Content);
+
+        const auto mismatches = DesyncPolicy::Compare(server, digest);
+        for (const auto field : {DesyncPolicy::Field::kHarvested, DesyncPolicy::Field::kLootTaken, DesyncPolicy::Field::kLock, DesyncPolicy::Field::kDoor, DesyncPolicy::Field::kInventory})
+        {
+            const auto found = std::find_if(mismatches.begin(), mismatches.end(), [field](const auto& acMismatch) { return acMismatch.Kind == field; });
+            const std::string signature = found == mismatches.end() ? std::string{} : found->Server + " | " + found->Client;
+            const auto event = m_desyncTracker.Observe({cPlayerId, digest.Id, field}, signature);
+            if (event == DesyncPolicy::Tracker::Event::kNew)
+                spdlog::warn(
+                    "[Desync] player {:X} ref {:X}:{:X} cell {:X}:{:X} {}: server {} client {}", cPlayerId, digest.Id.ModId, digest.Id.BaseId, digest.CellId.ModId,
+                    digest.CellId.BaseId, DesyncPolicy::FieldName(field), found->Server, found->Client);
+            else if (event == DesyncPolicy::Tracker::Event::kResolved)
+                spdlog::info("[Desync] player {:X} ref {:X}:{:X} {}: resolved", cPlayerId, digest.Id.ModId, digest.Id.BaseId, DesyncPolicy::FieldName(field));
+        }
+        mismatched += mismatches.empty() ? 0 : 1;
+    }
+
+    spdlog::debug("[Desync] report from player {:X}: {} object(s), {} differing", cPlayerId, packet.Objects.size(), mismatched);
+}
+
+void ObjectService::OnPlayerLeave(const PlayerLeaveEvent& acEvent) noexcept
+{
+    if (acEvent.pPlayer)
+        m_desyncTracker.ForgetPlayer(acEvent.pPlayer->GetId());
 }
