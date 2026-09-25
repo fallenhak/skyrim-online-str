@@ -15,6 +15,8 @@ namespace
 constexpr std::uint64_t kMaxStoredValue = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
 constexpr auto kShutdownFlushTimeout = std::chrono::seconds(30);
 constexpr auto kWriteRetryDelay = std::chrono::seconds(1);
+// Matches ContainerContentsCodec::kMaxEncodedBytes: two hex digits per byte.
+constexpr std::size_t kMaxContainerInventoryHex = (1u << 20) * 2;
 
 [[nodiscard]] std::int64_t GetUnixTimestamp() noexcept
 {
@@ -110,6 +112,16 @@ bool WorldObjectRepository::IsValid(const WorldObjectState& acState) noexcept
     return changedStateTypes == 1;
 }
 
+bool WorldObjectRepository::IsValid(const ContainerContentsState& acState) noexcept
+{
+    if (!acState.Id.BaseId || !acState.CellId.BaseId || (acState.WorldSpaceId.ModId != 0 && acState.WorldSpaceId.BaseId == 0))
+        return false;
+    if (acState.InventoryHex.empty() || acState.InventoryHex.size() > kMaxContainerInventoryHex || acState.InventoryHex.size() % 2 != 0)
+        return false;
+    return std::all_of(acState.InventoryHex.begin(), acState.InventoryHex.end(),
+        [](const char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'); });
+}
+
 std::vector<WorldObjectState> WorldObjectRepository::LoadAll() const
 {
     std::vector<WorldObjectState> records;
@@ -181,6 +193,75 @@ std::vector<WorldObjectState> WorldObjectRepository::LoadAll() const
     return records;
 }
 
+std::vector<ContainerContentsState> WorldObjectRepository::LoadAllContainers() const
+{
+    std::vector<ContainerContentsState> records;
+    auto statement = m_database.Prepare(
+        "SELECT object_mod_id, object_base_id, cell_mod_id, cell_base_id, worldspace_mod_id, worldspace_base_id, center_x, center_y, inventory "
+        "FROM container_contents ORDER BY object_mod_id, object_base_id, cell_mod_id, cell_base_id;");
+
+    while (statement.Step())
+    {
+        const auto objectMod = statement.ColumnInt64(0);
+        const auto objectBase = statement.ColumnInt64(1);
+        const auto cellMod = statement.ColumnInt64(2);
+        const auto cellBase = statement.ColumnInt64(3);
+        const auto worldSpaceMod = statement.ColumnInt64(4);
+        const auto worldSpaceBase = statement.ColumnInt64(5);
+        const auto centerX = statement.ColumnInt64(6);
+        const auto centerY = statement.ColumnInt64(7);
+
+        if (!IsUint32(objectMod) || objectBase <= 0 || !IsUint32(objectBase) || !IsUint32(cellMod) || cellBase <= 0 || !IsUint32(cellBase) ||
+            !IsUint32(worldSpaceMod) || !IsUint32(worldSpaceBase) || !IsInt32(centerX) || !IsInt32(centerY))
+        {
+            spdlog::warn("[Persistence] Skipped malformed container row {:x}:{:x} cell {:x}:{:x}", objectMod, objectBase, cellMod, cellBase);
+            continue;
+        }
+
+        ContainerContentsState state{};
+        state.Id = GameId(static_cast<std::uint32_t>(objectMod), static_cast<std::uint32_t>(objectBase));
+        state.CellId = GameId(static_cast<std::uint32_t>(cellMod), static_cast<std::uint32_t>(cellBase));
+        state.WorldSpaceId = GameId(static_cast<std::uint32_t>(worldSpaceMod), static_cast<std::uint32_t>(worldSpaceBase));
+        state.CenterCoords = GridCellCoords(static_cast<std::int32_t>(centerX), static_cast<std::int32_t>(centerY));
+        state.InventoryHex = statement.ColumnText(8);
+
+        if (!IsValid(state))
+        {
+            spdlog::warn("[Persistence] Skipped invalid container contents {:x}:{:x} cell {:x}:{:x}", objectMod, objectBase, cellMod, cellBase);
+            continue;
+        }
+
+        records.push_back(std::move(state));
+    }
+
+    return records;
+}
+
+void WorldObjectRepository::EnqueueContainerUpsert(const ContainerContentsState& acState) noexcept
+{
+    if (!IsValid(acState))
+    {
+        spdlog::warn("[Persistence] Rejected invalid container contents {:x}:{:x} cell {:x}:{:x}",
+            acState.Id.ModId, acState.Id.BaseId, acState.CellId.ModId, acState.CellId.BaseId);
+        return;
+    }
+
+    try
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_queueMutex);
+            if (m_stopping)
+                return;
+            m_pendingContainers[MakeKey(acState.Id, acState.CellId)] = acState;
+        }
+        m_queueChanged.notify_one();
+    }
+    catch (const std::exception& exception)
+    {
+        spdlog::error("[Persistence] Could not queue container contents write: {}", exception.what());
+    }
+}
+
 void WorldObjectRepository::EnqueueUpsert(const WorldObjectState& acState) noexcept
 {
     if (!IsValid(acState))
@@ -231,18 +312,20 @@ void WorldObjectRepository::RunWriter() noexcept
 {
     for (;;)
     {
-        std::unordered_map<Key, PendingWrite, KeyHash> batch;
+        PendingBatch batch;
+        PendingContainerBatch containerBatch;
         {
             std::unique_lock<std::mutex> lock(m_queueMutex);
-            m_queueChanged.wait(lock, [this] { return m_stopping || !m_pending.empty(); });
-            if (m_pending.empty() && m_stopping)
+            m_queueChanged.wait(lock, [this] { return m_stopping || !m_pending.empty() || !m_pendingContainers.empty(); });
+            if (m_pending.empty() && m_pendingContainers.empty() && m_stopping)
                 return;
             batch.swap(m_pending);
+            containerBatch.swap(m_pendingContainers);
         }
 
         try
         {
-            WriteBatch(batch);
+            WriteBatch(batch, containerBatch);
             continue;
         }
         catch (const std::exception& exception)
@@ -260,12 +343,17 @@ void WorldObjectRepository::RunWriter() noexcept
             if (!m_pending.contains(key))
                 m_pending.emplace(key, std::move(write));
         }
+        for (auto& [key, write] : containerBatch)
+        {
+            if (!m_pendingContainers.contains(key))
+                m_pendingContainers.emplace(key, std::move(write));
+        }
 
         if (m_stopping && std::chrono::steady_clock::now() >= m_shutdownDeadline)
         {
             spdlog::error(
                 "[Persistence] Shutdown flush timed out after 30 seconds; {} queued world object write(s) could not be saved",
-                m_pending.size());
+                m_pending.size() + m_pendingContainers.size());
             return;
         }
 
@@ -280,7 +368,7 @@ void WorldObjectRepository::RunWriter() noexcept
     }
 }
 
-void WorldObjectRepository::WriteBatch(const std::unordered_map<Key, PendingWrite, KeyHash>& acBatch)
+void WorldObjectRepository::WriteBatch(const PendingBatch& acBatch, const PendingContainerBatch& acContainerBatch)
 {
     const auto updatedAt = GetUnixTimestamp();
 
@@ -334,5 +422,25 @@ void WorldObjectRepository::WriteBatch(const std::unordered_map<Key, PendingWrit
         (void)statement.Step();
     }
 
+    for (const auto& [key, state] : acContainerBatch)
+    {
+        auto statement = m_database.Prepare(
+            "INSERT INTO container_contents (object_mod_id, object_base_id, cell_mod_id, cell_base_id, worldspace_mod_id, worldspace_base_id, "
+            "center_x, center_y, inventory, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) "
+            "ON CONFLICT (object_mod_id, object_base_id, cell_mod_id, cell_base_id) DO UPDATE SET "
+            "worldspace_mod_id = excluded.worldspace_mod_id, worldspace_base_id = excluded.worldspace_base_id, "
+            "center_x = excluded.center_x, center_y = excluded.center_y, inventory = excluded.inventory, updated_at = excluded.updated_at;");
+        statement.Bind(1, static_cast<std::int64_t>(key.ObjectModId));
+        statement.Bind(2, static_cast<std::int64_t>(key.ObjectBaseId));
+        statement.Bind(3, static_cast<std::int64_t>(key.CellModId));
+        statement.Bind(4, static_cast<std::int64_t>(key.CellBaseId));
+        statement.Bind(5, static_cast<std::int64_t>(state.WorldSpaceId.ModId));
+        statement.Bind(6, static_cast<std::int64_t>(state.WorldSpaceId.BaseId));
+        statement.Bind(7, static_cast<std::int64_t>(state.CenterCoords.X));
+        statement.Bind(8, static_cast<std::int64_t>(state.CenterCoords.Y));
+        statement.Bind(9, std::string_view(state.InventoryHex));
+        statement.Bind(10, updatedAt);
+        (void)statement.Step();
+    }
 }
 } // namespace Persistence

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -38,6 +39,17 @@ struct WorldObjectState final
     std::uint64_t LootRespawnAtUnix{};
 };
 
+// Server-owned contents of a synced container. Inventory is opaque here (hex text written
+// by ContainerContentsCodec); the repository only checks that it is well-formed hex.
+struct ContainerContentsState final
+{
+    GameId Id{};
+    GameId CellId{};
+    GameId WorldSpaceId{};
+    GridCellCoords CenterCoords{};
+    std::string InventoryHex{};
+};
+
 struct WorldObjectRepository final
 {
     explicit WorldObjectRepository(Database& aDatabase);
@@ -56,6 +68,11 @@ struct WorldObjectRepository final
     void EnqueueUpsert(const WorldObjectState& acState) noexcept;
     void EnqueueDelete(const GameId& acId, const GameId& acCellId) noexcept;
 
+    // Containers keep their own table: a chest's contents are not one of the mutually
+    // exclusive world_objects state types. Writes share the same background worker.
+    [[nodiscard]] std::vector<ContainerContentsState> LoadAllContainers() const;
+    void EnqueueContainerUpsert(const ContainerContentsState& acState) noexcept;
+
 private:
     struct Key final
     {
@@ -73,16 +90,20 @@ private:
     };
 
     using PendingWrite = std::optional<WorldObjectState>;
+    using PendingBatch = std::unordered_map<Key, PendingWrite, KeyHash>;
+    using PendingContainerBatch = std::unordered_map<Key, ContainerContentsState, KeyHash>;
 
     [[nodiscard]] static Key MakeKey(const GameId& acId, const GameId& acCellId) noexcept;
     [[nodiscard]] static bool IsValid(const WorldObjectState& acState) noexcept;
+    [[nodiscard]] static bool IsValid(const ContainerContentsState& acState) noexcept;
     void RunWriter() noexcept;
-    void WriteBatch(const std::unordered_map<Key, PendingWrite, KeyHash>& acBatch);
+    void WriteBatch(const PendingBatch& acBatch, const PendingContainerBatch& acContainerBatch);
 
     Database& m_database;
     mutable std::mutex m_queueMutex;
     std::condition_variable m_queueChanged;
-    std::unordered_map<Key, PendingWrite, KeyHash> m_pending;
+    PendingBatch m_pending;
+    PendingContainerBatch m_pendingContainers;
     bool m_stopping{};
     std::chrono::steady_clock::time_point m_shutdownDeadline{};
     std::thread m_writer;

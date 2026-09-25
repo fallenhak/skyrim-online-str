@@ -345,6 +345,74 @@ TEST(PersistenceDatabase, AssignsLegacyCharactersStableOwnerScopedSlots)
     EXPECT_FALSE(statement.Step());
 }
 
+TEST(PersistenceWorldObjectRepository, PersistsContainerContentsAndKeepsTheLatestWrite)
+{
+    Persistence::Database database(":memory:");
+    database.Migrate();
+    Persistence::WorldObjectRepository repository(database);
+
+    Persistence::ContainerContentsState chest{};
+    chest.Id = GameId{1, 0x500};
+    chest.CellId = GameId{1, 0x200};
+    chest.WorldSpaceId = GameId{0, 0x3C};
+    chest.CenterCoords = GridCellCoords{4, -2};
+    chest.InventoryHex = "0100";
+
+    auto invalid = chest;
+    invalid.Id = GameId{1, 0x501};
+    invalid.InventoryHex = "0g"; // not hex
+    auto oddLength = chest;
+    oddLength.Id = GameId{1, 0x502};
+    oddLength.InventoryHex = "010";
+    auto empty = chest;
+    empty.Id = GameId{1, 0x503};
+    empty.InventoryHex.clear();
+
+    repository.EnqueueContainerUpsert(invalid);
+    repository.EnqueueContainerUpsert(oddLength);
+    repository.EnqueueContainerUpsert(empty);
+    repository.EnqueueContainerUpsert(chest);
+    chest.InventoryHex = "02AB";
+    repository.EnqueueContainerUpsert(chest); // coalesced or overwritten; either way the latest wins
+
+    std::vector<Persistence::ContainerContentsState> loaded;
+    for (int attempt = 0; attempt < 100; ++attempt)
+    {
+        loaded = repository.LoadAllContainers();
+        if (loaded.size() == 1 && loaded[0].InventoryHex == "02AB")
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    ASSERT_EQ(loaded.size(), 1u);
+    EXPECT_EQ(loaded[0].Id, chest.Id);
+    EXPECT_EQ(loaded[0].CellId, chest.CellId);
+    EXPECT_EQ(loaded[0].WorldSpaceId, chest.WorldSpaceId);
+    EXPECT_EQ(loaded[0].CenterCoords.X, 4);
+    EXPECT_EQ(loaded[0].CenterCoords.Y, -2);
+    EXPECT_EQ(loaded[0].InventoryHex, "02AB");
+
+    // Container rows live in their own table and never show up as world object state.
+    EXPECT_TRUE(repository.LoadAll().empty());
+}
+
+TEST(PersistenceDatabase, MigratesAVersionSixDatabaseToContainerContents)
+{
+    Persistence::Database database(":memory:");
+    database.Execute("CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);");
+    database.Execute("INSERT INTO schema_version (id, version) VALUES (1, 6);");
+
+    database.Migrate();
+
+    auto version = database.Prepare("SELECT version FROM schema_version WHERE id = 1;");
+    ASSERT_TRUE(version.Step());
+    EXPECT_EQ(version.ColumnInt64(0), 7);
+
+    auto table = database.Prepare("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'container_contents';");
+    ASSERT_TRUE(table.Step());
+    EXPECT_EQ(table.ColumnInt64(0), 1);
+}
+
 TEST(PersistenceWorldObjectRepository, BatchesChangedWorldStateAndDeletesExpiredRows)
 {
     Persistence::Database database(":memory:");
