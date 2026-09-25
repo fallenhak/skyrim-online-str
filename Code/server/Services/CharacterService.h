@@ -25,6 +25,7 @@ struct NewPackageRequest;
 struct RequestRespawn;
 struct DialogueRequest;
 struct SubtitleRequest;
+struct AcceptedCanonicalCreatureDeathEvent;
 struct Player;
 struct ActorPopulationIdentity;
 
@@ -33,7 +34,7 @@ struct ActorPopulationIdentity;
  */
 struct CharacterService
 {
-    CharacterService(World& aWorld, entt::dispatcher& aDispatcher) noexcept;
+    CharacterService(World& aWorld, entt::dispatcher& aDispatcher, std::uint32_t aCreatureCorpseLifetimeSeconds) noexcept;
     ~CharacterService() noexcept = default;
 
     TP_NOCOPYMOVE(CharacterService);
@@ -53,7 +54,9 @@ protected:
         OwnerUnavailable
     };
 
-    void OnUpdate(const UpdateEvent& acEvent) const noexcept;
+    void OnUpdate(const UpdateEvent& acEvent) noexcept;
+    void OnAcceptedCanonicalCreatureDeath(const AcceptedCanonicalCreatureDeathEvent& acEvent) noexcept;
+    void ExpireRetainedCorpses() noexcept;
     void OnCharacterExteriorCellChange(const CharacterExteriorCellChangeEvent& acEvent) const noexcept;
     void OnCharacterInteriorCellChange(const CharacterInteriorCellChangeEvent& acEvent) const noexcept;
     void OnAssignCharacterRequest(const PacketEvent<AssignCharacterRequest>& acMessage) const noexcept;
@@ -76,6 +79,7 @@ protected:
     bool CanClaimOwnership(Player* apPlayer, entt::entity aEntity, uint32_t aExpectedOwnershipEpoch, OwnershipTransferReason aReason) const noexcept;
     bool TransferOwnership(Player* apPlayer, entt::entity aEntity, OwnershipTransferReason aReason, bool aResetInvalidOwners = true) const noexcept;
     void TransferToNextOwner(entt::entity aEntity, OwnershipTransferReason aReason) const noexcept;
+    [[nodiscard]] bool MakeRetainedCorpseOwnerless(entt::entity aEntity, OwnershipTransferReason aReason) const noexcept;
     ActorData BuildActorData(const entt::entity acEntity) const noexcept;
 
     void ProcessFactionsChanges() const noexcept;
@@ -83,8 +87,12 @@ protected:
 
 private:
     World& m_world;
+    const std::uint32_t m_creatureCorpseLifetimeSeconds;
+    std::uint64_t m_tick{};
+    double m_tickAccumulator{};
 
     entt::scoped_connection m_updateConnection;
+    entt::scoped_connection m_canonicalCreatureDeathConnection;
     entt::scoped_connection m_exteriorCellChangeEventConnection;
     entt::scoped_connection m_interiorCellChangeEventConnection;
     entt::scoped_connection m_characterAssignRequestConnection;

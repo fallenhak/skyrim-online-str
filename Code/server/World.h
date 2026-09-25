@@ -20,6 +20,7 @@
 
 #include "Game/PlayerManager.h"
 
+#include <cstdint>
 #include <filesystem>
 
 namespace ESLoader
@@ -31,7 +32,8 @@ struct World : entt::registry
 {
     explicit World(
         std::filesystem::path aDatabasePath = PersistenceService::DefaultDatabasePath(), bool aEnableActorRecordLoading = false,
-        bool aEnableHumanoidAssignmentGate = false, bool aAllowUnknownActorAssignments = true, const char* apRaceClassificationOverrides = "");
+        bool aEnableHumanoidAssignmentGate = false, bool aAllowUnknownActorAssignments = true, const char* apRaceClassificationOverrides = "",
+        std::uint32_t aCreatureCorpseLifetimeSeconds = 30 * 60);
     ~World() noexcept;
 
     TP_NOCOPYMOVE(World);

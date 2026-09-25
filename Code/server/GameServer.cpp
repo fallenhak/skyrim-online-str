@@ -29,6 +29,7 @@
 #include <Messages/SelectCharacterRequest.h>
 #include <Persistence/CharacterRecord.h>
 #include <Services/DevelopmentSaveFormId.h>
+#include <Services/CorpseRetentionPolicy.h>
 #include <Messages/CreateCharacterRequest.h>
 #include <Messages/NotifyCharacterSlots.h>
 #include <Messages/NotifyCharacterCreateResult.h>
@@ -87,6 +88,10 @@ Console::Setting bEnableGreetings{"Gameplay:bEnableGreetings", "Enables NPC gree
 Console::Setting bEnablePvp{"Gameplay:bEnablePvp", "Enables pvp", false};
 Console::Setting bSyncPlayerHomes{"Gameplay:bSyncPlayerHomes", "Sync chests and displays in player homes and other NoResetZones", false};
 Console::Setting bEnableDeathSystem{"Gameplay:bEnableDeathSystem", "Enables the custom multiplayer death system", true};
+Console::Setting uCreatureCorpseLifetimeSeconds{
+    "Gameplay:uCreatureCorpseLifetimeSeconds",
+    "How many real-world seconds accepted creature corpses stay in the world",
+    CorpseRetentionPolicy::kDefaultLifetimeSeconds};
 Console::Setting uTimeScale{"Gameplay:uTimeScale", "How many seconds pass ingame for every real second (0 to 1000). Changing this can make the game unstable", 20u};
 Console::Setting uStartHour{"Gameplay:uStartHour", "Server world starting hour (0 to 23)", 12u};
 Console::Setting uStartMinute{"Gameplay:uStartMinute", "Server world starting minute (0 to 59)", 0u};
@@ -235,7 +240,7 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole)
     UpdateTitle();
 
     m_pWorld = MakeUnique<World>(std::filesystem::path(sPersistenceDatabasePath.value()), bEnableActorRecordLoading, bEnableHumanoidAssignmentGate,
-        bAllowUnknownActorAssignments, sRaceClassificationOverrides.value());
+        bAllowUnknownActorAssignments, sRaceClassificationOverrides.value(), uCreatureCorpseLifetimeSeconds.value_as<std::uint32_t>());
     m_pWorld->GetSessionService().SetCharacterSlotConfiguration(uCharacterSlotTotal.value_as<std::uint32_t>(), uCharacterSlotUnlocked.value_as<std::uint32_t>());
 
     if (bEnableDevelopmentIdentityBinding)
