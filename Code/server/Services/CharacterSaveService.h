@@ -29,7 +29,7 @@ private:
     void OnUpdate(const UpdateEvent& acEvent) noexcept;
     void OnPlayerLeave(const PlayerLeaveEvent& acEvent) noexcept;
 
-    [[nodiscard]] bool CaptureRuntimeState(entt::entity aEntity, Persistence::CharacterRuntimeState& aState) const noexcept;
+    [[nodiscard]] Persistence::CharacterRuntimeStateVerdict CaptureRuntimeState(entt::entity aEntity, Persistence::CharacterRuntimeState& aState) const noexcept;
     [[nodiscard]] bool SaveEntity(entt::entity aEntity, std::string_view acReason) noexcept;
 
     World& m_world;
