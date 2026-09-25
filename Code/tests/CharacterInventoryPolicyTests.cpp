@@ -1,3 +1,6 @@
+#include <TiltedCore/Stl.hpp>
+#include <optional>
+
 #include <Services/CharacterInventoryPolicy.h>
 
 #include <catch2/catch.hpp>
