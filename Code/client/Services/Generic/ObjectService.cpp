@@ -324,6 +324,7 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
         objectData.IsFurniture = pObject->baseForm->formType == FormType::Furniture;
         objectData.IsDoor = IsSyncedDoor(pObject);
         objectData.IsActivator = IsSyncedActivator(pObject);
+        objectData.IsContainer = pObject->baseForm->formType == FormType::Container;
 
         request.Objects.push_back(objectData);
     }

@@ -38,4 +38,5 @@ struct ObjectComponent
     DoorState Door{};
     bool IsActivator{};
     ActivatorState Activator{};
+    bool IsContainer{};
 };

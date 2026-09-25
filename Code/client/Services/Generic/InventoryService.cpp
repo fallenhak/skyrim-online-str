@@ -9,10 +9,13 @@
 #include <Messages/NotifyEquipmentChanges.h>
 #include <Messages/DrawWeaponRequest.h>
 #include <Messages/NotifyDrawWeapon.h>
+#include <Messages/RequestContainerTransfer.h>
+#include <Messages/NotifyContainerTransferResult.h>
 
 #include <Events/UpdateEvent.h>
 #include <Events/InventoryChangeEvent.h>
 #include <Events/EquipmentChangeEvent.h>
+#include <Events/DisconnectedEvent.h>
 
 #include <World.h>
 #include <Games/Skyrim/Interface/UI.h>
@@ -38,6 +41,70 @@ InventoryService::InventoryService(World& aWorld, entt::dispatcher& aDispatcher,
     m_equipmentConnection = m_dispatcher.sink<EquipmentChangeEvent>().connect<&InventoryService::OnEquipmentChangeEvent>(this);
     m_inventoryChangeConnection = m_dispatcher.sink<NotifyInventoryChanges>().connect<&InventoryService::OnNotifyInventoryChanges>(this);
     m_equipmentChangeConnection = m_dispatcher.sink<NotifyEquipmentChanges>().connect<&InventoryService::OnNotifyEquipmentChanges>(this);
+    m_containerTransferConnection = m_dispatcher.sink<ContainerTransferEvent>().connect<&InventoryService::OnContainerTransferEvent>(this);
+    m_containerTransferResultConnection = m_dispatcher.sink<NotifyContainerTransferResult>().connect<&InventoryService::OnNotifyContainerTransferResult>(this);
+    m_disconnectedConnection = m_dispatcher.sink<DisconnectedEvent>().connect<&InventoryService::OnDisconnected>(this);
+}
+
+void InventoryService::OnContainerTransferEvent(const ContainerTransferEvent& acEvent) noexcept
+{
+    if (!m_transport.IsConnected())
+        return;
+
+    RequestContainerTransfer request;
+    request.RequestId = ++m_nextTransferId;
+    request.ContainerId = acEvent.ContainerServerId;
+    request.Direction = acEvent.Direction;
+    request.ExpectedContainerCount = acEvent.ExpectedContainerCount;
+    request.Item = acEvent.Item;
+
+    m_pendingTransfers[request.RequestId] = acEvent;
+    m_transport.Send(request);
+
+    spdlog::info(
+        "Container transfer {} ({}): item {:X} x{}, container {:X} held {}", request.RequestId, acEvent.Direction == 0 ? "take" : "put",
+        acEvent.Item.BaseId.BaseId, acEvent.Item.Count, acEvent.ContainerFormId, acEvent.ExpectedContainerCount);
+}
+
+void InventoryService::OnNotifyContainerTransferResult(const NotifyContainerTransferResult& acMessage) noexcept
+{
+    const auto it = m_pendingTransfers.find(acMessage.RequestId);
+    if (it == m_pendingTransfers.end())
+        return;
+
+    const ContainerTransferEvent transfer = it->second;
+    m_pendingTransfers.erase(it);
+
+    if (acMessage.Result == 0)
+        return;
+
+    // Rejected: undo both local halves without telling the server again.
+    TESObjectREFR* pContainer = Cast<TESObjectREFR>(TESForm::GetById(transfer.ContainerFormId));
+    PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    if (!pContainer || !pPlayer)
+    {
+        spdlog::error("Container transfer {} rejected ({}) but the container {:X} is gone; nothing rolled back", acMessage.RequestId, acMessage.Result, transfer.ContainerFormId);
+        return;
+    }
+
+    const bool isTake = transfer.Direction == 0;
+    Inventory::Entry toContainer = transfer.Item;
+    Inventory::Entry toPlayer = transfer.Item;
+    toContainer.Count = isTake ? transfer.Item.Count : -transfer.Item.Count;
+    toPlayer.Count = isTake ? -transfer.Item.Count : transfer.Item.Count;
+
+    ScopedInventoryOverride _;
+    pContainer->AddOrRemoveItem(toContainer);
+    pPlayer->AddOrRemoveItem(toPlayer);
+
+    spdlog::warn(
+        "Container transfer {} rejected ({}), rolled back: item {:X} x{} {} container {:X}", acMessage.RequestId, acMessage.Result,
+        transfer.Item.BaseId.BaseId, transfer.Item.Count, isTake ? "returned to" : "taken back from", transfer.ContainerFormId);
+}
+
+void InventoryService::OnDisconnected(const DisconnectedEvent&) noexcept
+{
+    m_pendingTransfers.clear();
 }
 
 void InventoryService::OnUpdate(const UpdateEvent& acUpdateEvent) noexcept

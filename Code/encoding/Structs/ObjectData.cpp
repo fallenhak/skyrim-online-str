@@ -5,7 +5,7 @@ using TiltedPhoques::Serialization;
 
 bool ObjectData::operator==(const ObjectData& acRhs) const noexcept
 {
-    return ServerId == acRhs.ServerId && Id == acRhs.Id && CellId == acRhs.CellId && WorldSpaceId == acRhs.WorldSpaceId && CurrentCoords == acRhs.CurrentCoords && CurrentLockData == acRhs.CurrentLockData && CurrentInventory == acRhs.CurrentInventory && IsStateUntrusted == acRhs.IsStateUntrusted && IsHarvestable == acRhs.IsHarvestable && IsHarvestItem == acRhs.IsHarvestItem && IsHarvested == acRhs.IsHarvested && IsOpenLoot == acRhs.IsOpenLoot && IsLootTaken == acRhs.IsLootTaken && IsFurniture == acRhs.IsFurniture && IsDoor == acRhs.IsDoor && IsDoorStateKnown == acRhs.IsDoorStateKnown && IsDoorOpen == acRhs.IsDoorOpen && IsActivator == acRhs.IsActivator && ActivationCount == acRhs.ActivationCount;
+    return ServerId == acRhs.ServerId && Id == acRhs.Id && CellId == acRhs.CellId && WorldSpaceId == acRhs.WorldSpaceId && CurrentCoords == acRhs.CurrentCoords && CurrentLockData == acRhs.CurrentLockData && CurrentInventory == acRhs.CurrentInventory && IsStateUntrusted == acRhs.IsStateUntrusted && IsHarvestable == acRhs.IsHarvestable && IsHarvestItem == acRhs.IsHarvestItem && IsHarvested == acRhs.IsHarvested && IsOpenLoot == acRhs.IsOpenLoot && IsLootTaken == acRhs.IsLootTaken && IsFurniture == acRhs.IsFurniture && IsDoor == acRhs.IsDoor && IsDoorStateKnown == acRhs.IsDoorStateKnown && IsDoorOpen == acRhs.IsDoorOpen && IsActivator == acRhs.IsActivator && ActivationCount == acRhs.ActivationCount && IsContainer == acRhs.IsContainer;
 }
 
 bool ObjectData::operator!=(const ObjectData& acRhs) const noexcept
@@ -34,6 +34,7 @@ void ObjectData::Serialize(TiltedPhoques::Buffer::Writer& aWriter) const noexcep
     Serialization::WriteBool(aWriter, IsDoorOpen);
     Serialization::WriteBool(aWriter, IsActivator);
     Serialization::WriteVarInt(aWriter, ActivationCount);
+    Serialization::WriteBool(aWriter, IsContainer);
 }
 
 void ObjectData::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
@@ -57,4 +58,5 @@ void ObjectData::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
     IsDoorOpen = Serialization::ReadBool(aReader);
     IsActivator = Serialization::ReadBool(aReader);
     ActivationCount = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
+    IsContainer = Serialization::ReadBool(aReader);
 }
