@@ -181,8 +181,18 @@ void PlayerService::HandleInteriorCellEnter(const PacketEvent<EnterInteriorCellR
     SendPlayerCellChanged(pPlayer);
 }
 
-void PlayerService::RestoreRespawnVitals(const entt::entity aCharacter, Player* apPlayer) const noexcept
+void PlayerService::ApplyRespawnState(const entt::entity aCharacter, Player* apPlayer) const noexcept
 {
+    // Observers re-spawn this player from the server's flags as soon as NotifyRespawn reaches them,
+    // which can be before the owner reports its new state. A respawned player starts alive with its
+    // weapon sheathed; left stale, observers spawned it dead or with the weapon drawn and nothing
+    // corrected it afterwards (the drawn flag is only read at spawn).
+    if (auto* const pCharacter = m_world.try_get<CharacterComponent>(aCharacter))
+    {
+        pCharacter->SetDead(false);
+        pCharacter->SetWeaponDrawn(false);
+    }
+
     auto* const pActorValues = m_world.try_get<ActorValuesComponent>(aCharacter);
     if (!pActorValues)
         return;
@@ -228,7 +238,7 @@ void PlayerService::OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnReques
             return;
         }
 
-        RestoreRespawnVitals(*character, acMessage.pPlayer);
+        ApplyRespawnState(*character, acMessage.pPlayer);
 
         if (goldLossFactor != 0.0)
         {
