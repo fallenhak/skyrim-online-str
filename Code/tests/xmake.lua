@@ -50,7 +50,8 @@ target("SessionTests")
         "gtest",
         "gamenetworkingsockets",
         "sqlite3",
-        "spdlog")
+        "spdlog",
+        "glm")
 
 target("ActorPopulationTests")
     set_kind("binary")
