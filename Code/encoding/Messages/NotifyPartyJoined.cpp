@@ -1,11 +1,17 @@
 #include <Messages/NotifyPartyJoined.h>
 #include <TiltedCore/Serialization.hpp>
 
+namespace
+{
+// Bounds a malformed count; parties are far smaller.
+constexpr uint64_t kMaxPartyMembers = 1024;
+}
+
 void NotifyPartyJoined::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
 {
     Serialization::WriteBool(aWriter, IsLeader);
     Serialization::WriteVarInt(aWriter, LeaderPlayerId);
-    aWriter.WriteBits(PlayerIds.size() & 0xFF, 8);
+    Serialization::WriteVarInt(aWriter, PlayerIds.size());
 
     for (auto player : PlayerIds)
     {
@@ -18,8 +24,9 @@ void NotifyPartyJoined::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) n
     IsLeader = Serialization::ReadBool(aReader);
     LeaderPlayerId = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
 
-    uint64_t count = 0;
-    aReader.ReadBits(count, 8);
+    const uint64_t count = Serialization::ReadVarInt(aReader);
+    if (count > kMaxPartyMembers)
+        return;
 
     PlayerIds.resize(count);
 

@@ -4,11 +4,15 @@
 #include <limits>
 #include <utility>
 
+namespace
+{
+// One entry per actor whose factions changed; bounds a malformed count.
+constexpr uint64_t kMaxFactionChanges = 4096;
+}
+
 void RequestFactionsChanges::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
 {
-    assert(Changes.size() < 0x100);
-
-    aWriter.WriteBits(Changes.size() & 0xFF, 8);
+    Serialization::WriteVarInt(aWriter, Changes.size());
 
     for (auto& change : Changes)
     {
@@ -21,8 +25,9 @@ void RequestFactionsChanges::DeserializeRaw(TiltedPhoques::Buffer::Reader& aRead
 {
     ClientMessage::DeserializeRaw(aReader);
 
-    uint64_t count = 0;
-    aReader.ReadBits(count, 8);
+    const uint64_t count = Serialization::ReadVarInt(aReader);
+    if (count > kMaxFactionChanges)
+        return;
     Changes.clear();
 
     for (auto i = 0u; i < count; ++i)

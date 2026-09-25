@@ -226,6 +226,9 @@ void PlayerService::OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnReques
         // Let all other players in cell respawn this player, since the body state seems to be bugged otherwise
         NotifyRespawn notifyRespawn{};
         notifyRespawn.ActorId = World::ToInteger(*character);
+        // Observers match the respawn by server id and epoch; without the epoch the respawned player stayed invisible.
+        if (const auto* pOwnerComponent = m_world.try_get<OwnerComponent>(*character))
+            notifyRespawn.OwnershipEpoch = pOwnerComponent->OwnershipEpoch;
 
         if (!GameServer::Get()->SendToPlayersInRange(notifyRespawn, *character, acMessage.GetSender()))
             spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
