@@ -53,6 +53,32 @@ TEST_CASE("Known object interactions require the stored cell and sender range", 
     REQUIRE_FALSE(ObjectInteractionPolicy::CanInteract(objectCell, senderCell, worldSpace, senderCoords, objectCell, worldSpace, GridCellCoords{13, -8}));
 }
 
+TEST_CASE("Activation notifications reach peers in the same exterior range", "[object_authority][activation]")
+{
+    const GameId objectCell{0, 1};
+    const GameId peerCell{0, 2};
+    const GameId worldSpace{0, 0x3C};
+    const GridCellCoords objectCoords{10, -10};
+
+    // Observers may occupy a different exterior cell while still having this object in range.
+    REQUIRE(ObjectInteractionPolicy::CanInteract(
+        objectCell, peerCell, worldSpace, GridCellCoords{12, -8},
+        objectCell, worldSpace, objectCoords));
+    REQUIRE_FALSE(ObjectInteractionPolicy::CanInteract(
+        objectCell, peerCell, worldSpace, GridCellCoords{13, -10},
+        objectCell, worldSpace, objectCoords));
+    REQUIRE_FALSE(ObjectInteractionPolicy::CanInteract(
+        objectCell, peerCell, GameId{0, 0x3D}, GridCellCoords{10, -10},
+        objectCell, worldSpace, objectCoords));
+
+    const GameId interiorCell{0, 0x100};
+    const GameId otherInteriorCell{0, 0x101};
+    REQUIRE(ObjectInteractionPolicy::CanInteract(
+        interiorCell, interiorCell, {}, {}, interiorCell, {}, {}));
+    REQUIRE_FALSE(ObjectInteractionPolicy::CanInteract(
+        interiorCell, otherInteriorCell, {}, {}, interiorCell, {}, {}));
+}
+
 TEST_CASE("Object activation requires an owned actor and valid open state", "[object_authority]")
 {
     REQUIRE(ObjectInteractionPolicy::IsAuthorizedActivator(true, true));
