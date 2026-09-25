@@ -2,17 +2,20 @@
 
 #include <Events/PacketEvent.h>
 #include <Persistence/WorldObjectRepository.h>
+#include <Services/DesyncPolicy.h>
 
 #include <vector>
 
 struct World;
 struct ObjectComponent;
 struct PlayerLeaveCellEvent;
+struct PlayerLeaveEvent;
 struct ActivateRequest;
 struct TakeWorldItemRequest;
 struct LockChangeRequest;
 struct AssignObjectsRequest;
 struct ScriptAnimationRequest;
+struct ObjectStateReport;
 struct UpdateEvent;
 
 /**
@@ -30,6 +33,8 @@ private:
     void OnTakeWorldItem(const PacketEvent<TakeWorldItemRequest>&) noexcept;
     void OnLockChange(const PacketEvent<LockChangeRequest>&) const noexcept;
     void OnScriptAnimationRequest(const PacketEvent<ScriptAnimationRequest>&) noexcept;
+    void OnObjectStateReport(const PacketEvent<ObjectStateReport>&) noexcept;
+    void OnPlayerLeave(const PlayerLeaveEvent&) noexcept;
     void OnUpdate(const UpdateEvent& acEvent) noexcept;
     void RespawnWorldObjects() noexcept;
     void PruneUnobservedObjects() noexcept;
@@ -43,6 +48,7 @@ private:
     std::vector<Persistence::WorldObjectState> m_persistedStates;
     std::uint64_t m_tick{};
     double m_tickAccumulator{};
+    DesyncPolicy::Tracker m_desyncTracker;
 
     entt::scoped_connection m_leaveCellConnection;
     entt::scoped_connection m_assignObjectConnection;
@@ -50,5 +56,7 @@ private:
     entt::scoped_connection m_takeWorldItemConnection;
     entt::scoped_connection m_lockChangeConnection;
     entt::scoped_connection m_scriptAnimationConnection;
+    entt::scoped_connection m_objectStateReportConnection;
+    entt::scoped_connection m_playerLeaveConnection;
     entt::scoped_connection m_updateConnection;
 };

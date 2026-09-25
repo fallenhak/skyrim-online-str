@@ -16,6 +16,7 @@
 #include <Events/ScriptAnimationEvent.h>
 #include <Messages/ServerTimeSettings.h>
 #include <Messages/AssignObjectsRequest.h>
+#include <Messages/ObjectStateReport.h>
 #include <Messages/AssignObjectsResponse.h>
 #include <Messages/ActivateRequest.h>
 #include <Messages/NotifyActivate.h>
@@ -261,32 +262,40 @@ void ObjectService::OnCellChange(const CellChangeEvent&) noexcept
         m_assignObjectsPending = true;
 }
 
-void ObjectService::OnUpdate(const UpdateEvent&) noexcept
+void ObjectService::OnUpdate(const UpdateEvent& acEvent) noexcept
 {
-    if (!m_assignObjectsPending)
+    if (m_assignObjectsPending)
+    {
+        m_assignObjectsPending = false;
+        SendAssignObjectsRequest();
+        // Let the assign response apply before the next report.
+        m_stateReportTimer = 0.0;
+        return;
+    }
+
+    m_stateReportTimer += acEvent.Delta;
+    if (m_stateReportTimer < kStateReportInterval)
         return;
 
-    m_assignObjectsPending = false;
-    SendAssignObjectsRequest();
+    m_stateReportTimer = 0.0;
+    SendObjectStateReport();
 }
 
-void ObjectService::SendAssignObjectsRequest() noexcept
+bool ObjectService::CollectSyncedObjects(Vector<SyncedObject>& aObjects, GameId& aWorldSpaceId, TESObjectCELL*& apCell, size_t& aCellCount) noexcept
 {
-    if (!m_transport.IsConnected())
-        return;
-
     PlayerCharacter* pPlayer = PlayerCharacter::Get();
     TESObjectCELL* pCell = pPlayer->parentCell;
     if (!pCell)
-        return;
+        return false;
+    apCell = pCell;
 
-    GameId worldSpaceId{};
+    aWorldSpaceId = {};
     if (TESWorldSpace* pWorldSpace = pPlayer->GetWorldSpace())
     {
-        if (!m_world.GetModSystem().GetServerModId(pWorldSpace->formID, worldSpaceId))
+        if (!m_world.GetModSystem().GetServerModId(pWorldSpace->formID, aWorldSpaceId))
         {
             spdlog::error("Server world space id not found for world space form id {:X}", pWorldSpace->formID);
-            return;
+            return false;
         }
     }
 
@@ -307,13 +316,12 @@ void ObjectService::SendAssignObjectsRequest() noexcept
     }
     if (std::find(cells.begin(), cells.end(), pCell) == cells.end())
         cells.push_back(pCell);
+    aCellCount = cells.size();
 
     Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient, FormType::Furniture, FormType::Activator,
                                   FormType::Armor, FormType::Misc, FormType::Weapon, FormType::Ammo, FormType::Key,
                                   FormType::Alchemy, FormType::Scroll, FormType::SoulGem, FormType::Light, FormType::Apparatus, FormType::Book};
     // Door seemed to be at the wrong form id (29, now 32), verify this.
-
-    AssignObjectsRequest request{};
 
     const Set<const TESObjectREFR*> playerStashContainers = GetPlayerStashContainers();
 
@@ -345,45 +353,119 @@ void ObjectService::SendAssignObjectsRequest() noexcept
                 continue;
 
             if (!ShouldSyncObject(pObject, playerStashContainers))
-            {
-                spdlog::warn("Excluding sync for {:X}", pObject->formID);
                 continue;
-            }
 
-            ObjectData objectData{};
-            objectData.CellId = cellId;
-            objectData.WorldSpaceId = worldSpaceId;
-            objectData.CurrentCoords = GridCellCoords::CalculateGridCellCoords(pObject->position.x, pObject->position.y);
-
-            if (!m_world.GetModSystem().GetServerModId(pObject->formID, objectData.Id))
+            SyncedObject synced{pObject, cellId, {}, cIsHarvestType, cIsOpenLoot};
+            if (!m_world.GetModSystem().GetServerModId(pObject->formID, synced.Id))
             {
                 spdlog::error("Server form id not found for object with form id {:X}", pObject->formID);
                 continue;
             }
 
-            if (Lock* pLock = pObject->GetLock())
-            {
-                objectData.CurrentLockData.IsLocked = pLock->IsLocked();
-                objectData.CurrentLockData.LockLevel = pLock->lockLevel;
-            }
-
-            if (pObject->baseForm->formType == FormType::Container)
-                objectData.CurrentInventory = pObject->GetInventory();
-
-            objectData.IsHarvestable = cIsHarvestType;
-            objectData.IsHarvestItem = pObject->baseForm->formType == FormType::Ingredient;
-            objectData.IsOpenLoot = cIsOpenLoot;
-            objectData.IsFurniture = pObject->baseForm->formType == FormType::Furniture;
-            objectData.IsDoor = IsSyncedDoor(pObject);
-            objectData.IsActivator = IsSyncedActivator(pObject);
-            objectData.IsContainer = pObject->baseForm->formType == FormType::Container;
-
-            request.Objects.push_back(objectData);
+            aObjects.push_back(synced);
         }
     }
 
-    spdlog::info("[World] assign objects requested for cell {:X} ({} loaded cell(s)): {} object(s)", pCell->formID, cells.size(), request.Objects.size());
+    return true;
+}
+
+void ObjectService::SendAssignObjectsRequest() noexcept
+{
+    if (!m_transport.IsConnected())
+        return;
+
+    Vector<SyncedObject> objects;
+    GameId worldSpaceId{};
+    TESObjectCELL* pCell = nullptr;
+    size_t cellCount = 0;
+    if (!CollectSyncedObjects(objects, worldSpaceId, pCell, cellCount))
+        return;
+
+    AssignObjectsRequest request{};
+
+    for (const SyncedObject& synced : objects)
+    {
+        TESObjectREFR* pObject = synced.pObject;
+
+        ObjectData objectData{};
+        objectData.Id = synced.Id;
+        objectData.CellId = synced.CellId;
+        objectData.WorldSpaceId = worldSpaceId;
+        objectData.CurrentCoords = GridCellCoords::CalculateGridCellCoords(pObject->position.x, pObject->position.y);
+
+        if (Lock* pLock = pObject->GetLock())
+        {
+            objectData.CurrentLockData.IsLocked = pLock->IsLocked();
+            objectData.CurrentLockData.LockLevel = pLock->lockLevel;
+        }
+
+        if (pObject->baseForm->formType == FormType::Container)
+            objectData.CurrentInventory = pObject->GetInventory();
+
+        objectData.IsHarvestable = synced.IsHarvestType;
+        objectData.IsHarvestItem = pObject->baseForm->formType == FormType::Ingredient;
+        objectData.IsOpenLoot = synced.IsOpenLoot;
+        objectData.IsFurniture = pObject->baseForm->formType == FormType::Furniture;
+        objectData.IsDoor = IsSyncedDoor(pObject);
+        objectData.IsActivator = IsSyncedActivator(pObject);
+        objectData.IsContainer = pObject->baseForm->formType == FormType::Container;
+
+        request.Objects.push_back(objectData);
+    }
+
+    spdlog::info("[World] assign objects requested for cell {:X} ({} loaded cell(s)): {} object(s)", pCell->formID, cellCount, request.Objects.size());
     m_transport.Send(request);
+}
+
+// Desync detector (world-state plan, phase 0): report what this client shows for
+// every synced reference; the server compares with its record and logs. Nothing is applied.
+void ObjectService::SendObjectStateReport() noexcept
+{
+    if (!m_transport.IsConnected())
+        return;
+
+    Vector<SyncedObject> objects;
+    GameId worldSpaceId{};
+    TESObjectCELL* pCell = nullptr;
+    size_t cellCount = 0;
+    if (!CollectSyncedObjects(objects, worldSpaceId, pCell, cellCount) || objects.empty())
+        return;
+
+    ObjectStateReport report{};
+    for (const SyncedObject& synced : objects)
+    {
+        TESObjectREFR* pObject = synced.pObject;
+
+        ObjectStateDigest digest{};
+        digest.Id = synced.Id;
+        digest.CellId = synced.CellId;
+        if (pObject->IsDisabled())
+            digest.StateFlags |= ObjectStateDigest::kDisabled;
+
+        if (Lock* pLock = pObject->GetLock())
+        {
+            if (pLock->IsLocked())
+                digest.StateFlags |= ObjectStateDigest::kLocked;
+            digest.LockLevel = pLock->lockLevel;
+        }
+
+        if (IsSyncedDoor(pObject))
+        {
+            const auto cOpenState = pObject->GetOpenState();
+            if (cOpenState == TESObjectREFR::kOpen || cOpenState == TESObjectREFR::kOpening)
+                digest.StateFlags |= ObjectStateDigest::kDoorOpen;
+        }
+
+        if (pObject->baseForm->formType == FormType::Container)
+        {
+            digest.StateFlags |= ObjectStateDigest::kHasInventory;
+            digest.Items = ObjectStateDigest::Canonicalize(pObject->GetInventory());
+        }
+
+        report.Objects.push_back(std::move(digest));
+    }
+
+    m_transport.Send(report);
 }
 
 void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessage) noexcept
