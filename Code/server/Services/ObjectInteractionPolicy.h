@@ -319,8 +319,22 @@ struct ObjectInteractionPolicy final
         const uint8_t aLockLevel,
         TOnRelay&& aOnRelay)
     {
-        // A stored baseline describes prior state; it does not validate a
-        // result reported by a client (for example, a successful lockpick).
+        // A reported unlock (a successful lockpick) is accepted without an
+        // independent resolver: the worst a forged report can do is open a
+        // lock, and without it every player has to pick the same lock.
+        // (Product decision, 2026-09-25.) The lock level is left unchanged.
+        if (!aIsLocked)
+        {
+            if (aHasTrustedState && !aCurrentState.IsLocked)
+                return true; // already open; nothing to relay
+
+            aCurrentState.IsLocked = false;
+            std::forward<TOnRelay>(aOnRelay)();
+            return true;
+        }
+
+        // Locking or changing the level still needs a validated outcome: a
+        // stored baseline describes prior state, not the client's result.
         if (!aHasTrustedState || !aHasIndependentlyValidatedOutcome)
             return false;
 
