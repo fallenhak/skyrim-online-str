@@ -177,27 +177,46 @@ struct ObjectInteractionPolicy final
         return true;
     }
 
-    [[nodiscard]] static constexpr bool ShouldRetainWorldState(
-        const bool aIsLootTaken,
-        const bool aIsHarvested,
-        const std::uint64_t aRespawnAtTick,
-        const std::uint64_t aNowTick) noexcept
+    [[nodiscard]] static constexpr bool IsLootRespawnDue(
+        const bool aIsLootTaken, const std::uint64_t aRespawnAtUnix, const std::uint64_t aNowUnix) noexcept
     {
-        return aIsLootTaken || (aIsHarvested && aNowTick < aRespawnAtTick);
+        return aIsLootTaken && aNowUnix >= aRespawnAtUnix;
     }
 
-    // Ticks are whole seconds of server uptime (same unit as RenewableEncounterService).
+    [[nodiscard]] static constexpr bool ShouldRetainWorldState(
+        const bool aDoorStateKnown,
+        const std::uint32_t aActivatorActivationCount,
+        const bool aIsLootTaken,
+        const std::uint64_t aLootRespawnAtUnix,
+        const bool aIsHarvested,
+        const std::uint64_t aHarvestRespawnAtUnix,
+        const std::uint64_t aNowUnix) noexcept
+    {
+        return aDoorStateKnown || aActivatorActivationCount != 0 ||
+            (aIsLootTaken && !IsLootRespawnDue(aIsLootTaken, aLootRespawnAtUnix, aNowUnix)) ||
+            (aIsHarvested && !IsHarvestRespawnDue(aIsHarvested, aHarvestRespawnAtUnix, aNowUnix));
+    }
+
+    // Durations keep the existing whole-second values used by RenewableEncounterService.
     static constexpr std::uint64_t kFloraRespawnTicks = 30 * 60;
     static constexpr std::uint64_t kItemRespawnTicks = 60 * 60;
 
-    [[nodiscard]] static constexpr std::uint64_t HarvestRespawnTick(const std::uint64_t aHarvestTick, const bool aIsItem) noexcept
+    [[nodiscard]] static constexpr std::uint64_t ItemRespawnAtUnix(const std::uint64_t aNowUnix) noexcept
     {
-        return aHarvestTick + (aIsItem ? kItemRespawnTicks : kFloraRespawnTicks);
+        return aNowUnix + kItemRespawnTicks;
     }
 
-    [[nodiscard]] static constexpr bool IsHarvestRespawnDue(const bool aHarvested, const std::uint64_t aRespawnAtTick, const std::uint64_t aNowTick) noexcept
+    // These durations use the server's existing whole-second tick values, but
+    // deadlines are stored as Unix seconds so restarts do not reset them.
+    [[nodiscard]] static constexpr std::uint64_t HarvestRespawnAtUnix(const std::uint64_t aNowUnix, const bool aIsItem) noexcept
     {
-        return aHarvested && aNowTick >= aRespawnAtTick;
+        return aNowUnix + (aIsItem ? kItemRespawnTicks : kFloraRespawnTicks);
+    }
+
+    [[nodiscard]] static constexpr bool IsHarvestRespawnDue(
+        const bool aHarvested, const std::uint64_t aRespawnAtUnix, const std::uint64_t aNowUnix) noexcept
+    {
+        return aHarvested && aNowUnix >= aRespawnAtUnix;
     }
 
     // TESObjectREFR::OpenState: kNone = 0, kOpen = 1, kOpening = 2, kClosed = 3, kClosing = 4.

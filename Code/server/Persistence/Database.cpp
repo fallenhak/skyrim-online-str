@@ -14,7 +14,7 @@ namespace Persistence
 {
 namespace
 {
-constexpr int kCurrentSchemaVersion = 3;
+constexpr int kCurrentSchemaVersion = 4;
 
 [[noreturn]] void ThrowSqliteError(sqlite3* apDatabase, const int aResult, const std::string_view acOperation)
 {
@@ -64,14 +64,24 @@ void Database::StatementDeleter::operator()(sqlite3_stmt* apStatement) const noe
         spdlog::error("[Persistence] Failed to finalize SQLite statement: {}", sqlite3_errstr(result));
 }
 
-Database::Statement::Statement(sqlite3_stmt* apStatement) noexcept
-    : m_statement(apStatement)
+Database::Statement::Statement(sqlite3_stmt* apStatement, std::unique_lock<std::recursive_mutex>&& aLock) noexcept
+    : m_lock(std::move(aLock))
+    , m_statement(apStatement)
 {
 }
 
 Database::Statement::~Statement() noexcept = default;
 Database::Statement::Statement(Statement&&) noexcept = default;
-Database::Statement& Database::Statement::operator=(Statement&&) noexcept = default;
+Database::Statement& Database::Statement::operator=(Statement&& aOther) noexcept
+{
+    if (this == &aOther)
+        return *this;
+
+    m_statement.reset();
+    m_lock = std::move(aOther.m_lock);
+    m_statement = std::move(aOther.m_statement);
+    return *this;
+}
 
 void Database::Statement::Bind(const int aIndex, const std::string_view acValue)
 {
@@ -122,6 +132,7 @@ std::string Database::Statement::ColumnText(const int aIndex) const
 
 Database::Transaction::Transaction(Database& aDatabase)
     : m_database(aDatabase)
+    , m_lock(aDatabase.m_mutex)
 {
     m_database.Execute("BEGIN IMMEDIATE TRANSACTION;");
 }
@@ -174,8 +185,24 @@ Database::Database(const std::filesystem::path& acPath)
 }
 
 Database::~Database() noexcept = default;
-Database::Database(Database&&) noexcept = default;
-Database& Database::operator=(Database&&) noexcept = default;
+Database::Database(Database&& aOther) noexcept
+    : m_database(nullptr)
+{
+    std::lock_guard<std::recursive_mutex> lock(aOther.m_mutex);
+    m_database = std::move(aOther.m_database);
+    m_path = std::move(aOther.m_path);
+}
+
+Database& Database::operator=(Database&& aOther) noexcept
+{
+    if (this == &aOther)
+        return *this;
+
+    std::scoped_lock lock(m_mutex, aOther.m_mutex);
+    m_database = std::move(aOther.m_database);
+    m_path = std::move(aOther.m_path);
+    return *this;
+}
 
 void Database::Migrate()
 {
@@ -284,12 +311,42 @@ void Database::Migrate()
         Execute("UPDATE schema_version SET version = 3 WHERE id = 1;");
     }
 
+    if (schemaVersion < 4)
+    {
+        Execute(R"sql(
+            CREATE TABLE IF NOT EXISTS world_objects (
+                object_mod_id INTEGER NOT NULL CHECK (object_mod_id >= 0 AND object_mod_id <= 4294967295),
+                object_base_id INTEGER NOT NULL CHECK (object_base_id > 0 AND object_base_id <= 4294967295),
+                cell_mod_id INTEGER NOT NULL CHECK (cell_mod_id >= 0 AND cell_mod_id <= 4294967295),
+                cell_base_id INTEGER NOT NULL CHECK (cell_base_id > 0 AND cell_base_id <= 4294967295),
+                worldspace_mod_id INTEGER NOT NULL CHECK (worldspace_mod_id >= 0 AND worldspace_mod_id <= 4294967295),
+                worldspace_base_id INTEGER NOT NULL CHECK (worldspace_base_id >= 0 AND worldspace_base_id <= 4294967295),
+                center_x INTEGER NOT NULL,
+                center_y INTEGER NOT NULL,
+                is_door INTEGER NOT NULL CHECK (is_door IN (0, 1)),
+                door_is_open INTEGER NOT NULL CHECK (door_is_open IN (0, 1)),
+                activation_count INTEGER NOT NULL CHECK (activation_count >= 0 AND activation_count <= 4294967295),
+                is_harvestable INTEGER NOT NULL CHECK (is_harvestable IN (0, 1)),
+                is_harvest_item INTEGER NOT NULL CHECK (is_harvest_item IN (0, 1)),
+                is_harvested INTEGER NOT NULL CHECK (is_harvested IN (0, 1)),
+                harvest_respawn_at_unix INTEGER NOT NULL CHECK (harvest_respawn_at_unix >= 0),
+                is_open_loot INTEGER NOT NULL CHECK (is_open_loot IN (0, 1)),
+                is_loot_taken INTEGER NOT NULL CHECK (is_loot_taken IN (0, 1)),
+                loot_respawn_at_unix INTEGER NOT NULL CHECK (loot_respawn_at_unix >= 0),
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (object_mod_id, object_base_id, cell_mod_id, cell_base_id)
+            ) WITHOUT ROWID;
+        )sql");
+        Execute("UPDATE schema_version SET version = 4 WHERE id = 1;");
+    }
+
     transaction.Commit();
     spdlog::info("[Persistence] SQLite database '{}' is ready at schema version {}", m_path.string(), kCurrentSchemaVersion);
 }
 
 void Database::Execute(const std::string_view acSql)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     const std::string sql(acSql);
     char* pError = nullptr;
     const int result = sqlite3_exec(m_database.get(), sql.c_str(), nullptr, nullptr, &pError);
@@ -307,6 +364,7 @@ void Database::Execute(const std::string_view acSql)
 
 Database::Statement Database::Prepare(const std::string_view acSql)
 {
+    std::unique_lock<std::recursive_mutex> lock(m_mutex);
     if (acSql.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
         throw std::length_error("SQLite statement is too large");
 
@@ -319,16 +377,18 @@ Database::Statement Database::Prepare(const std::string_view acSql)
         ThrowSqliteError(m_database.get(), result, "Failed to prepare SQLite statement");
     }
 
-    return Statement(pStatement);
+    return Statement(pStatement, std::move(lock));
 }
 
 std::int64_t Database::LastInsertRowId() const noexcept
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return sqlite3_last_insert_rowid(m_database.get());
 }
 
 int Database::Changes() const noexcept
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return sqlite3_changes(m_database.get());
 }
 

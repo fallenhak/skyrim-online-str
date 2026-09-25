@@ -3,6 +3,8 @@
 #include <Events/EventDispatcher.h>
 #include <Games/Events.h>
 
+#include <cstdint>
+
 struct ServerTimeSettings;
 struct DisconnectedEvent;
 struct World;
@@ -58,3 +60,5 @@ private:
     entt::scoped_connection m_objectHarvestedConnection;
     entt::scoped_connection m_worldItemTakenConnection;
 };
+
+void TrackLocalWorldItemTaken(std::uint32_t aFormId) noexcept;

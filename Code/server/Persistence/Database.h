@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -45,8 +46,9 @@ struct Database final
     private:
         friend struct Database;
 
-        explicit Statement(sqlite3_stmt* apStatement) noexcept;
+        explicit Statement(sqlite3_stmt* apStatement, std::unique_lock<std::recursive_mutex>&& aLock) noexcept;
 
+        std::unique_lock<std::recursive_mutex> m_lock;
         std::unique_ptr<sqlite3_stmt, StatementDeleter> m_statement;
     };
 
@@ -65,6 +67,7 @@ struct Database final
 
     private:
         Database& m_database;
+        std::unique_lock<std::recursive_mutex> m_lock;
         bool m_committed{};
     };
 
@@ -87,6 +90,7 @@ struct Database final
 private:
     void RollbackNoThrow() noexcept;
 
+    mutable std::recursive_mutex m_mutex;
     std::unique_ptr<sqlite3, DatabaseDeleter> m_database;
     std::filesystem::path m_path;
 };

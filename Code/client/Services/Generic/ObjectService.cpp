@@ -32,6 +32,9 @@
 
 #include <inttypes.h>
 
+#include <limits>
+#include <unordered_map>
+
 ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, TransportService& aTransport)
     : m_world(aWorld)
     , m_transport(aTransport)
@@ -130,6 +133,34 @@ bool IsHarvestableObject(const TESObjectREFR* apObject) noexcept
 // Refs this service disabled, so a server reset re-enables only those and
 // never a ref a quest or script disabled.
 Set<uint32_t> s_harvestDisabledRefs{};
+Set<uint32_t> s_worldItemDisabledRefs{};
+std::unordered_map<uint32_t, uint32_t> s_appliedActivatorActivationCounts{};
+uint32_t s_replayingActivatorFormId{};
+
+void IncrementAppliedActivatorCount(const uint32_t aFormId) noexcept
+{
+    auto& count = s_appliedActivatorActivationCounts[aFormId];
+    if (count != std::numeric_limits<uint32_t>::max())
+        ++count;
+}
+
+struct ScopedActivatorStateReplay final
+{
+    explicit ScopedActivatorStateReplay(const uint32_t aFormId) noexcept
+        : PreviousFormId(s_replayingActivatorFormId)
+    {
+        s_replayingActivatorFormId = aFormId;
+    }
+
+    ~ScopedActivatorStateReplay() noexcept { s_replayingActivatorFormId = PreviousFormId; }
+
+    uint32_t PreviousFormId{};
+};
+
+void TrackLocalWorldItemTaken(const uint32_t aFormId) noexcept
+{
+    s_worldItemDisabledRefs.insert(aFormId);
+}
 
 // Another player took it: hide it here too. Only the harvester receives the item.
 void ApplyHarvested(TESObjectREFR* apObject) noexcept
@@ -167,6 +198,19 @@ void ApplyWorldItemTaken(TESObjectREFR* apObject) noexcept
 
     spdlog::info("World item {:X} taken remotely, disabling", apObject->formID);
     apObject->Disable();
+    s_worldItemDisabledRefs.insert(apObject->formID);
+}
+
+void RestoreWorldItem(TESObjectREFR* apObject) noexcept
+{
+    if (!apObject || !s_worldItemDisabledRefs.erase(apObject->formID))
+        return;
+
+    if (apObject->IsDisabled())
+    {
+        spdlog::info("World item {:X} respawned, enabling", apObject->formID);
+        apObject->Enable();
+    }
 }
 
 // Load doors teleport the activator, so they are never toggled remotely.
@@ -307,6 +351,8 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
 
         if (objectData.IsOpenLoot && objectData.IsLootTaken)
             ApplyWorldItemTaken(pObject);
+        else if (objectData.IsOpenLoot)
+            RestoreWorldItem(pObject);
 
         // Late join / re-entry: match the door to the server's open state.
         if (objectData.IsDoor && objectData.IsDoorStateKnown && IsSyncedDoor(pObject))
@@ -320,9 +366,31 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
             }
         }
 
-        // Script state behind an activator cannot be replayed; a late joiner only learns it was used.
-        if (objectData.IsActivator && objectData.ActivationCount > 0)
-            spdlog::info("Activator {:X} was activated {} time(s) before we arrived", pObject->formID, objectData.ActivationCount);
+        // Replaying the server's accepted activation history lets toggle-style
+        // levers and script-driven puzzle objects reach the same state.
+        if (objectData.IsActivator && IsSyncedActivator(pObject))
+        {
+            auto& appliedCount = s_appliedActivatorActivationCounts[pObject->formID];
+            if (objectData.ActivationCount > appliedCount)
+            {
+                PlayerCharacter* pPlayer = PlayerCharacter::Get();
+                if (!pPlayer)
+                {
+                    spdlog::warn("Activator {:X} state cannot be replayed before the local player exists", pObject->formID);
+                }
+                else
+                {
+                    const auto missingActivations = objectData.ActivationCount - appliedCount;
+                    {
+                        ScopedActivatorStateReplay replay(pObject->formID);
+                        for (std::uint32_t index = 0; index < missingActivations; ++index)
+                            pObject->Activate(pPlayer, 0, nullptr, 1, 0);
+                    }
+                    appliedCount = objectData.ActivationCount;
+                    spdlog::info("Activator {:X} replayed {} server activation(s) to match the world", pObject->formID, missingActivations);
+                }
+            }
+        }
 
         if (objectData.IsStateUntrusted)
             continue;
@@ -375,6 +443,13 @@ entt::entity ObjectService::CreateObjectEntity(const uint32_t acFormId, const ui
 
 void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
 {
+    if (acEvent.pObject && s_replayingActivatorFormId == acEvent.pObject->formID)
+    {
+        if (acEvent.ActivateFlag)
+            acEvent.pObject->Activate(acEvent.pActivator, acEvent.Unk1, acEvent.pObjectToGet, acEvent.Count, acEvent.DefaultProcessing);
+        return;
+    }
+
     const bool wasDisabled = acEvent.pObject && acEvent.pObject->IsDisabled();
     const bool trackLocalHarvest = acEvent.ActivateFlag &&
         ObjectSyncPolicy::ShouldTrackLocalHarvest(
@@ -465,6 +540,9 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
 
     m_transport.Send(request);
 
+    if (cIsSyncedActivator)
+        IncrementAppliedActivatorCount(acEvent.pObject->formID);
+
     if (cIsTrackedActivation)
         spdlog::info("[World] sent {} activation for form {:X} (server id {:X}:{:X}, cell {:X}:{:X}, pre-state {}, actor {:X})", cIsSyncedDoor ? "door" : "activator", acEvent.pObject->formID, request.Id.ModId, request.Id.BaseId, request.CellId.ModId, request.CellId.BaseId, request.PreActivationOpenState, request.ActivatorId);
 }
@@ -517,7 +595,10 @@ void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
     pObject->Activate(pActor, 0, nullptr, 1, 0);
 
     if (IsSyncedActivator(pObject))
+    {
+        IncrementAppliedActivatorCount(pObject->formID);
         spdlog::info("[World] applied remote activator activation {:X}:{:X} (local form {:X}, actor {:X})", acMessage.Id.ModId, acMessage.Id.BaseId, pObject->formID, acMessage.ActivatorId);
+    }
 }
 
 void ObjectService::OnObjectHarvestedNotify(const NotifyObjectHarvested& acMessage) noexcept
@@ -546,7 +627,10 @@ void ObjectService::OnWorldItemTakenNotify(const NotifyWorldItemTaken& acMessage
         return;
     }
 
-    ApplyWorldItemTaken(pObject);
+    if (acMessage.IsTaken)
+        ApplyWorldItemTaken(pObject);
+    else
+        RestoreWorldItem(pObject);
 }
 
 void ObjectService::OnLockChange(const LockChangeEvent& acEvent) noexcept

@@ -266,6 +266,7 @@ TEST_CASE("NotifyWorldItemTaken round-trips", "[encoding.object_authority][world
 {
     NotifyWorldItemTaken sent;
     sent.Id = GameId{2, 0x456};
+    sent.IsTaken = false;
 
     Buffer buffer(1000);
     Buffer::Writer writer(&buffer);
@@ -276,6 +277,7 @@ TEST_CASE("NotifyWorldItemTaken round-trips", "[encoding.object_authority][world
     auto received = CastUnique<NotifyWorldItemTaken>(factory.Extract(reader));
     REQUIRE(received);
     REQUIRE(*received == sent);
+    REQUIRE_FALSE(received->IsTaken);
 }
 
 TEST_CASE("Static structures", "[encoding.static]")

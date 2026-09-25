@@ -1,8 +1,12 @@
 #pragma once
 
 #include <Events/PacketEvent.h>
+#include <Persistence/WorldObjectRepository.h>
+
+#include <vector>
 
 struct World;
+struct ObjectComponent;
 struct PlayerLeaveCellEvent;
 struct ActivateRequest;
 struct TakeWorldItemRequest;
@@ -17,20 +21,26 @@ struct UpdateEvent;
 class ObjectService
 {
 public:
-    ObjectService(World& aWorld, entt::dispatcher& aDispatcher);
+    ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Persistence::WorldObjectRepository& aRepository);
 
 private:
     void OnPlayerLeaveCellEvent(const PlayerLeaveCellEvent& acEvent) noexcept;
     void OnAssignObjectsRequest(const PacketEvent<AssignObjectsRequest>&) noexcept;
-    void OnActivate(const PacketEvent<ActivateRequest>&) const noexcept;
+    void OnActivate(const PacketEvent<ActivateRequest>&) noexcept;
     void OnTakeWorldItem(const PacketEvent<TakeWorldItemRequest>&) noexcept;
     void OnLockChange(const PacketEvent<LockChangeRequest>&) const noexcept;
     void OnScriptAnimationRequest(const PacketEvent<ScriptAnimationRequest>&) noexcept;
     void OnUpdate(const UpdateEvent& acEvent) noexcept;
-    void RespawnHarvestedObjects() noexcept;
+    void RespawnWorldObjects() noexcept;
     void PruneUnobservedObjects() noexcept;
+    void RestorePersistedStates();
+    void ApplyPersistedState(ObjectComponent& aObject, const Persistence::WorldObjectState& acState) noexcept;
+    void PersistState(entt::entity aEntity) noexcept;
+    [[nodiscard]] const Persistence::WorldObjectState* FindPersistedState(const GameId& acId, const GameId& acCellId) const noexcept;
 
     World& m_world;
+    Persistence::WorldObjectRepository& m_repository;
+    std::vector<Persistence::WorldObjectState> m_persistedStates;
     std::uint64_t m_tick{};
     double m_tickAccumulator{};
 
