@@ -706,6 +706,12 @@ Inventory TESObjectREFR::GetInventory(std::function<bool(TESForm&)> aFilter) con
                 continue;
             }
 
+            // A leveled list is a recipe, not an item: its rolled result already sits in the
+            // container changes. Reporting it made every other client roll it again on
+            // SetInventory (27 gold on one client, 7 on the other).
+            if (pGameEntry->form->formType == FormType::LeveledItem)
+                continue;
+
             if (!aFilter(*pGameEntry->form))
                 continue;
 
@@ -890,6 +896,14 @@ void TESObjectREFR::AddOrRemoveItem(const Inventory::Entry& arEntry, bool aIsSet
     if (!pObject)
     {
         spdlog::warn("{}: Object to add not found, {:X}:{:X}.", __FUNCTION__, arEntry.BaseId.ModId, arEntry.BaseId.BaseId);
+        return;
+    }
+
+    // Never add a leveled list from the network: the game would roll it locally,
+    // so each client would end up with different items (see GetInventory).
+    if (pObject->formType == FormType::LeveledItem)
+    {
+        spdlog::info("{}: skipped leveled list {:X} x{} (only rolled items are synced)", __FUNCTION__, pObject->formID, arEntry.Count);
         return;
     }
 
