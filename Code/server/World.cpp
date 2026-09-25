@@ -26,7 +26,7 @@
 
 World::World(
     std::filesystem::path aDatabasePath, bool aEnableActorRecordLoading, bool aEnableHumanoidAssignmentGate, bool aAllowUnknownActorAssignments,
-    const char* apRaceClassificationOverrides)
+    const char* apRaceClassificationOverrides, const std::uint32_t aCreatureCorpseLifetimeSeconds)
 {
     m_spAdminService = std::make_shared<AdminService>(*this, m_dispatcher);
     spdlog::default_logger()->sinks().push_back(std::static_pointer_cast<spdlog::sinks::sink>(m_spAdminService));
@@ -34,7 +34,7 @@ World::World(
     ctx().emplace<PersistenceService>(std::move(aDatabasePath));
     ctx().emplace<SessionService>(ctx().at<PersistenceService>().GetCharacterRepository());
     ctx().emplace<ProgressionService>(*this, m_dispatcher);
-    ctx().emplace<CharacterService>(*this, m_dispatcher);
+    ctx().emplace<CharacterService>(*this, m_dispatcher, aCreatureCorpseLifetimeSeconds);
     ctx().emplace<CharacterSaveService>(*this, ctx().at<PersistenceService>().GetCharacterRepository(), m_dispatcher);
     ctx().emplace<PlayerService>(*this, m_dispatcher);
     ctx().emplace<PresenceService>(*this, m_dispatcher);

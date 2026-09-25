@@ -149,7 +149,7 @@ void RenewableEncounterService::RemoveStaleActors() noexcept
         if (!pLifecycle || pLifecycle->GetGeneration() != incarnation.LifecycleGeneration)
             continue;
 
-        m_world.GetDispatcher().enqueue(CharacterRemoveEvent(serverId));
+        m_world.GetDispatcher().trigger(CharacterRemoveEvent(serverId));
         spdlog::info("[World] stale actor removed incarnation={:x}:{} tick={}", serverId, incarnation.LifecycleGeneration, m_tick);
     }
 }
