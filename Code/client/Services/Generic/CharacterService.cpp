@@ -207,11 +207,26 @@ bool CharacterService::RequestOwnership(const uint32_t aFormId, const uint32_t a
     return true;
 }
 
+// E (horse/cart): every client-side actor delete logs why and what, so a vanished cart or a stray
+// horse can be traced to one path in tp_client.log. Grep: "[ActorDelete]".
+static void LogActorDelete(const char* acReason, const Actor* apActor) noexcept
+{
+    if (!apActor)
+        return;
+
+    const auto* pBase = apActor->baseForm;
+    spdlog::info(
+        "[ActorDelete] {} actor {:X} base {:X} temporary {} mount {} cell {:X} pos ({:.0f}, {:.0f}, {:.0f})", acReason, apActor->formID,
+        pBase ? pBase->formID : 0, apActor->IsTemporary(), apActor->IsMount(), apActor->GetCellId(), apActor->position.x, apActor->position.y,
+        apActor->position.z);
+}
+
 void CharacterService::DeleteTempActor(const uint32_t aFormId) noexcept
 {
     Actor* pActor = Cast<Actor>(TESForm::GetById(aFormId));
     if (pActor && ((pActor->formID & 0xFF000000) == 0xFF000000))
     {
+        LogActorDelete("DeleteTempActor", pActor);
         pActor->Delete();
         spdlog::info("\tDeleted actor {:X}", aFormId);
     }
@@ -325,7 +340,10 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
             continue;
 
         if (pActor->GetExtension()->IsRemotePlayer())
+        {
+            LogActorDelete("disconnect (remote player)", pActor);
             pActor->Delete();
+        }
         else
             pActor->GetExtension()->SetRemote(false);
     }
@@ -399,7 +417,10 @@ void CharacterService::BeginWorldSync(const CharacterWorldSyncStartedEvent&) con
         if (formIdComponent.Id > 0xFF000000)
         {
             if (Actor* pActor = Cast<Actor>(TESForm::GetById(formIdComponent.Id)))
+            {
+                LogActorDelete("world sync start (pre-sync temporary)", pActor);
                 pActor->Delete();
+            }
             continue;
         }
 
@@ -1685,6 +1706,7 @@ void CharacterService::CancelServerAssignment(const entt::entity aEntity, const 
             if (pActor->IsTemporary())
             {
                 spdlog::info("Temporary Remote Deleted {:X}", aFormId);
+                LogActorDelete("cancel assignment (temporary remote)", pActor);
                 pActor->Delete();
             }
             else
