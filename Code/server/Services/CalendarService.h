@@ -8,13 +8,18 @@ struct World;
 struct UpdateEvent;
 struct PlayerJoinEvent;
 
+namespace Persistence
+{
+struct WorldClockRepository;
+}
+
 /**
  * @brief Manages time and date of the world.
  */
 class CalendarService
 {
 public:
-    CalendarService(World& aWorld, entt::dispatcher& aDispatcher);
+    CalendarService(World& aWorld, entt::dispatcher& aDispatcher, Persistence::WorldClockRepository& aRepository);
 
     // we use these types for SOL
     // this is done this way because SOL
@@ -35,6 +40,10 @@ public:
     float GetTimeScale() const noexcept { return m_dateTime.m_timeModel.TimeScale; }
     bool SetTimeScale(float aScale) noexcept;
 
+    // Continues the clock saved before the last shutdown. False when there is none.
+    bool RestoreSavedClock() noexcept;
+    void SaveClock() noexcept;
+
 private:
     void OnUpdate(const UpdateEvent&) noexcept;
     void OnPlayerJoin(const PlayerJoinEvent&) noexcept;
@@ -42,9 +51,11 @@ private:
 
     DateTime m_dateTime;
     uint64_t m_lastTick = 0;
+    float m_secondsSinceSave = 0.f;
     bool m_timeInitialized = false;
 
     World& m_world;
+    Persistence::WorldClockRepository& m_repository;
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_joinConnection;

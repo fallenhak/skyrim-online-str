@@ -162,7 +162,10 @@ bool CharacterService::BeginOwnerRespawnLifecycle(
         // An owner-authorized respawn starts a new incarnation, so the old
         // corpse marker and its expiry must not reject the new alive state.
         m_world.remove<CorpseRetentionComponent>(aEntity);
-        spdlog::info("[CorpseRetention] cleared retained corpse marker for respawned actor {:X}", World::ToInteger(aEntity));
+        // The server owned the corpse's inventory; what is left of it belongs to the old incarnation.
+        if (auto* const pInventory = m_world.try_get<InventoryComponent>(aEntity))
+            pInventory->Content = {};
+        spdlog::info("[CorpseRetention] cleared retained corpse marker and inventory for respawned actor {:X}", World::ToInteger(aEntity));
     }
 
     if (auto* const pAnimationComponent = m_world.try_get<AnimationComponent>(aEntity))

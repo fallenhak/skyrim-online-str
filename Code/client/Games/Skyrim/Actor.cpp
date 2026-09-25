@@ -1060,8 +1060,8 @@ void TP_MAKE_THISCALL(HookAddInventoryItem, Actor, TESBoundObject* apItem, Extra
         if (apExtraData)
             apThis->GetItemFromExtraData(item, apExtraData);
 
-        // The player half of a "take" from a synced container; the server applies it with RequestContainerTransfer.
-        const bool isContainerTransfer = apThis == PlayerCharacter::Get() && ContainerTransfers::GetSyncedContainerServerId(apOldOwner);
+        // The player half of a "take" from a synced container or corpse; the server applies it with RequestContainerTransfer.
+        const bool isContainerTransfer = apThis == PlayerCharacter::Get() && ContainerTransfers::GetSyncedTarget(apOldOwner);
         if (!isContainerTransfer)
             QueueActorInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item)), apOldOwner);
     }

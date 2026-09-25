@@ -12,6 +12,7 @@ struct ContainerTransferEvent
 {
     uint32_t ContainerFormId{};
     uint32_t ContainerServerId{};
+    uint8_t TargetKind{}; // ContainerTransfers::TargetKind
     uint8_t Direction{}; // 0 = take (container -> player), 1 = put (player -> container)
     int32_t ExpectedContainerCount{};
     Inventory::Entry Item{};

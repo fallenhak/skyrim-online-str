@@ -10,15 +10,32 @@
 
 #include "Game/Player.h"
 
-CalendarService::CalendarService(World& aWorld, entt::dispatcher& aDispatcher)
+#include <Persistence/WorldClockRepository.h>
+
+#include <exception>
+#include <optional>
+
+namespace
+{
+// Real seconds between clock saves; a crash loses at most this much (x timescale) of game time.
+constexpr float kClockSaveIntervalSeconds = 30.f;
+} // namespace
+
+CalendarService::CalendarService(World& aWorld, entt::dispatcher& aDispatcher, Persistence::WorldClockRepository& aRepository)
     : m_world(aWorld)
+    , m_repository(aRepository)
 {
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&CalendarService::OnUpdate>(this);
     m_joinConnection = aDispatcher.sink<PlayerJoinEvent>().connect<&CalendarService::OnPlayerJoin>(this);
 }
 
-void CalendarService::OnUpdate(const UpdateEvent&) noexcept
+void CalendarService::OnUpdate(const UpdateEvent& acEvent) noexcept
 {
+    if (acEvent.Delta > 0.f)
+        m_secondsSinceSave += acEvent.Delta;
+    if (m_secondsSinceSave >= kClockSaveIntervalSeconds)
+        SaveClock();
+
     if (!m_lastTick)
         m_lastTick = GameServer::Get()->GetTick();
 
@@ -154,4 +171,51 @@ bool CalendarService::SetTimeScale(float aScale) noexcept
     }
 
     return false;
+}
+
+bool CalendarService::RestoreSavedClock() noexcept
+{
+    std::optional<Persistence::WorldClockRecord> saved;
+    try
+    {
+        saved = m_repository.Load();
+    }
+    catch (const std::exception& acException)
+    {
+        spdlog::error("[CalendarService] Failed to load the saved clock: {}", acException.what());
+        return false;
+    }
+
+    if (!saved)
+        return false;
+
+    m_dateTime.m_timeModel.Time = saved->Time;
+    m_dateTime.m_timeModel.Day = saved->Day;
+    m_dateTime.m_timeModel.Month = saved->Month;
+    m_dateTime.m_timeModel.Year = saved->Year;
+    m_timeInitialized = true;
+    SendTimeResync();
+
+    const auto [hour, minute] = GetTime();
+    spdlog::info("[CalendarService] Restored saved clock {:02}:{:02} {}/{}/{}", hour, minute, saved->Day, saved->Month, saved->Year);
+    return true;
+}
+
+void CalendarService::SaveClock() noexcept
+{
+    m_secondsSinceSave = 0.f;
+
+    Persistence::WorldClockRecord record{};
+    record.Time = m_dateTime.m_timeModel.Time;
+    record.Day = m_dateTime.m_timeModel.Day;
+    record.Month = m_dateTime.m_timeModel.Month;
+    record.Year = m_dateTime.m_timeModel.Year;
+    try
+    {
+        (void)m_repository.Save(record);
+    }
+    catch (const std::exception& acException)
+    {
+        spdlog::error("[CalendarService] Failed to save the clock: {}", acException.what());
+    }
 }

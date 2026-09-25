@@ -260,6 +260,9 @@ GameServer::GameServer(Console::ConsoleRegistry& aConsole)
 
 GameServer::~GameServer()
 {
+    if (m_pWorld)
+        m_pWorld->GetCalendarService().SaveClock();
+
     s_pInstance = nullptr;
 }
 
@@ -844,6 +847,10 @@ void GameServer::UpdateTimeScale()
         uStartHour = startHour;
         uStartMinute = startMinute;
     }
+
+    // A restart continues the saved world clock; the start time only seeds a fresh database.
+    if (calendar.RestoreSavedClock())
+        return;
 
     const auto effectiveTimeScale = calendar.GetTimeScale();
     if (calendar.SetTime(static_cast<int>(startHour), static_cast<int>(startMinute), effectiveTimeScale))

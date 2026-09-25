@@ -14,7 +14,7 @@ namespace Persistence
 {
 namespace
 {
-constexpr int kCurrentSchemaVersion = 5;
+constexpr int kCurrentSchemaVersion = 6;
 
 [[noreturn]] void ThrowSqliteError(sqlite3* apDatabase, const int aResult, const std::string_view acOperation)
 {
@@ -345,6 +345,22 @@ void Database::Migrate()
         // RaceMenu result (appearance buffer + face tints), hex of CharacterLookCodec. NULL until set.
         Execute("ALTER TABLE characters ADD COLUMN look TEXT NULL;");
         Execute("UPDATE schema_version SET version = 5 WHERE id = 1;");
+    }
+
+    if (schemaVersion < 6)
+    {
+        // In-game clock, one row. Time scale stays a server setting.
+        Execute(R"sql(
+            CREATE TABLE IF NOT EXISTS world_clock (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                time REAL NOT NULL CHECK (time >= 0 AND time < 24),
+                day INTEGER NOT NULL CHECK (day >= 0 AND day <= 31),
+                month INTEGER NOT NULL CHECK (month >= 0 AND month < 12),
+                year INTEGER NOT NULL CHECK (year >= 0 AND year <= 999),
+                updated_at INTEGER NOT NULL
+            );
+        )sql");
+        Execute("UPDATE schema_version SET version = 6 WHERE id = 1;");
     }
 
     transaction.Commit();
