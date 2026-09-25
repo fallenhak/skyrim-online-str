@@ -7,6 +7,8 @@
 #include <Services/PapyrusService.h>
 #include <Events/ActivateEvent.h>
 #include <Events/InventoryChangeEvent.h>
+#include <Events/ContainerTransferEvent.h>
+#include <Services/ContainerTransfers.h>
 #include <Events/ScriptAnimationEvent.h>
 #include <Events/LockChangeEvent.h>
 
@@ -1059,7 +1061,10 @@ void TP_MAKE_THISCALL(HookAddInventoryItem, TESObjectREFR, TESBoundObject* apIte
         if (apExtraData)
             apThis->GetItemFromExtraData(item, apExtraData);
 
-        QueueReferenceInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item)), apOldOwner);
+        // The container half of a player "put"; the server applies it with RequestContainerTransfer.
+        const bool isContainerTransfer = apOldOwner == PlayerCharacter::Get() && ContainerTransfers::GetSyncedContainerServerId(apThis);
+        if (!isContainerTransfer)
+            QueueReferenceInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item)), apOldOwner);
     }
 
     spdlog::debug("Adding inventory item {:X} to {:X}", apItem->formID, apThis->formID);
@@ -1085,7 +1090,27 @@ TP_MAKE_THISCALL(HookRemoveInventoryItem, TESObjectREFR, BSPointerHandle<TESObje
 
         item.Count = -aCount;
 
-        QueueReferenceInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item)), apMoveToRef);
+        // Player <-> synced container: one transfer request instead of two inventory changes.
+        // The other half (the add on the receiving side) is suppressed in its hook.
+        const TESObjectREFR* pPlayer = PlayerCharacter::Get();
+        TESObjectREFR* pContainer = apMoveToRef == pPlayer ? apThis : (apThis == pPlayer ? apMoveToRef : nullptr);
+        const auto containerServerId = ContainerTransfers::GetSyncedContainerServerId(pContainer);
+
+        if (containerServerId && aCount > 0)
+        {
+            ContainerTransferEvent transfer{};
+            transfer.ContainerFormId = pContainer->formID;
+            transfer.ContainerServerId = *containerServerId;
+            transfer.Direction = apThis == pContainer ? 0 : 1;
+            transfer.Item = item;
+            transfer.Item.Count = aCount;
+            transfer.ExpectedContainerCount = ContainerTransfers::CountOf(pContainer, transfer.Item);
+            World::Get().GetRunner().Trigger(std::move(transfer));
+        }
+        else
+        {
+            QueueReferenceInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item)), apMoveToRef);
+        }
     }
 
     spdlog::debug("Removing inventory item {:X} from {:X}", apItem->formID, apThis->formID);

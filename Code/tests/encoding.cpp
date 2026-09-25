@@ -768,3 +768,41 @@ TEST_CASE("Furniture denial carries the authoritative position to the owning cli
     REQUIRE(received->OwnershipEpoch == sent.OwnershipEpoch);
     REQUIRE(received->AuthoritativeMovement == sent.AuthoritativeMovement);
 }
+
+TEST_CASE("RequestContainerTransfer round-trips", "[encoding.container_transfer]")
+{
+    RequestContainerTransfer sent;
+    sent.RequestId = 77;
+    sent.ContainerId = 1234;
+    sent.Direction = 1;
+    sent.ExpectedContainerCount = 5;
+    sent.Item.BaseId = GameId{0, 0x13989};
+    sent.Item.Count = 2;
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ClientMessageFactory factory;
+    auto received = CastUnique<RequestContainerTransfer>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(*received == sent);
+}
+
+TEST_CASE("NotifyContainerTransferResult round-trips", "[encoding.container_transfer]")
+{
+    NotifyContainerTransferResult sent;
+    sent.RequestId = 77;
+    sent.Result = 1;
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<NotifyContainerTransferResult>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(*received == sent);
+}

@@ -60,6 +60,7 @@ enum ClientOpcode : unsigned char
     kCreateCharacterRequest,
     kUpdateCharacterAppearanceRequest,
     kTakeWorldItemRequest,
+    kRequestContainerTransfer,
     kClientOpcodeMax
 };
 
@@ -131,5 +132,6 @@ enum ServerOpcode : unsigned char
     kNotifyObjectHarvested,
     kNotifyWorldItemTaken,
     kNotifyFurnitureUseDenied,
+    kNotifyContainerTransferResult,
     kServerOpcodeMax
 };

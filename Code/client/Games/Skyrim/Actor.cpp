@@ -1,3 +1,4 @@
+#include <Services/ContainerTransfers.h>
 #include <Games/References.h>
 #include <Games/Skyrim/EquipManager.h>
 #include <AI/AIProcess.h>
@@ -1059,7 +1060,10 @@ void TP_MAKE_THISCALL(HookAddInventoryItem, Actor, TESBoundObject* apItem, Extra
         if (apExtraData)
             apThis->GetItemFromExtraData(item, apExtraData);
 
-        QueueActorInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item)), apOldOwner);
+        // The player half of a "take" from a synced container; the server applies it with RequestContainerTransfer.
+        const bool isContainerTransfer = apThis == PlayerCharacter::Get() && ContainerTransfers::GetSyncedContainerServerId(apOldOwner);
+        if (!isContainerTransfer)
+            QueueActorInventoryChange(apThis, InventoryChangeEvent(apThis->formID, std::move(item)), apOldOwner);
     }
 
     TiltedPhoques::ThisCall(RealAddInventoryItem, apThis, apItem, apExtraData, aCount, apOldOwner);
