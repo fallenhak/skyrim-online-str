@@ -52,11 +52,34 @@
 #include <Services/ObjectInteractionPolicy.h>
 #include <Services/CorpseRetentionPolicy.h>
 #include <Services/PresentationAuthorityPolicy.h>
+#include <Services/LeveledActorPicker.h>
 
 #include <cmath>
 
 namespace
 {
+// Deleveled world, measuring step: the server's fixed-level pick is logged next to the
+// owner's engine pick. Nothing is applied yet; the client write side comes separately.
+void LogLeveledActorPick(World& aWorld, const GameId& acReferenceId, const GameId& acClientPick) noexcept
+{
+    const auto& mods = aWorld.ctx().at<ModsComponent>();
+    uint32_t referenceFormId = 0;
+    if (!mods.ResolveServerFormId(acReferenceId, referenceFormId))
+        return;
+
+    const auto pick = aWorld.ctx().at<LeveledActorPicker>().PickForReference(referenceFormId);
+    if (!pick)
+        return;
+
+    GameId serverPick{};
+    if (pick->NpcFormId != 0 && !mods.ToNetworkId(pick->NpcFormId, serverPick))
+        return;
+
+    spdlog::info(
+        "[World] leveled actor {:X}:{:X}: server pick {:X}:{:X} at level {} (zone {:X}, list {:X}); client picked {:X}:{:X} ({})", acReferenceId.ModId,
+        acReferenceId.BaseId, serverPick.ModId, serverPick.BaseId, pick->Level, pick->ZoneId, pick->LeveledListId, acClientPick.ModId, acClientPick.BaseId,
+        serverPick == acClientPick ? "same" : "differs");
+}
 constexpr std::uint32_t kHealthActorValue = 24;
 constexpr std::uint32_t kMagickaActorValue = 25;
 constexpr std::uint32_t kStaminaActorValue = 26;
@@ -1199,6 +1222,8 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
 
     if (characterComponent.LeveledNpcPickId)
         spdlog::debug("Stored leveled NPC pick {:x}:{:x} for FormId {:x}:{:x}", message.LeveledNpcPickId.ModId, message.LeveledNpcPickId.BaseId, gameId.ModId, gameId.BaseId);
+    if (!isPlayer)
+        LogLeveledActorPick(m_world, message.ReferenceId, message.LeveledNpcPickId);
     characterComponent.FaceTints = message.FaceTints;
     characterComponent.FactionsContent = message.FactionsContent;
     characterComponent.SetDead(message.CurrentActorData.IsDead);
