@@ -2,6 +2,7 @@
 #include <Services/CombatAttackerAuthorizationPolicy.h>
 #include <Services/CombatTargetAuthorizationPolicy.h>
 #include <Services/ProjectileLaunchAuthorityPolicy.h>
+#include <Services/DropLog.h>
 #include <Events/AcceptedCanonicalHealthDecreaseEvent.h>
 #include <Events/AcceptedCanonicalCreatureDeathEvent.h>
 #include <Events/CorrelatedCombatObservationEvent.h>
@@ -114,7 +115,11 @@ void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservati
     auto* const pPlayer = acMessage.GetSender();
     if (!pPlayer || !packet.IsWellFormed() || !m_pendingObservations.CanAppend() ||
         m_observationTick == std::numeric_limits<ValidatedHitObservation::ObservationTick>::max())
+    {
+        DropLog::Info("hit observation: malformed or queue full", "player {:X}: {}",
+            pPlayer ? pPlayer->GetId() : 0u, !pPlayer ? "no sender" : !packet.IsWellFormed() ? "malformed packet" : "observation queue full");
         return;
+    }
 
     ValidatedHitObservation::LifecycleGeneration attackerLifecycleGeneration{};
     const auto attackerCharacterId = ResolveAuthorizedAttackerCharacterId(
@@ -124,7 +129,11 @@ void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservati
         pPlayer,
         attackerLifecycleGeneration);
     if (!attackerCharacterId)
+    {
+        DropLog::Info("hit observation: attacker not authorized", "player {:X}, attacker {:X} (epoch {}), target {:X}",
+            pPlayer->GetId(), packet.AttackerServerId, packet.AttackerOwnershipEpoch, packet.TargetServerId);
         return;
+    }
 
     const auto attackerEntity = static_cast<entt::entity>(packet.AttackerServerId);
 
@@ -139,7 +148,12 @@ void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservati
     targetInput.pAttackerCell = m_world.try_get<CellIdComponent>(attackerEntity);
     targetInput.pTargetCell = targetExists ? m_world.try_get<CellIdComponent>(targetEntity) : nullptr;
     if (!CombatTargetAuthorizationPolicy::IsAuthorized(targetInput))
+    {
+        DropLog::Info("hit observation: target not authorized", "player {:X}, attacker {:X}, target {:X}: exists {}, lifecycle {}, attacker cell {}, target cell {}",
+            pPlayer->GetId(), packet.AttackerServerId, packet.TargetServerId, targetExists, packet.TargetLifecycleGeneration,
+            targetInput.pAttackerCell != nullptr, targetInput.pTargetCell != nullptr);
         return;
+    }
 
     const auto observedTick = m_observationTick + 1;
     const ValidatedHitObservation observation{
@@ -152,7 +166,11 @@ void CombatService::OnHitObservationRequest(const PacketEvent<CombatHitObservati
         attackerLifecycleGeneration};
 
     if (!observation.IsWellFormed() || !m_observationReplayCache.TryRemember(observation))
+    {
+        DropLog::Info("hit observation: malformed or replayed", "player {:X}, attacker {:X}, target {:X}, observation {}",
+            pPlayer->GetId(), packet.AttackerServerId, packet.TargetServerId, packet.ObservationId);
         return;
+    }
 
     // Capacity was checked above on this synchronous dispatcher path, so this
     // append cannot evict an earlier pending observation.
@@ -274,16 +292,17 @@ void CombatService::OnProjectileLaunchRequest(const PacketEvent<ProjectileLaunch
     const bool isCurrentOwner = shooterExists && characterView.get<OwnerComponent>(*shooterIt).IsCurrentOwner(acMessage.pPlayer, packet.OwnershipEpoch);
     if (!ProjectileLaunchAuthorityPolicy::IsAuthorized(shooterExists, shooterExists, isCurrentOwner, packet.OwnershipEpoch))
     {
-        spdlog::warn("[Projectile] rejected launch from player {:X}: shooter {:X} exists {}, current owner {}, epoch {}",
+        DropLog::Info("projectile launch: not authorized", "player {:X}, shooter {:X}: exists {}, current owner {}, epoch {}",
             acMessage.pPlayer->GetId(), packet.ShooterID, shooterExists, isCurrentOwner, packet.OwnershipEpoch);
         return;
     }
 
     if (!ProjectileLaunchAuthorityPolicy::HasFiniteParameters(
             packet.OriginX, packet.OriginY, packet.OriginZ, packet.ZAngle, packet.XAngle, packet.YAngle, packet.Power, packet.Scale) ||
-        packet.CastingSource < 0 || packet.CastingSource >= 4)
+        !ProjectileLaunchAuthorityPolicy::HasValidCastingSource(static_cast<bool>(packet.SpellID), packet.CastingSource))
     {
-        spdlog::warn("[Projectile] rejected launch from player {:X} for shooter {:X}: invalid parameters", acMessage.pPlayer->GetId(), packet.ShooterID);
+        DropLog::Info("projectile launch: invalid parameters", "player {:X}, shooter {:X}, spell {:X}, casting source {}",
+            acMessage.pPlayer->GetId(), packet.ShooterID, packet.SpellID.LogFormat(), packet.CastingSource);
         return;
     }
 
