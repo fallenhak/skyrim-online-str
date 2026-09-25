@@ -687,10 +687,10 @@ void CharacterService::OnCharacterSpawn(const CharacterSpawnRequest& acMessage) 
 void CharacterService::OnFurnitureUseDenied(const NotifyFurnitureUseDenied& acMessage) const noexcept
 {
     auto view = m_world.view<LocalComponent, FormIdComponent>();
-    const auto itor = std::find_if(std::begin(view), std::end(view), [id = acMessage.ActorId, view](entt::entity entity)
+    const auto itor = std::find_if(std::begin(view), std::end(view), [id = acMessage.ActorId, epoch = acMessage.OwnershipEpoch, view](entt::entity entity)
     {
         const auto& local = view.get<LocalComponent>(entity);
-        return local.Id == id && local.OwnershipEpoch == acMessage.OwnershipEpoch;
+        return local.Id == id && local.OwnershipEpoch == epoch;
     });
 
     if (itor == std::end(view))
