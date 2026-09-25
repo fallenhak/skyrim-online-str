@@ -240,6 +240,12 @@ void CharacterService::OnActorAdded(const ActorAddedEvent& acEvent) noexcept
     {
         pActor->GetExtension()->SetPlayer(true);
     }
+    else if (pActor)
+    {
+        // Deleveled world: no NPC's level may follow the local player's.
+        LeveledNpcSystem::FixPlayerLevelScaling(Cast<TESNPC>(pActor->baseForm));
+        LeveledNpcSystem::FixPlayerLevelScaling(LeveledNpcSystem::GetOriginalBase(pActor));
+    }
 
     entt::entity entity;
 

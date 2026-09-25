@@ -54,3 +54,25 @@ bool LeveledNpcSystem::ApplyPick(Actor* apActor, TESNPC* apPick) noexcept
         apActor->formID, pOriginalBase->formID, pResolvedBase->formID, apPick->formID);
     return true;
 }
+
+bool LeveledNpcSystem::FixPlayerLevelScaling(TESNPC* apBase) noexcept
+{
+    // ACBS flag 0x80; level then holds the multiplier * 1000.
+    constexpr uint32_t kPcLevelMult = 1 << 7;
+    // Same as the server's PluginContainerContents::kDefaultPlaceLevel.
+    constexpr uint32_t kPlaceLevel = 10;
+
+    if (!apBase || !(apBase->actorData.actorBaseFlags & kPcLevelMult))
+        return false;
+
+    auto& data = apBase->actorData;
+    uint32_t level = (static_cast<uint32_t>(data.level) * kPlaceLevel + 500) / 1000;
+    level = std::max<uint32_t>(level, std::max<uint32_t>(1, data.calcLevelMin));
+    if (data.calcLevelMax != 0)
+        level = std::min<uint32_t>(level, std::max<uint32_t>(data.calcLevelMax, data.calcLevelMin));
+
+    spdlog::info("Fixed player-scaled level of NPC base {:X}: multiplier {:.2f} -> level {}", apBase->formID, data.level / 1000.f, level);
+    data.level = static_cast<uint16_t>(level);
+    data.actorBaseFlags &= ~kPcLevelMult;
+    return true;
+}
