@@ -34,6 +34,25 @@ Kök neden: proje, arkadaşlarla co-op için tasarlanmış, **olay aktaran** Sky
 Çıkarım: SkyMP'de nesnelerin tutarlı olmasının sebebi mimari, dünyanın gerçeği sunucuda. Bedeli çok büyük: kendi Papyrus VM'leri ve tamamen farklı bir istemci yığınları var. SkyMP'ye geçmeyi ya da VM'lerini taşımayı **önermiyoruz**. Ondan iki fikri alıyoruz: dünya durumunun kaynağı sunucuda ve ESM'de, ve leveled listeleri sunucu çözüyor.
 Bilmediğimiz: SkyMP'nin NPC yapay zekâsını ve scriptli dungeon'ları pratikte ne kadar desteklediği. İncelemedik.
 
+## 3b. Diğer altyapılar ve ne alacağımız (2026-09-25 taraması)
+
+Lisans çerçevesi: projemiz GPL-3.0 (Tilted Online). MIT ve GPL-3.0 kod doğrudan alınabilir. AGPL-3.0 kod GPLv3'ün 13. maddesiyle birleştirilebilir, ancak o zaman sunucu AGPL şartlarına girer ve bağlanan oyunculara kaynak sunulmalıdır. Repo herkese açık olduğu için bu şart karşılanıyor. **Karar (Burak, 2026-09-25): uygun yerde doğrudan alıyoruz.** Telif ve lisans notları korunur, AGPL'li dosyalar işaretlenir. Hukuki değerlendirme değildir.
+
+| Kaynak | Lisans | Ne alıyoruz | Nasıl |
+|---|---|---|---|
+| **SkyMP `libespm`** | MIT | LVLI, LVLN, DOOR, FLOR, ACTI, CONT, REFR, LCTN, QUST, NAVM… okuyucuları. ECZN yok, onu biz ekleriz. | **Doğrudan**, Aşama 1a'nın temeli |
+| **SkyMP `LeveledListUtils`** (skymp5-server) | AGPL-3.0 | Leveled liste çözümü | **Doğrudan al ve uyarla**, Aşama 1b. Dosya AGPL olarak işaretlenir |
+| SkyMP `MpObjectReference` | AGPL-3.0 | Kapı, sandık ve activator mantığı | Okuyup fikir al. Kendi nesne modellerine sıkı bağlı |
+| SkyMP `papyrus-vm` | MIT | .pex çalıştıran VM | Aşama 3'te yeniden değerlendir. Script fonksiyonları (AGPL) onların modeline bağlı |
+| **TES3MP** (Morrowind) | GPL-3.0 (C++), **MIT** (CoreScripts/Lua) | **Hücre durumu modeli**: sunucu hücre başına silinen, yerleştirilen, kilitli, kapı durumu, nesne durumu, sandık, script değişkeni, tetiklenen tuzak ve aktör konum, ölüm, ekipman kayıtları tutuyor ve hücreye girişte `Load*` ile gönderiyor (`scripts/cell/base.lua`). Scriptli nesneler için hücre "actor authority" ve `synchronizedClientScriptIds` (değişkenleri senkronlanan scriptler). | **Tasarım referansı**: Aşama 2'nin `RefState` alan listesi ve Aşama 3'ün script sahibi ile değişken senkronu doğrudan buradan. Paket ayrımı (ObjectLock, DoorState, ObjectState, Container, ObjectTrap, ScriptMemberShort…) örnek alınır |
+| **CommonLibSSE** (powerof3 GPL-3.0, 2026-09 aktif; CharmedBaryon NG MIT, 2024'ten beri durgun) | GPL-3.0 / MIT | Tersine mühendislikle çıkarılmış Skyrim yapıları ve fonksiyonları (InventoryChanges, leveled init, extra data…) | İstemcide ihtiyaç oldukça fonksiyon ve yapı tanımları alınır (1.7.104 uyumu her seferinde kontrol edilir) |
+| po3 Tweaks | GPL-3.0 | Çalışma anında editor ID yükleme | Gerekmiyor. Sınıflandırmayı ESM base ID'leriyle yapıyoruz. Yedek seçenek |
+| xEdit (TES5Edit) | MPL-2.0 | Kayıt yapısı tanımları (ECZN vb.) | Referans |
+| Mutagen | GPL-3.0 (.NET) | ESM analizi | Araç tarafında (tablo üretimi) gerekirse |
+| TiltedEvolution (upstream) | GPL-3.0 | Zaten tabanımız | – |
+
+İncelenmedi ya da doğrulanmadı: kapalı kaynak SkyMP sunucuları (Keizaal vb.), NVMP, Fallout Together'ın dünya durumu yaklaşımı.
+
 ## 4. Hedef model: dört ilke
 
 1. **Her statik referansın gerçeği sunucuda, kaynağı ESM.** İstemci "baseline" bildirmez. Türü, hücresi, konumu, kilidi ve kap içeriği sunucuda ESM'den bilinir.
@@ -50,7 +69,7 @@ Bilmediğimiz: SkyMP'nin NPC yapay zekâsını ve scriptli dungeon'ları pratikt
 - Bu aşama hiçbir davranışı değiştirmez, risk düşük. **Sonraki aşamaların işe yarayıp yaramadığını bununla ölçeceğiz.**
 
 ### Aşama 1: ESM kaynaklı nesne kaydı (sınıf A)
-- `Code/components/es_loader` bugün CONT, REFR, LVLN, NPC, RACE… okuyor. **LVLI, DOOR, FLOR, ACTI, loot türleri, REFR'nin kilit (XLOC), etkin durumu ve konumu** eklenir.
+- `Code/components/es_loader` bugün CONT, REFR, LVLN, NPC, RACE… okuyor. Eksik kayıtlar (**LVLI, DOOR, FLOR, ACTI, loot türleri, REFR'nin kilit (XLOC), etkin durumu ve konumu**) için **SkyMP `libespm` (MIT) alınır**. ECZN biz ekleriz.
 - Sunucu açılışta statik referans tablosunu kurar: `refId → (baseType, cell, worldspace, coords, lock, container recipe)`. Ölçek, yalnız Skyrim.esm: 12.520 kap, 3.535 kapı, 11.546 flora, 17.990 activator referansı ve on binlerce loot referansı.
 - `AssignObjects` artık keşif değil bir abonelik: istemci "bu hücredeyim" der, sunucu hücrenin durumunu gönderir. İstemcinin `IsDoor`/`IsContainer`/içerik bildirimleri kalkar. `HasTrustedState` her zaman doğru olur.
 - **Kap içeriğini sunucu üretir**: LVLI'yi sunucu çözer (SkyMP'nin `LeveledListUtils`'i gibi). İstemci `SetInventory`'yi tam değiştirme olarak uygular. Açık karar: leveled seviye olarak kimin seviyesi kullanılacak (ilk açanın seviyesi mi, sabit bir seviye mi)?
