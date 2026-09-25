@@ -173,6 +173,59 @@ struct ScopedActivatorStateReplay final
     bool PreviousPillarReplay{};
 };
 
+// Late-join pillar turns, one per interval so each finishes before the next.
+struct PendingRotationReplay
+{
+    uint32_t FormId{};
+    uint32_t Remaining{};
+    double WaitSeconds{};
+};
+Vector<PendingRotationReplay> s_pendingRotationReplays;
+constexpr double kRotationReplayInterval = PuzzlePillarPolicy::kLockoutMs / 1000.0 + 0.5;
+
+void QueueRotationReplay(const uint32_t aFormId, const uint32_t aCount) noexcept
+{
+    for (auto& pending : s_pendingRotationReplays)
+    {
+        if (pending.FormId == aFormId)
+        {
+            pending.Remaining = (pending.Remaining + aCount) % 3;
+            return;
+        }
+    }
+    s_pendingRotationReplays.push_back({aFormId, aCount, 0.0});
+}
+
+void ProcessRotationReplays(const double aDelta) noexcept
+{
+    PlayerCharacter* pPlayer = PlayerCharacter::Get();
+    for (auto it = s_pendingRotationReplays.begin(); it != s_pendingRotationReplays.end();)
+    {
+        TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(it->FormId));
+        if (!pObject || it->Remaining == 0)
+        {
+            it = s_pendingRotationReplays.erase(it);
+            continue;
+        }
+
+        it->WaitSeconds -= aDelta;
+        if (it->WaitSeconds > 0.0 || !pPlayer)
+        {
+            ++it;
+            continue;
+        }
+
+        {
+            ScopedActivatorStateReplay replay(it->FormId);
+            pObject->Activate(pPlayer, 0, nullptr, 1, 0);
+        }
+        --it->Remaining;
+        it->WaitSeconds = kRotationReplayInterval;
+        spdlog::info("Activator {:X} replayed a pillar turn ({} left)", it->FormId, it->Remaining);
+        ++it;
+    }
+}
+
 void TrackLocalWorldItemTaken(const uint32_t aFormId) noexcept
 {
     s_worldItemDisabledRefs.insert(aFormId);
@@ -253,6 +306,7 @@ void ObjectService::OnDisconnected(const DisconnectedEvent&) noexcept
 {
     m_assignObjectsPending = false;
     s_sentLockStates.clear();
+    s_pendingRotationReplays.clear();
     // TODO(cosideci): clear object components
 }
 
@@ -264,6 +318,8 @@ void ObjectService::OnCellChange(const CellChangeEvent&) noexcept
 
 void ObjectService::OnUpdate(const UpdateEvent& acEvent) noexcept
 {
+    ProcessRotationReplays(acEvent.Delta);
+
     if (m_assignObjectsPending)
     {
         m_assignObjectsPending = false;
@@ -513,7 +569,7 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
             if (objectData.ActivationCount > appliedCount)
             {
                 const char* const pEditorId = pObject->baseForm->GetFormEditorID();
-                const auto kind = ActivatorReplayPolicy::Classify(pEditorId ? pEditorId : "");
+                const auto kind = ActivatorReplayPolicy::ClassifyBaseForm(pObject->baseForm->formID, pEditorId ? pEditorId : "");
                 const auto replayCount = ActivatorReplayPolicy::ReplayCount(kind, objectData.ActivationCount, appliedCount);
                 if (replayCount == 0)
                 {
@@ -527,6 +583,13 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
                     if (!pPlayer)
                     {
                         spdlog::warn("Activator {:X} state cannot be replayed before the local player exists", pObject->formID);
+                    }
+                    else if (kind == ActivatorReplayPolicy::Kind::kThreeFaceRotation)
+                    {
+                        // A turning pillar ignores activations: queue them, spaced out in OnUpdate.
+                        QueueRotationReplay(pObject->formID, replayCount);
+                        appliedCount = objectData.ActivationCount;
+                        spdlog::info("Activator {:X} queued {} pillar turn(s) from server history", pObject->formID, replayCount);
                     }
                     else
                     {
