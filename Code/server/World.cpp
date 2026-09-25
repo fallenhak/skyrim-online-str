@@ -22,6 +22,7 @@
 #include <Services/RenewableEncounterService.h>
 
 #include <es_loader/ESLoader.h>
+#include <Services/EncounterZoneIndex.h>
 
 #include <utility>
 
@@ -68,6 +69,9 @@ World::World(
     m_recordCollection = loader.BuildRecordCollection(aEnableActorRecordLoading);
     if (aEnableActorRecordLoading && m_recordCollection == nullptr)
         spdlog::warn("Actor population classification records are unavailable; NPC classification will remain Unknown.");
+
+    // Deleveled world: fixed levels of placed references come from encounter zones.
+    ctx().emplace<EncounterZoneIndex>(m_recordCollection ? EncounterZoneIndex::Build(*m_recordCollection) : EncounterZoneIndex{});
 
     ctx().emplace<ActorPopulationPolicy>(m_recordCollection.get());
     auto& populationPolicy = ctx().at<ActorPopulationPolicy>();
