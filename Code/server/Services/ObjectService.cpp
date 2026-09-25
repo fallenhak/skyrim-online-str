@@ -5,6 +5,7 @@
 #include <World.h>
 #include <Components.h>
 #include <Services/ObjectInteractionPolicy.h>
+#include <Services/PluginContainerContents.h>
 #include <Services/PresentationAuthorityPolicy.h>
 #include <Services/InventoryInteractionPolicy.h>
 
@@ -353,9 +354,24 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             m_world.emplace<CellIdComponent>(entity, cellId, worldSpaceId, centerCoords);
             auto& inventoryComponent = m_world.emplace<InventoryComponent>(entity);
 
-            // Container baseline: the first discoverer's contents become the server's copy.
-            // Not verified against the CONT record yet (second phase), so it is logged.
+            // Container baseline: built by the server from the CONT record, leveled lists
+            // resolved at the place's fixed level (world-state plan, phase 1b). Containers the
+            // plugins do not describe keep the first discoverer's contents, logged as before.
+            std::optional<PluginContainerContents::Result> pluginContents;
             if (object.IsContainer && !object.IsDoor && !object.IsHarvestable && !objectComponent.IsActivator)
+                pluginContents = m_world.ctx().at<PluginContainerContents>().Build(object.Id, m_world.ctx().at<ModsComponent>());
+
+            if (pluginContents)
+            {
+                inventoryComponent.Content = std::move(pluginContents->Contents);
+                objectComponent.IsContainer = true;
+                objectComponent.HasTrustedState = true;
+                spdlog::info(
+                    "[World] container {:X}:{:X} contents from plugins: {} entries at level {} (zone {:X}); client reported {}", object.Id.ModId,
+                    object.Id.BaseId, inventoryComponent.Content.Entries.size(), pluginContents->Level, pluginContents->ZoneId,
+                    object.CurrentInventory.Entries.size());
+            }
+            else if (object.IsContainer && !object.IsDoor && !object.IsHarvestable && !objectComponent.IsActivator)
             {
                 for (const auto& entry : object.CurrentInventory.Entries)
                 {

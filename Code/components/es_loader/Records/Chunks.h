@@ -76,7 +76,8 @@ struct VMAD
 struct CNTO
 {
     CNTO() {}
-    CNTO(Buffer::Reader& aReader);
+    // The item id is resolved through the plugin masters like every other form reference.
+    CNTO(Buffer::Reader& aReader, TiltedPhoques::Map<uint8_t, uint32_t>& aParentToFormIdPrefix);
 
     uint32_t m_formId{};
     uint32_t m_count{};
