@@ -1,4 +1,5 @@
 #include <Services/ObjectService.h>
+#include <Games/ActorExtension.h>
 #include <Services/LocalOnlyActivators.h>
 #include <Services/ObjectSyncPolicy.h>
 #include <Services/ActivatorReplayPolicy.h>
@@ -501,6 +502,15 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
     const bool trackLocalHarvest = WorldObjectTrackingPolicy::ShouldTrackHarvest(
         m_transport.IsConnected(),
         acEvent.ActivateFlag && isLocalHarvest);
+
+    // Remembered before Activate: the sit action can be performed inside it.
+    if (acEvent.pObject && acEvent.pObject->baseForm && acEvent.pObject->baseForm->formType == FormType::Furniture &&
+        acEvent.pActivator && acEvent.pActivator == PlayerCharacter::Get())
+    {
+        auto* pExtension = acEvent.pActivator->GetExtension();
+        pExtension->PendingFurnitureFormId = acEvent.pObject->formID;
+        pExtension->PendingFurnitureTick = World::Get().GetTick();
+    }
 
     if (acEvent.ActivateFlag)
     {
