@@ -21,6 +21,7 @@ inline bool IsOpenLootFormType(const FormType aType) noexcept
     case FormType::Alchemy:
     case FormType::Scroll:
     case FormType::SoulGem:
+    case FormType::Book: // taken through PickUpObject; reading alone does not remove it
         return true;
     default:
         return false;

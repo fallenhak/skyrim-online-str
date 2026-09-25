@@ -368,13 +368,13 @@ void TESObjectREFR::Delete() const noexcept
     s_pDelete(this);
 }
 
-void TESObjectREFR::Disable() const noexcept
+void TESObjectREFR::Disable(bool aFadeOut) const noexcept
 {
     using ObjectReference = TESObjectREFR;
 
     PAPYRUS_FUNCTION(void, ObjectReference, Disable, bool);
 
-    s_pDisable(this, true);
+    s_pDisable(this, aFadeOut);
 }
 
 void TESObjectREFR::Enable() const noexcept

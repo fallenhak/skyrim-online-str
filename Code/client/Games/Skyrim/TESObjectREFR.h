@@ -184,7 +184,7 @@ struct TESObjectREFR : TESForm
     void RemoveAllItems() noexcept;
     Vector<uint32_t> RemoveNonQuestItems(Inventory& aCurrentInventory) noexcept;
     void Delete() const noexcept;
-    void Disable() const noexcept;
+    void Disable(bool aFadeOut = true) const noexcept;
     void Enable() const noexcept;
     void MoveTo(TESObjectCELL* apCell, const NiPoint3& acPosition) const noexcept;
     void PayGold(int32_t aAmount) noexcept;

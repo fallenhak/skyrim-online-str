@@ -204,7 +204,8 @@ void ApplyWorldItemTaken(TESObjectREFR* apObject) noexcept
         return;
 
     spdlog::info("World item {:X} taken remotely, disabling", apObject->formID);
-    apObject->Disable();
+    // No fade: the item is already in someone else's hands.
+    apObject->Disable(false);
     s_worldItemDisabledRefs.insert(apObject->formID);
 }
 
@@ -301,7 +302,7 @@ void ObjectService::SendAssignObjectsRequest() noexcept
 
     Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient, FormType::Furniture, FormType::Activator,
                                   FormType::Armor, FormType::Misc, FormType::Weapon, FormType::Ammo, FormType::Key,
-                                  FormType::Alchemy, FormType::Scroll, FormType::SoulGem, FormType::Light, FormType::Apparatus};
+                                  FormType::Alchemy, FormType::Scroll, FormType::SoulGem, FormType::Light, FormType::Apparatus, FormType::Book};
     // Door seemed to be at the wrong form id (29, now 32), verify this.
 
     AssignObjectsRequest request{};
