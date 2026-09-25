@@ -49,6 +49,15 @@ uint8_t TP_MAKE_THISCALL(HookPerformAction, ActorMediator, TESActionData* apActi
 
         action.EventName = apAction->eventName.AsAscii();
         action.TargetEventName = apAction->targetEventName.AsAscii();
+
+        // Seat entries carry no action target; name the furniture the player just activated.
+        constexpr uint64_t cPendingFurnitureWindowMs = 5000;
+        if (!apAction->target && pExtension->PendingFurnitureFormId != 0 && std::string_view{action.EventName.data(), action.EventName.size()}.find("Enter") != std::string_view::npos &&
+            action.Tick - pExtension->PendingFurnitureTick <= cPendingFurnitureWindowMs)
+        {
+            World::Get().GetModSystem().GetServerModId(pExtension->PendingFurnitureFormId, action.TargetId);
+            pExtension->PendingFurnitureFormId = 0;
+        }
         action.IdleId = apAction->idleForm ? apAction->idleForm->formID : 0;
 
         // Save for later
