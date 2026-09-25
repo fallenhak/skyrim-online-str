@@ -53,6 +53,12 @@ void SendPlayerCellChanged(const Player* apPlayer) noexcept
 
 void PlayerService::HandleGridCellShift(const PacketEvent<ShiftGridCellRequest>& acMessage) const noexcept
 {
+    if (acMessage.Packet.OverLimitCount != 0)
+    {
+        DropLog::Info("grid shift: count over limit", "player {:X}, {} cell(s)", acMessage.pPlayer->GetId(), acMessage.Packet.OverLimitCount);
+        return;
+    }
+
     auto* pPlayer = acMessage.pPlayer;
 
     auto& message = acMessage.Packet;

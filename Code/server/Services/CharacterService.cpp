@@ -873,6 +873,12 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
 
 void CharacterService::OnFactionsChanges(const PacketEvent<RequestFactionsChanges>& acMessage) const noexcept
 {
+    if (acMessage.Packet.OverLimitCount != 0)
+    {
+        DropLog::Info("faction changes: count over limit", "player {:X}, {} change(s)", acMessage.pPlayer->GetId(), acMessage.Packet.OverLimitCount);
+        return;
+    }
+
     auto view = m_world.view<OwnerComponent, CharacterComponent>();
 
     auto& message = acMessage.Packet;

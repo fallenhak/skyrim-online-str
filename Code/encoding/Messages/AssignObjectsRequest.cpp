@@ -21,8 +21,13 @@ void AssignObjectsRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader
     ClientMessage::DeserializeRaw(aReader);
 
     const uint64_t count = Serialization::ReadVarInt(aReader);
+    Objects.clear();
+    OverLimitCount = 0;
     if (count > kMaxAssignedObjects)
+    {
+        OverLimitCount = count;
         return;
+    }
 
     Objects.resize(count);
 

@@ -278,6 +278,12 @@ void ObjectService::PruneUnobservedObjects() noexcept
 // This is fine for containers and doors, but if this system is expanded, think of temporaries.
 void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsRequest>& acMessage) noexcept
 {
+    if (acMessage.Packet.OverLimitCount != 0)
+    {
+        DropLog::Info("assign objects: count over limit", "player {:X}, {} object(s)", acMessage.pPlayer->GetId(), acMessage.Packet.OverLimitCount);
+        return;
+    }
+
     RespawnWorldObjects();
     auto view = m_world.view<FormIdComponent, ObjectComponent, CellIdComponent, InventoryComponent>();
     const auto& senderCell = acMessage.pPlayer->GetCellComponent();

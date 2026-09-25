@@ -29,8 +29,13 @@ void ShiftGridCellRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader
     CenterCoords.Deserialize(aReader);
 
     const uint64_t count = Serialization::ReadVarInt(aReader);
+    Cells.clear();
+    OverLimitCount = 0;
     if (count > kMaxGridCells)
+    {
+        OverLimitCount = count;
         return;
+    }
 
     Cells.resize(count);
 

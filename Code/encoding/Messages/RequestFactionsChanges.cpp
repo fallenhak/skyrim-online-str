@@ -26,9 +26,13 @@ void RequestFactionsChanges::DeserializeRaw(TiltedPhoques::Buffer::Reader& aRead
     ClientMessage::DeserializeRaw(aReader);
 
     const uint64_t count = Serialization::ReadVarInt(aReader);
-    if (count > kMaxFactionChanges)
-        return;
     Changes.clear();
+    OverLimitCount = 0;
+    if (count > kMaxFactionChanges)
+    {
+        OverLimitCount = count;
+        return;
+    }
 
     for (auto i = 0u; i < count; ++i)
     {

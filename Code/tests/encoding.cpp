@@ -917,4 +917,6 @@ TEST_CASE("A malformed object count is refused instead of allocated", "[encoding
     received.DeserializeRaw(reader);
 
     REQUIRE(received.Objects.empty());
+    // The server drops such a message with a [Drop] line instead of handling an empty list.
+    REQUIRE(received.OverLimitCount == 1'000'000'000);
 }

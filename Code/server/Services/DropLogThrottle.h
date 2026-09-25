@@ -18,6 +18,20 @@ public:
     // the last line), or 0 when the reason was logged within the window.
     [[nodiscard]] uint32_t Admit(const std::string_view acReason, const int64_t aNowMs) noexcept
     {
+        try
+        {
+            return AdmitUnchecked(acReason, aNowMs);
+        }
+        catch (...)
+        {
+            // Out of memory while tracking a reason: log the line rather than lose it.
+            return 1;
+        }
+    }
+
+private:
+    uint32_t AdmitUnchecked(const std::string_view acReason, const int64_t aNowMs)
+    {
         auto& entry = m_entries[std::string(acReason)];
         ++entry.Pending;
         if (entry.LastLoggedMs != kNeverLogged && aNowMs - entry.LastLoggedMs < kWindowMs)
@@ -29,7 +43,6 @@ public:
         return count;
     }
 
-private:
     static constexpr int64_t kNeverLogged = INT64_MIN;
 
     struct Entry
