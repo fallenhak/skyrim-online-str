@@ -21,8 +21,17 @@ const LeveledItemResolver::List* PluginContainerContents::FindList(const uint32_
     if (!pRecord)
         return nullptr;
 
-    // LVLG (a global overriding chance none) is not read yet; the record's own value is used.
-    LeveledItemResolver::List list{pRecord->m_chanceNone, pRecord->m_flags, {}};
+    // LVLG: a global overrides chance none. Its plugin default is used (perk and quest globals
+    // such as PerkInvestor* default to 100, so perk-gated merchant stock is not handed out).
+    uint8_t chanceNone = pRecord->m_chanceNone;
+    if (pRecord->m_chanceNoneGlobal != 0)
+    {
+        if (const GLOB* pGlobal = m_pRecords->FindGlobalById(pRecord->m_chanceNoneGlobal))
+            chanceNone = static_cast<uint8_t>(std::clamp(pGlobal->m_value, 0.f, 100.f));
+        else
+            chanceNone = 100;
+    }
+    LeveledItemResolver::List list{chanceNone, pRecord->m_flags, {}};
     list.Entries.reserve(pRecord->m_entries.size());
     for (const auto& entry : pRecord->m_entries)
         list.Entries.push_back({entry.Level, entry.FormId, entry.Count});

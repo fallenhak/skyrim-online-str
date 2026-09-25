@@ -6,6 +6,7 @@
 #include "Records/CONT.h"
 #include "Records/ECZN.h"
 #include "Records/LCTN.h"
+#include "Records/GLOB.h"
 #include "Records/LVLI.h"
 #include "Records/GMST.h"
 #include "Records/LVLN.h"
@@ -98,6 +99,12 @@ struct RecordCollection
         return it == m_cells.end() ? nullptr : &it->second;
     }
 
+    [[nodiscard]] const GLOB* FindGlobalById(uint32_t aFormId) const noexcept
+    {
+        const auto it = m_globals.find(aFormId);
+        return it == m_globals.end() ? nullptr : &it->second;
+    }
+
     [[nodiscard]] const LCTN* FindLocationById(uint32_t aFormId) const noexcept
     {
         const auto it = m_locations.find(aFormId);
@@ -139,6 +146,7 @@ private:
     Map<uint32_t, LVLI> m_leveledItems{};
     Map<uint32_t, ECZN> m_encounterZones{};
     Map<uint32_t, LCTN> m_locations{};
+    Map<uint32_t, GLOB> m_globals{};
     Map<uint32_t, CELL> m_cells{};
     Map<uint32_t, GMST> m_gameSettings{};
     Map<uint32_t, WRLD> m_worlds{};
