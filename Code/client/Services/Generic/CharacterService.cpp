@@ -2,6 +2,7 @@
 #include "Forms/TESWorldSpace.h"
 #include "Services/PapyrusService.h"
 #include <Services/CharacterService.h>
+#include <Services/CharacterInventoryPolicy.h>
 #include <Services/QuestService.h>
 #include <Services/TransportService.h>
 
@@ -1899,7 +1900,12 @@ void CharacterService::ProcessLeveledConforms() noexcept
                 if (const auto inventoryIt = m_conformInventories.find(it->first); inventoryIt != m_conformInventories.end())
                 {
                     if (pActor->GetExtension()->IsRemote())
+                    {
+                        const auto wornEntries = std::count_if(inventoryIt->second.Entries.begin(), inventoryIt->second.Entries.end(), [](const auto& aEntry) { return aEntry.IsWorn(); });
+                        spdlog::info("Reapplying preserved inventory for remote actor {:X} after leveled NPC reconciliation ({} entries, {} worn)",
+                            it->first, inventoryIt->second.Entries.size(), wornEntries);
                         pActor->SetActorInventory(inventoryIt->second);
+                    }
 
                     m_conformInventories.erase(inventoryIt);
                 }
@@ -1955,7 +1961,25 @@ void CharacterService::ProcessLeveledConforms() noexcept
         // Wait for the disabled flag and old 3D removal before changing the base.
         // A restarted rebuild keeps the first snapshot; the current equipment may already be the reset one.
         if (pActor->GetExtension()->IsRemote())
-            m_conformInventories.try_emplace(it->first, pActor->GetActorInventory());
+        {
+            const Inventory currentInventory = pActor->GetActorInventory();
+            const auto waitingView = m_world.view<FormIdComponent, WaitingFor3D>();
+            const auto waitingIt = std::find_if(waitingView.begin(), waitingView.end(), [waitingView, formId = it->first](const auto aEntity)
+            {
+                return waitingView.get<FormIdComponent>(aEntity).Id == formId;
+            });
+            const Inventory* pPendingSpawnInventory = waitingIt != waitingView.end()
+                ? &waitingView.get<WaitingFor3D>(*waitingIt).SpawnRequest.InventoryContent
+                : nullptr;
+            const Inventory& inventorySnapshot = CharacterInventoryPolicy::GetLeveledConformSnapshot(currentInventory, pPendingSpawnInventory);
+            const auto [inventoryIt, inserted] = m_conformInventories.try_emplace(it->first, inventorySnapshot);
+            if (inserted)
+            {
+                const auto wornEntries = std::count_if(inventoryIt->second.Entries.begin(), inventoryIt->second.Entries.end(), [](const auto& aEntry) { return aEntry.IsWorn(); });
+                spdlog::info("Captured {} inventory snapshot for remote actor {:X} before leveled NPC reconciliation ({} entries, {} worn)",
+                    pPendingSpawnInventory ? "pending spawn" : "current actor", it->first, inventoryIt->second.Entries.size(), wornEntries);
+            }
+        }
 
         pActor->DisableImpl();
         stage = ReconciliationStage::WaitingForDisable;
