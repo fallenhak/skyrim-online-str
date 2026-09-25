@@ -6,6 +6,8 @@
 
 #include <Games/Overrides.h>
 #include <Services/ObjectSyncPolicy.h>
+#include <Services/ObjectService.h>
+#include <Services/WorldObjectTrackingPolicy.h>
 
 #include <Events/InventoryChangeEvent.h>
 #include <Events/BeastFormChangeEvent.h>
@@ -208,9 +210,11 @@ char TP_MAKE_THISCALL(HookPickUpObject, PlayerCharacter, TESObjectREFR* apObject
     ScopedInventoryOverride _;
 
     const char result = TiltedPhoques::ThisCall(RealPickUpObject, apThis, apObject, aCount, aUnk1, aUnk2);
-    if (result && hasWorldItemRequest && World::Get().GetTransport().IsConnected())
+    auto& transport = World::Get().GetTransport();
+    if (WorldObjectTrackingPolicy::ShouldTrackWorldItem(transport.IsConnected(), result && hasWorldItemRequest))
     {
-        World::Get().GetTransport().Send(worldItemRequest);
+        TrackLocalWorldItemTaken(apObject->formID);
+        transport.Send(worldItemRequest);
         spdlog::info("Sending world item pickup request for {:X}:{:X}", worldItemRequest.Id.ModId, worldItemRequest.Id.BaseId);
     }
 

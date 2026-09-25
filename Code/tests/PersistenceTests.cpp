@@ -1,13 +1,21 @@
+#include <TiltedCore/Stl.hpp>
+
 #include <Persistence/CharacterRepository.h>
+#include <Persistence/WorldObjectRepository.h>
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <limits>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -281,4 +289,92 @@ TEST(PersistenceDatabase, AssignsLegacyCharactersStableOwnerScopedSlots)
     EXPECT_EQ(statement.ColumnInt64(1), 0);
     EXPECT_EQ(statement.ColumnInt64(2), 0);
     EXPECT_FALSE(statement.Step());
+}
+
+TEST(PersistenceWorldObjectRepository, BatchesChangedWorldStateAndDeletesExpiredRows)
+{
+    Persistence::Database database(":memory:");
+    database.Migrate();
+    Persistence::WorldObjectRepository repository(database);
+
+    Persistence::WorldObjectState door{};
+    door.Id = GameId{1, 0x100};
+    door.CellId = GameId{1, 0x200};
+    door.WorldSpaceId = GameId{0, 0x3C};
+    door.CenterCoords = GridCellCoords{10, -10};
+    door.IsDoor = true;
+    door.DoorStateKnown = true;
+    door.DoorIsOpen = false;
+
+    Persistence::WorldObjectState activator{};
+    activator.Id = GameId{1, 0x101};
+    activator.CellId = door.CellId;
+    activator.WorldSpaceId = door.WorldSpaceId;
+    activator.CenterCoords = door.CenterCoords;
+    activator.IsActivator = true;
+    activator.ActivationCount = 3;
+
+    Persistence::WorldObjectState loot{};
+    loot.Id = GameId{1, 0x102};
+    loot.CellId = door.CellId;
+    loot.WorldSpaceId = door.WorldSpaceId;
+    loot.CenterCoords = door.CenterCoords;
+    loot.IsOpenLoot = true;
+    loot.IsLootTaken = true;
+    loot.LootRespawnAtUnix = 2'000'000'000;
+
+    Persistence::WorldObjectState harvest{};
+    harvest.Id = GameId{1, 0x103};
+    harvest.CellId = door.CellId;
+    harvest.WorldSpaceId = door.WorldSpaceId;
+    harvest.CenterCoords = door.CenterCoords;
+    harvest.IsHarvestable = true;
+    harvest.IsHarvested = true;
+    harvest.HarvestRespawnAtUnix = 2'000'000'100;
+
+    repository.EnqueueUpsert(Persistence::WorldObjectState{}); // Untouched references are not persisted.
+    repository.EnqueueUpsert(door);
+    repository.EnqueueUpsert(activator);
+    repository.EnqueueUpsert(loot);
+    repository.EnqueueUpsert(harvest);
+
+    const auto waitForCount = [&repository](const std::size_t aCount)
+    {
+        for (int attempt = 0; attempt < 100; ++attempt)
+        {
+            auto records = repository.LoadAll();
+            if (records.size() == aCount)
+                return records;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return repository.LoadAll();
+    };
+
+    const auto loaded = waitForCount(4);
+    ASSERT_EQ(loaded.size(), 4u);
+    const auto findById = [&loaded](const GameId& acId) -> const Persistence::WorldObjectState*
+    {
+        const auto it = std::find_if(loaded.begin(), loaded.end(), [&acId](const auto& acState) { return acState.Id == acId; });
+        return it == loaded.end() ? nullptr : &*it;
+    };
+
+    const auto* pDoor = findById(door.Id);
+    ASSERT_NE(pDoor, nullptr);
+    EXPECT_TRUE(pDoor->DoorStateKnown);
+    EXPECT_FALSE(pDoor->DoorIsOpen);
+    const auto* pActivator = findById(activator.Id);
+    ASSERT_NE(pActivator, nullptr);
+    EXPECT_EQ(pActivator->ActivationCount, 3u);
+    const auto* pLoot = findById(loot.Id);
+    ASSERT_NE(pLoot, nullptr);
+    EXPECT_EQ(pLoot->LootRespawnAtUnix, loot.LootRespawnAtUnix);
+    const auto* pHarvest = findById(harvest.Id);
+    ASSERT_NE(pHarvest, nullptr);
+    EXPECT_EQ(pHarvest->HarvestRespawnAtUnix, harvest.HarvestRespawnAtUnix);
+
+    repository.EnqueueDelete(door.Id, door.CellId);
+    repository.EnqueueDelete(activator.Id, activator.CellId);
+    repository.EnqueueDelete(loot.Id, loot.CellId);
+    repository.EnqueueDelete(harvest.Id, harvest.CellId);
+    EXPECT_TRUE(waitForCount(0).empty());
 }

@@ -29,7 +29,8 @@ target("PersistenceTests")
         "hopscotch-map",
         "gtest",
         "sqlite3",
-        "spdlog")
+        "spdlog",
+        "glm")
 
 target("SessionTests")
     set_kind("binary")
@@ -49,7 +50,8 @@ target("SessionTests")
         "gtest",
         "gamenetworkingsockets",
         "sqlite3",
-        "spdlog")
+        "spdlog",
+        "glm")
 
 target("ActorPopulationTests")
     set_kind("binary")

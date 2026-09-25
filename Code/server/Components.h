@@ -7,6 +7,7 @@
 #include <Components/FormIdComponent.h>
 #include <Components/ActorLifecycleComponent.h>
 #include <Components/ActorPopulationIdentityComponent.h>
+#include <Components/CorpseRetentionComponent.h>
 #include <Components/OwnerComponent.h>
 #include <Components/CellIdComponent.h>
 #include <Components/CharacterComponent.h>

@@ -26,10 +26,11 @@ struct ObjectComponent
     // Server-owned: flipped by the first authorized activation (ObjectInteractionPolicy::TryHarvest).
     bool IsHarvested{};
     bool IsHarvestItem{};
-    std::uint64_t HarvestRespawnAtTick{};
+    std::uint64_t HarvestRespawnAtUnix{};
     // Stable, client-discovered world item; the server owns its taken state.
     bool IsOpenLoot{};
     bool IsLootTaken{};
+    std::uint64_t LootRespawnAtUnix{};
     // Furniture identity supplied during object discovery; interactions still require a matching server record and range.
     bool IsFurniture{};
     // Set by the discovering client; receivers re-check the local base form type.

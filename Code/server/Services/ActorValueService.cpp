@@ -18,6 +18,7 @@
 #include <Messages/NotifyHealthChangeBroadcast.h>
 #include <Messages/NotifyDeathStateChange.h>
 #include <Services/ActorValueMutationPolicy.h>
+#include <Services/CorpseRetentionPolicy.h>
 
 #include <cmath>
 #include <utility>
@@ -216,6 +217,10 @@ void ActorValueService::OnDeathStateChange(const PacketEvent<RequestDeathStateCh
 
     auto& characterComponent = characterView.get<CharacterComponent>(*it);
     const bool wasDead = characterComponent.IsDead();
+    const bool hasCorpseMarker = m_world.all_of<CorpseRetentionComponent>(*it);
+    if (!CorpseRetentionPolicy::AllowsDeathStateChange(hasCorpseMarker, wasDead, message.IsDead))
+        return;
+
     if (message.IsSettledPosition && !message.IsDead)
         return;
 

@@ -11,6 +11,7 @@
 #include <Events/CharacterRemoveEvent.h>
 #include <Events/OwnershipTransferEvent.h>
 #include <Events/ActorRespawnedEvent.h>
+#include <Events/AcceptedCanonicalCreatureDeathEvent.h>
 
 #include <Game/OwnerView.h>
 
@@ -46,7 +47,10 @@
 #include <Structs/MovementAuthorityPolicy.h>
 #include <Services/FurnitureUsePolicy.h>
 #include <Services/ObjectInteractionPolicy.h>
+#include <Services/CorpseRetentionPolicy.h>
 #include <Services/PresentationAuthorityPolicy.h>
+
+#include <cmath>
 
 namespace
 {
@@ -77,11 +81,13 @@ bool CanRelayNpcPresentation(World& aWorld, const Player& acSender, const uint32
 }
 }
 
-CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
+CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher, const std::uint32_t aCreatureCorpseLifetimeSeconds) noexcept
     : m_world(aWorld)
+    , m_creatureCorpseLifetimeSeconds(aCreatureCorpseLifetimeSeconds)
     , m_updateConnection(aDispatcher.sink<UpdateEvent>().connect<&CharacterService::OnUpdate>(this))
-    , m_interiorCellChangeEventConnection(aDispatcher.sink<CharacterInteriorCellChangeEvent>().connect<&CharacterService::OnCharacterInteriorCellChange>(this))
+    , m_canonicalCreatureDeathConnection(aDispatcher.sink<AcceptedCanonicalCreatureDeathEvent>().connect<&CharacterService::OnAcceptedCanonicalCreatureDeath>(this))
     , m_exteriorCellChangeEventConnection(aDispatcher.sink<CharacterExteriorCellChangeEvent>().connect<&CharacterService::OnCharacterExteriorCellChange>(this))
+    , m_interiorCellChangeEventConnection(aDispatcher.sink<CharacterInteriorCellChangeEvent>().connect<&CharacterService::OnCharacterInteriorCellChange>(this))
     , m_characterAssignRequestConnection(aDispatcher.sink<PacketEvent<AssignCharacterRequest>>().connect<&CharacterService::OnAssignCharacterRequest>(this))
     , m_transferOwnershipConnection(aDispatcher.sink<PacketEvent<RequestOwnershipTransfer>>().connect<&CharacterService::OnOwnershipTransferRequest>(this))
     , m_ownershipTransferEventConnection(aDispatcher.sink<OwnershipTransferEvent>().connect<&CharacterService::OnOwnershipTransferEvent>(this))
@@ -117,6 +123,16 @@ bool CharacterService::BeginOwnerRespawnLifecycle(
             m_world.remove<ActorLifecycleComponent>(aEntity);
         spdlog::warn("Cannot respawn actor {:X}: lifecycle generation is unavailable", World::ToInteger(aEntity));
         return false;
+    }
+
+    auto& character = m_world.get<CharacterComponent>(aEntity);
+    if (CorpseRetentionPolicy::ShouldClearForRespawn(
+            m_world.all_of<CorpseRetentionComponent>(aEntity), character.IsDead()))
+    {
+        // An owner-authorized respawn starts a new incarnation, so the old
+        // corpse marker and its expiry must not reject the new alive state.
+        m_world.remove<CorpseRetentionComponent>(aEntity);
+        spdlog::info("[CorpseRetention] cleared retained corpse marker for respawned actor {:X}", World::ToInteger(aEntity));
     }
 
     if (auto* const pAnimationComponent = m_world.try_get<AnimationComponent>(aEntity))
@@ -199,10 +215,68 @@ void CharacterService::Serialize(World& aRegistry, entt::entity aEntity, Charact
     apSpawnRequest->ActionsToReplay = animationComponent.ActionsReplayCache.FormRefinedReplayChain();
 }
 
-void CharacterService::OnUpdate(const UpdateEvent&) const noexcept
+void CharacterService::OnUpdate(const UpdateEvent& acEvent) noexcept
 {
+    if (std::isfinite(acEvent.Delta) && acEvent.Delta > 0.f)
+    {
+        m_tickAccumulator += acEvent.Delta;
+        while (m_tickAccumulator >= 1.0)
+        {
+            m_tickAccumulator -= 1.0;
+            ++m_tick;
+        }
+
+        ExpireRetainedCorpses();
+    }
+
     ProcessFactionsChanges();
     ProcessMovementChanges();
+}
+
+void CharacterService::OnAcceptedCanonicalCreatureDeath(const AcceptedCanonicalCreatureDeathEvent& acEvent) noexcept
+{
+    const auto entity = static_cast<entt::entity>(acEvent.TargetServerId);
+    if (!m_world.valid(entity))
+        return;
+
+    const auto* const pCharacter = m_world.try_get<CharacterComponent>(entity);
+    const auto* const pIdentity = m_world.try_get<ActorPopulationIdentityComponent>(entity);
+    const auto* const pLifecycle = m_world.try_get<ActorLifecycleComponent>(entity);
+    if (!pCharacter || !pCharacter->IsDead() || !pIdentity || !pIdentity->IsTrustedCreature() ||
+        !pLifecycle || !pLifecycle->IsValid() || pLifecycle->GetGeneration() != acEvent.TargetLifecycleGeneration ||
+        m_world.all_of<CorpseRetentionComponent>(entity))
+        return;
+
+    const auto expiresAtTick = CorpseRetentionPolicy::ExpirationTick(m_tick, m_creatureCorpseLifetimeSeconds);
+    m_world.emplace_or_replace<CorpseRetentionComponent>(entity, expiresAtTick);
+    spdlog::info(
+        "[CorpseRetention] accepted creature corpse actor {:X} lifecycle {} expires at tick {} (lifetime {}s)",
+        acEvent.TargetServerId, acEvent.TargetLifecycleGeneration, expiresAtTick, m_creatureCorpseLifetimeSeconds);
+}
+
+void CharacterService::ExpireRetainedCorpses() noexcept
+{
+    auto view = m_world.view<CharacterComponent, CorpseRetentionComponent>();
+    Vector<std::uint32_t> expired;
+    for (const auto entity : view)
+    {
+        auto& corpse = view.get<CorpseRetentionComponent>(entity);
+        if (corpse.RemovalQueued)
+            continue;
+
+        const auto& character = view.get<CharacterComponent>(entity);
+        if (!CorpseRetentionPolicy::IsExpired(true, character.IsDead(), corpse.ExpiresAtTick, m_tick))
+            continue;
+
+        corpse.RemovalQueued = true;
+        expired.push_back(World::ToInteger(entity));
+    }
+
+    for (const auto serverId : expired)
+    {
+        m_world.GetDispatcher().trigger(CharacterRemoveEvent(serverId));
+        spdlog::info("[CorpseRetention] expired creature corpse actor {:X} tick {}", serverId, m_tick);
+    }
 }
 
 void CharacterService::OnCharacterExteriorCellChange(const CharacterExteriorCellChangeEvent& acEvent) const noexcept
@@ -1287,6 +1361,12 @@ void CharacterService::TransferToNextOwner(const entt::entity aEntity, const Own
     const auto& characterComponent = view.get<CharacterComponent>(*it);
     const auto& cellIdComponent = view.get<CellIdComponent>(*it);
 
+    // A canonical corpse has no simulation owner. Keep its server entity and
+    // invalidate the departing owner's epoch instead of handing it off or
+    // destroying it when no one else is nearby.
+    if (MakeRetainedCorpseOwnerless(aEntity, aReason))
+        return;
+
     for (Player* pPlayer : m_world.GetPlayerManager())
     {
         if (pPlayer == ownerComponent.GetOwner())
@@ -1305,6 +1385,45 @@ void CharacterService::TransferToNextOwner(const entt::entity aEntity, const Own
 
     spdlog::info("Removing actor {:X} after {} because no eligible owner remains", World::ToInteger(aEntity), pReasonName);
     m_world.GetDispatcher().trigger(CharacterRemoveEvent(World::ToInteger(aEntity)));
+}
+
+bool CharacterService::MakeRetainedCorpseOwnerless(const entt::entity aEntity, const OwnershipTransferReason aReason) const noexcept
+{
+    const auto view = m_world.view<OwnerComponent, CharacterComponent, CorpseRetentionComponent>();
+    const auto it = view.find(aEntity);
+    if (it == view.end() || !view.get<CharacterComponent>(*it).IsDead())
+        return false;
+
+    auto& ownerComponent = view.get<OwnerComponent>(*it);
+    Player* const pOldOwner = ownerComponent.GetOwner();
+    if (!pOldOwner)
+        return true;
+
+    const auto oldEpoch = ownerComponent.OwnershipEpoch;
+    std::uint32_t newEpoch = oldEpoch + 1;
+    if (newEpoch == 0)
+        newEpoch = 1;
+
+    ownerComponent.SetOwner(nullptr);
+    ownerComponent.OwnershipEpoch = newEpoch;
+    ownerComponent.InvalidOwners.clear();
+
+    NotifyOwnershipTransfer notify{};
+    notify.ServerId = World::ToInteger(aEntity);
+    notify.OwnerPlayerId = 0;
+    notify.OwnershipEpoch = newEpoch;
+    notify.CurrentActorData = BuildActorData(aEntity);
+    notify.LeveledNpcPickId = view.get<CharacterComponent>(*it).LeveledNpcPickId.Id;
+
+    if (!GameServer::Get()->SendToPlayersInRange(notify, aEntity, pOldOwner))
+        spdlog::error("Failed to broadcast ownerless corpse state for actor {:X}", notify.ServerId);
+    pOldOwner->Send(notify);
+
+    spdlog::info(
+        "[CorpseRetention] actor {:X} is ownerless after {} (epoch {} to {}, expiry tick {})",
+        notify.ServerId, GetOwnershipTransferReasonName(aReason), oldEpoch, newEpoch,
+        view.get<CorpseRetentionComponent>(*it).ExpiresAtTick);
+    return true;
 }
 
 ActorData CharacterService::BuildActorData(const entt::entity acEntity) const noexcept

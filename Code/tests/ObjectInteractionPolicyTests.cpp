@@ -1,3 +1,5 @@
+#include <TiltedCore/Stl.hpp>
+
 #include <Services/ObjectInteractionPolicy.h>
 #include <Structs/GameId.h>
 #include <Structs/GridCellCoords.h>
@@ -5,6 +7,7 @@
 #include <catch2/catch.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 
 TEST_CASE("Object discovery requires a valid form and sender cell range", "[object_authority]")
@@ -265,13 +268,15 @@ TEST_CASE("World loot rejects containers, foreign actors, forged cells and dista
     assertRejected(true, true, true, true, objectCell, farCoords);
 }
 
-TEST_CASE("Harvest and taken world state survive cell cleanup for the required lifetime", "[object_authority][harvest][world_loot]")
+TEST_CASE("Only changed world objects survive cell cleanup", "[object_authority][world_state]")
 {
-    REQUIRE(ObjectInteractionPolicy::ShouldRetainWorldState(true, false, 0, 100)); // taken loot has no server respawn
-    REQUIRE(ObjectInteractionPolicy::ShouldRetainWorldState(false, true, 200, 100));
-    REQUIRE_FALSE(ObjectInteractionPolicy::ShouldRetainWorldState(false, false, 200, 100));
-    REQUIRE_FALSE(ObjectInteractionPolicy::ShouldRetainWorldState(false, true, 200, 200));
-    REQUIRE_FALSE(ObjectInteractionPolicy::ShouldRetainWorldState(false, true, 200, 201));
+    REQUIRE(ObjectInteractionPolicy::ShouldRetainWorldState(true, 0, false, 0, false, 0, 100)); // touched door, even when closed
+    REQUIRE(ObjectInteractionPolicy::ShouldRetainWorldState(false, 2, false, 0, false, 0, 100)); // activator history
+    REQUIRE(ObjectInteractionPolicy::ShouldRetainWorldState(false, 0, true, 200, false, 0, 100)); // loot timer is active
+    REQUIRE(ObjectInteractionPolicy::ShouldRetainWorldState(false, 0, false, 0, true, 200, 100)); // harvest timer is active
+    REQUIRE_FALSE(ObjectInteractionPolicy::ShouldRetainWorldState(false, 0, false, 0, false, 0, 100)); // untouched
+    REQUIRE_FALSE(ObjectInteractionPolicy::ShouldRetainWorldState(false, 0, true, 200, false, 0, 200)); // expired loot
+    REQUIRE_FALSE(ObjectInteractionPolicy::ShouldRetainWorldState(false, 0, false, 0, true, 200, 201)); // expired harvest
 }
 
 TEST_CASE("Harvest rejects non-harvestable, foreign or out-of-range activations", "[object_authority][harvest]")
@@ -303,10 +308,11 @@ TEST_CASE("Harvest rejects non-harvestable, foreign or out-of-range activations"
 
 TEST_CASE("Harvested objects respawn after the configured delay", "[object_authority][harvest]")
 {
-    constexpr std::uint64_t cHarvestTick = 100;
-    const std::uint64_t respawnAt = ObjectInteractionPolicy::HarvestRespawnTick(cHarvestTick, false);
-    REQUIRE(respawnAt == cHarvestTick + 30 * 60);
-    REQUIRE(ObjectInteractionPolicy::HarvestRespawnTick(cHarvestTick, true) == cHarvestTick + 60 * 60);
+    constexpr std::uint64_t cHarvestUnix = 100;
+    const std::uint64_t respawnAt = ObjectInteractionPolicy::HarvestRespawnAtUnix(cHarvestUnix, false);
+    REQUIRE(respawnAt == cHarvestUnix + 30 * 60);
+    REQUIRE(ObjectInteractionPolicy::HarvestRespawnAtUnix(cHarvestUnix, true) == cHarvestUnix + 60 * 60);
+    REQUIRE(ObjectInteractionPolicy::ItemRespawnAtUnix(cHarvestUnix) == cHarvestUnix + ObjectInteractionPolicy::kItemRespawnTicks);
 
     REQUIRE_FALSE(ObjectInteractionPolicy::IsHarvestRespawnDue(true, respawnAt, respawnAt - 1));
     REQUIRE(ObjectInteractionPolicy::IsHarvestRespawnDue(true, respawnAt, respawnAt));
@@ -314,6 +320,8 @@ TEST_CASE("Harvested objects respawn after the configured delay", "[object_autho
 
     // Nothing to respawn when the object was never harvested.
     REQUIRE_FALSE(ObjectInteractionPolicy::IsHarvestRespawnDue(false, respawnAt, respawnAt + 50));
+    REQUIRE_FALSE(ObjectInteractionPolicy::IsLootRespawnDue(false, respawnAt, respawnAt + 50));
+    REQUIRE(ObjectInteractionPolicy::IsLootRespawnDue(true, respawnAt, respawnAt));
 }
 
 TEST_CASE("A respawned object can be harvested again", "[object_authority][harvest]")
@@ -330,7 +338,7 @@ TEST_CASE("A respawned object can be harvested again", "[object_authority][harve
 
     bool harvested = false;
     REQUIRE(harvest(harvested));
-    const std::uint64_t respawnAt = ObjectInteractionPolicy::HarvestRespawnTick(0, false);
+    const std::uint64_t respawnAt = ObjectInteractionPolicy::HarvestRespawnAtUnix(0, false);
     REQUIRE_FALSE(harvest(harvested));
 
     REQUIRE(ObjectInteractionPolicy::IsHarvestRespawnDue(harvested, respawnAt, respawnAt));

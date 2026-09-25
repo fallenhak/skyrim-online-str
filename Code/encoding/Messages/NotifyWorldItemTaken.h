@@ -4,7 +4,7 @@
 
 #include <Structs/GameId.h>
 
-// Server-owned state of a stable world item after a player takes it.
+// Server-owned state of a stable world item when it is taken or respawns.
 struct NotifyWorldItemTaken final : ServerMessage
 {
     static constexpr ServerOpcode Opcode = kNotifyWorldItemTaken;
@@ -17,7 +17,8 @@ struct NotifyWorldItemTaken final : ServerMessage
     void SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept override;
     void DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept override;
 
-    bool operator==(const NotifyWorldItemTaken& acRhs) const noexcept { return GetOpcode() == acRhs.GetOpcode() && Id == acRhs.Id; }
+    bool operator==(const NotifyWorldItemTaken& acRhs) const noexcept { return GetOpcode() == acRhs.GetOpcode() && Id == acRhs.Id && IsTaken == acRhs.IsTaken; }
 
     GameId Id{};
+    bool IsTaken{true};
 };
