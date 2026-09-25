@@ -717,3 +717,30 @@ TEST_CASE("AssignObjectsResponse carries activator state", "[encoding.object_aut
     REQUIRE(received->Objects.front().ActivationCount == 300);
     REQUIRE(received->Objects.front() == object);
 }
+
+TEST_CASE("Furniture denial carries the authoritative position to the owning client", "[encoding.furniture]")
+{
+    NotifyFurnitureUseDenied sent;
+    sent.ActorId = 45;
+    sent.OwnershipEpoch = 3;
+    sent.AuthoritativeMovement.WorldSpaceId = GameId{2, 0x100};
+    sent.AuthoritativeMovement.CellId = GameId{1, 0x200};
+    sent.AuthoritativeMovement.Position.x = 120.f;
+    sent.AuthoritativeMovement.Position.y = -42.f;
+    sent.AuthoritativeMovement.Position.z = 96.f;
+    sent.AuthoritativeMovement.Rotation.x = 15.f;
+    sent.AuthoritativeMovement.Rotation.y = -35.f;
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<NotifyFurnitureUseDenied>(factory.Extract(reader));
+
+    REQUIRE(received);
+    REQUIRE(received->ActorId == sent.ActorId);
+    REQUIRE(received->OwnershipEpoch == sent.OwnershipEpoch);
+    REQUIRE(received->AuthoritativeMovement == sent.AuthoritativeMovement);
+}

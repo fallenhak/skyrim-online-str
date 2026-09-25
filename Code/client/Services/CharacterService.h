@@ -42,6 +42,7 @@ struct NotifySubtitle;
 struct NotifyActorTeleport;
 struct AuthorityChangedEvent;
 struct NotifyCharacterAssignmentRejected;
+struct NotifyFurnitureUseDenied;
 
 struct Actor;
 struct World;
@@ -71,6 +72,7 @@ struct CharacterService
     void OnAssignCharacter(const AssignCharacterResponse& acMessage) noexcept;
     void OnCharacterAssignmentRejected(const NotifyCharacterAssignmentRejected& acMessage) noexcept;
     void OnCharacterSpawn(const CharacterSpawnRequest& acMessage) const noexcept;
+    void OnFurnitureUseDenied(const NotifyFurnitureUseDenied& acMessage) const noexcept;
     void OnReferencesMoveRequest(const ServerReferencesMoveRequest& acMessage) const noexcept;
     void OnActionEvent(const ActionEvent& acActionEvent) const noexcept;
     void OnFactionsChanges(const NotifyFactionsChanges& acEvent) const noexcept;
@@ -157,6 +159,7 @@ private:
     entt::scoped_connection m_assignmentRejectedConnection;
     entt::scoped_connection m_characterSpawnConnection;
     entt::scoped_connection m_referenceMovementSnapshotConnection;
+    entt::scoped_connection m_furnitureUseDeniedConnection;
     entt::scoped_connection m_mountConnection;
     entt::scoped_connection m_notifyMountConnection;
     entt::scoped_connection m_initPackageConnection;

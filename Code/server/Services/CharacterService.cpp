@@ -21,6 +21,7 @@
 #include <Messages/NotifyCharacterAssignmentRejected.h>
 #include <Messages/ServerReferencesMoveRequest.h>
 #include <Messages/ClientReferencesMoveRequest.h>
+#include <Messages/NotifyFurnitureUseDenied.h>
 #include <Messages/CharacterSpawnRequest.h>
 #include <Messages/RequestFactionsChanges.h>
 #include <Messages/NotifyFactionsChanges.h>
@@ -43,6 +44,7 @@
 #include <Structs/FactionAuthorityPolicy.h>
 #include <Structs/CellMovementAuthorityPolicy.h>
 #include <Structs/MovementAuthorityPolicy.h>
+#include <Services/FurnitureUsePolicy.h>
 #include <Services/ObjectInteractionPolicy.h>
 #include <Services/PresentationAuthorityPolicy.h>
 
@@ -555,6 +557,104 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
 
         auto& movement = update.UpdatedMovement;
 
+        const bool isInFurniture = FurnitureUsePolicy::IsInFurniture(movement.Variables);
+        const bool hasFurnitureExitAction = std::any_of(
+            update.ActionEvents.begin(), update.ActionEvents.end(), [](const ActionEvent& acAction)
+            {
+                const std::string_view eventName{acAction.EventName.data(), acAction.EventName.size()};
+                return FurnitureUsePolicy::IsFurnitureExitAction(eventName);
+            });
+
+        if (animationComponent.RejectedFurnitureTargetId != 0)
+        {
+            if (hasFurnitureExitAction || (!isInFurniture && animationComponent.RejectedFurnitureSawActiveState))
+            {
+                animationComponent.RejectedFurnitureTargetId = 0;
+                animationComponent.RejectedFurnitureSawActiveState = false;
+            }
+            else if (isInFurniture)
+            {
+                animationComponent.RejectedFurnitureSawActiveState = true;
+                continue;
+            }
+            else
+            {
+                const float dx = movement.Position.x - movementCopy.Position.x;
+                const float dy = movement.Position.y - movementCopy.Position.y;
+                const float dz = movement.Position.z - movementCopy.Position.z;
+                constexpr float kPositionCorrectionTolerance = 16.f;
+                if (dx * dx + dy * dy + dz * dz <= kPositionCorrectionTolerance * kPositionCorrectionTolerance)
+                {
+                    animationComponent.RejectedFurnitureTargetId = 0;
+                    animationComponent.RejectedFurnitureSawActiveState = false;
+                }
+                else
+                {
+                    continue;
+                }
+            }
+        }
+
+        bool furnitureUseDenied = false;
+        for (const auto& action : update.ActionEvents)
+        {
+            const std::string_view eventName{action.EventName.data(), action.EventName.size()};
+            if (!FurnitureUsePolicy::IsSeatEntryAction(eventName))
+                continue;
+
+            if (action.TargetId == 0)
+            {
+                spdlog::warn("Seat action '{}' from actor {:X} has no furniture target; occupancy was not reserved",
+                             eventName, entry.first);
+                continue;
+            }
+
+            entt::entity occupant = entt::null;
+            auto occupiedView = m_world.view<AnimationComponent>();
+            for (const auto otherEntity : occupiedView)
+            {
+                if (otherEntity == entity || occupiedView.get<AnimationComponent>(otherEntity).FurnitureUseTargetId != action.TargetId)
+                    continue;
+
+                occupant = otherEntity;
+                break;
+            }
+
+            if (!FurnitureUsePolicy::CanEnter(action.TargetId, occupant != entt::null))
+            {
+                animationComponent.RejectedFurnitureTargetId = action.TargetId;
+                animationComponent.RejectedFurnitureSawActiveState = isInFurniture;
+
+                NotifyFurnitureUseDenied denied;
+                denied.ActorId = entry.first;
+                denied.OwnershipEpoch = update.OwnershipEpoch;
+                denied.AuthoritativeMovement.CellId = cellIdComponent.Cell;
+                denied.AuthoritativeMovement.WorldSpaceId = cellIdComponent.WorldSpaceId;
+                denied.AuthoritativeMovement.Position = movementCopy.Position;
+                denied.AuthoritativeMovement.Rotation.x = movementCopy.Rotation.x;
+                denied.AuthoritativeMovement.Rotation.y = movementCopy.Rotation.z;
+                denied.AuthoritativeMovement.Direction = movementCopy.Direction;
+                denied.AuthoritativeMovement.Variables = movementCopy.Variables;
+                acMessage.pPlayer->Send(denied);
+
+                spdlog::warn("Denied seat action '{}' for actor {:X} on occupied furniture {:X}; occupant actor {:X}, epoch {}",
+                             eventName, entry.first, action.TargetId, World::ToInteger(occupant), update.OwnershipEpoch);
+                furnitureUseDenied = true;
+                break;
+            }
+
+            if (animationComponent.FurnitureUseTargetId != action.TargetId)
+            {
+                animationComponent.FurnitureUseTargetId = action.TargetId;
+                animationComponent.HasEnteredFurniture = isInFurniture;
+                spdlog::info("Reserved furniture {:X} for actor {:X}, seat action '{}', epoch {}",
+                             action.TargetId, entry.first, eventName, update.OwnershipEpoch);
+            }
+        }
+
+        if (furnitureUseDenied)
+            continue;
+
         movementComponent.Position = movement.Position;
         movementComponent.Rotation = glm::vec3(movement.Rotation.x, 0.f, movement.Rotation.y);
         movementComponent.Variables = movement.Variables;
@@ -568,11 +668,39 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
         {
             auto [canceled, reason] = GameServer::Get()->GetWorld().GetScriptService().HandleCharacterMove(entity);
             if (canceled)
+            {
+                const std::string_view eventName{action.EventName.data(), action.EventName.size()};
+                if (FurnitureUsePolicy::IsSeatEntryAction(eventName) && !animationComponent.HasEnteredFurniture &&
+                    animationComponent.FurnitureUseTargetId == action.TargetId)
+                    animationComponent.FurnitureUseTargetId = 0;
                 continue;
+            }
+
+            const std::string_view eventName{action.EventName.data(), action.EventName.size()};
+            if (FurnitureUsePolicy::IsFurnitureExitAction(eventName) && animationComponent.FurnitureUseTargetId != 0)
+            {
+                spdlog::info("Furniture use released by actor {:X}, furniture {:X}, event '{}'",
+                             entry.first, animationComponent.FurnitureUseTargetId, eventName);
+                animationComponent.FurnitureUseTargetId = 0;
+                animationComponent.HasEnteredFurniture = false;
+            }
 
             animationComponent.CurrentAction = action;
 
-            animationComponent.Actions.push_back(animationComponent.CurrentAction);
+            ActionEvent replayAction = animationComponent.CurrentAction;
+            if (FurnitureUsePolicy::IsSeatEntryAction(eventName))
+                replayAction = ActionReplayCache::NormalizeForImmediateReplay(replayAction);
+            animationComponent.Actions.push_back(std::move(replayAction));
+        }
+
+        if (isInFurniture)
+            animationComponent.HasEnteredFurniture = animationComponent.FurnitureUseTargetId != 0;
+        else if (animationComponent.HasEnteredFurniture)
+        {
+            spdlog::info("Furniture use ended for actor {:X}, furniture {:X}",
+                         entry.first, animationComponent.FurnitureUseTargetId);
+            animationComponent.FurnitureUseTargetId = 0;
+            animationComponent.HasEnteredFurniture = false;
         }
 
         animationComponent.ActionsReplayCache.AppendAll(update.ActionEvents);
