@@ -13,7 +13,8 @@ target("TPTests")
         "hopscotch-map",
         "catch2",
         "mimalloc",
-        "glm")
+        "glm",
+        "entt")
 
 target("PersistenceTests")
     set_kind("binary")
