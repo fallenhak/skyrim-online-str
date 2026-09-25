@@ -143,6 +143,7 @@ struct ObjectInteractionPolicy final
 
     template <typename TOnTake>
     [[nodiscard]] static bool TryTakeWorldItem(
+        const bool aHasTrustedObjectState,
         const bool aIsOpenLoot,
         bool& aIsTaken,
         const bool aActorExists,
@@ -159,7 +160,9 @@ struct ObjectInteractionPolicy final
         const GridCellCoords& aObjectCoords,
         TOnTake&& aOnTake)
     {
-        if (!aIsOpenLoot || aIsTaken)
+        // AssignObjects only supplies client-discovered object flags and placement today.
+        // Fail closed until the server has an independently trusted object record.
+        if (!aHasTrustedObjectState || !aIsOpenLoot || aIsTaken)
             return false;
 
         if (!CanActivate(

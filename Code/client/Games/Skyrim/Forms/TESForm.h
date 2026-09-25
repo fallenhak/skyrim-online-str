@@ -16,6 +16,7 @@ enum class FormType : uint8_t
     Misc = 32,
     Apparatus = 33,
     Flora = 39,
+    Furniture = 40,
     Weapon = 41,
     Ammo = 42,
     Npc = 43,

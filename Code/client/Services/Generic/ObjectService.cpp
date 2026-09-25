@@ -134,7 +134,12 @@ Set<uint32_t> s_harvestDisabledRefs{};
 // Another player took it: hide it here too. Only the harvester receives the item.
 void ApplyHarvested(TESObjectREFR* apObject) noexcept
 {
-    if (!IsHarvestableObject(apObject) || apObject->IsDisabled())
+    if (!IsHarvestableObject(apObject))
+        return;
+
+    // A local activation is recorded in OnActivate before we reach here. Leave other
+    // disabled references untracked so quest/script state is never re-enabled by respawn.
+    if (apObject->IsDisabled())
         return;
 
     spdlog::info("Object {:X} harvested remotely, disabling", apObject->formID);
@@ -148,8 +153,11 @@ void RestoreHarvested(TESObjectREFR* apObject) noexcept
     if (!apObject || !s_harvestDisabledRefs.erase(apObject->formID))
         return;
 
-    spdlog::info("Object {:X} no longer harvested, enabling", apObject->formID);
-    apObject->Enable();
+    if (apObject->IsDisabled())
+    {
+        spdlog::info("Object {:X} no longer harvested, enabling", apObject->formID);
+        apObject->Enable();
+    }
 }
 
 void ApplyWorldItemTaken(TESObjectREFR* apObject) noexcept
@@ -215,7 +223,7 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
         }
     }
 
-    Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient, FormType::Activator,
+    Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient, FormType::Furniture, FormType::Activator,
                                   FormType::Armor, FormType::Misc, FormType::Weapon, FormType::Ammo, FormType::Key,
                                   FormType::Alchemy, FormType::Scroll, FormType::SoulGem, FormType::Light, FormType::Apparatus};
     // Door seemed to be at the wrong form id (29, now 32), verify this.
@@ -267,6 +275,7 @@ void ObjectService::OnCellChange(const CellChangeEvent& acEvent) noexcept
         objectData.IsHarvestable = cIsHarvestType;
         objectData.IsHarvestItem = pObject->baseForm->formType == FormType::Ingredient;
         objectData.IsOpenLoot = cIsOpenLoot;
+        objectData.IsFurniture = pObject->baseForm->formType == FormType::Furniture;
         objectData.IsDoor = IsSyncedDoor(pObject);
         objectData.IsActivator = IsSyncedActivator(pObject);
 
@@ -366,10 +375,22 @@ entt::entity ObjectService::CreateObjectEntity(const uint32_t acFormId, const ui
 
 void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
 {
+    const bool wasDisabled = acEvent.pObject && acEvent.pObject->IsDisabled();
+    const bool trackLocalHarvest = acEvent.ActivateFlag &&
+        ObjectSyncPolicy::ShouldTrackLocalHarvest(
+            IsHarvestableObject(acEvent.pObject),
+            acEvent.pActivator == PlayerCharacter::Get(),
+            wasDisabled);
+
     if (acEvent.ActivateFlag)
     {
         acEvent.pObject->Activate(acEvent.pActivator, acEvent.Unk1, acEvent.pObjectToGet, acEvent.Count, acEvent.DefaultProcessing);
     }
+
+    // The harvesting client is excluded from the server's relay and its game may disable the plant locally.
+    // Track this reference so the later server respawn notification can re-enable it.
+    if (trackLocalHarvest)
+        s_harvestDisabledRefs.insert(acEvent.pObject->formID);
 
     const bool cIsSyncedDoor = IsSyncedDoor(acEvent.pObject);
     const bool cIsSyncedActivator = IsSyncedActivator(acEvent.pObject);

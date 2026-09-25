@@ -31,4 +31,12 @@ inline bool IsOpenLootObject(const TESObjectREFR* apObject) noexcept
 {
     return apObject && apObject->baseForm && !apObject->IsTemporary() && IsOpenLootFormType(apObject->baseForm->formType);
 }
+
+inline bool ShouldTrackLocalHarvest(
+    const bool aIsHarvestable,
+    const bool aIsLocalActivator,
+    const bool aWasAlreadyDisabled) noexcept
+{
+    return aIsHarvestable && aIsLocalActivator && !aWasAlreadyDisabled;
+}
 } // namespace ObjectSyncPolicy

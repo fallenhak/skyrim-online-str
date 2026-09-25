@@ -144,6 +144,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.IsHarvested = objectComponent.IsHarvested;
             objectData.IsOpenLoot = objectComponent.IsOpenLoot;
             objectData.IsLootTaken = objectComponent.IsLootTaken;
+            objectData.IsFurniture = objectComponent.IsFurniture;
             objectData.IsDoor = objectComponent.IsDoor;
             objectData.IsDoorStateKnown = objectComponent.Door.IsKnown;
             objectData.IsDoorOpen = objectComponent.Door.IsOpen;
@@ -172,6 +173,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectComponent.IsHarvestable = object.IsHarvestable;
             objectComponent.IsHarvestItem = object.IsHarvestable && object.IsHarvestItem;
             objectComponent.IsOpenLoot = object.IsOpenLoot && !object.IsHarvestable;
+            objectComponent.IsFurniture = object.IsFurniture;
             objectComponent.IsDoor = object.IsDoor;
             objectComponent.IsActivator = object.IsActivator && !object.IsDoor && !object.IsHarvestable;
 
@@ -185,6 +187,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             objectData.IsHarvestable = object.IsHarvestable;
             objectData.IsHarvestItem = objectComponent.IsHarvestItem;
             objectData.IsOpenLoot = objectComponent.IsOpenLoot;
+            objectData.IsFurniture = objectComponent.IsFurniture;
             objectData.IsDoor = object.IsDoor;
             objectData.IsActivator = objectComponent.IsActivator;
 
@@ -221,7 +224,9 @@ void ObjectService::OnTakeWorldItem(const PacketEvent<TakeWorldItemRequest>& acM
     const auto& activatorCell = activatorView.get<CellIdComponent>(*activatorIt);
     std::size_t notifiedPlayers = 0;
     const bool taken = ObjectInteractionPolicy::TryTakeWorldItem(
-        objectComponent.IsOpenLoot, objectComponent.IsLootTaken, activatorExists, ownedBySender,
+        true, // No server-side static object records yet; client discovery is the only source. Tighten once they exist.
+        objectComponent.IsOpenLoot && !objectComponent.IsHarvestable,
+        objectComponent.IsLootTaken, activatorExists, ownedBySender,
         packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
         activatorCell.Cell, activatorCell.WorldSpaceId, activatorCell.CenterCoords,
         objectCell.Cell, objectCell.WorldSpaceId, objectCell.CenterCoords,

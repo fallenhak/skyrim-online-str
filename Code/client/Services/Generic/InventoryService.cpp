@@ -1,4 +1,5 @@
 #include <Services/InventoryService.h>
+#include <Services/CharacterInventoryPolicy.h>
 
 #include <Messages/RequestObjectInventoryChanges.h>
 #include <Messages/NotifyObjectInventoryChanges.h>
@@ -185,6 +186,16 @@ void InventoryService::OnNotifyInventoryChanges(const NotifyInventoryChanges& ac
             pActor->DropOrPickUpObject(acMessage.Item, nullptr, nullptr);
         else
             pActor->AddOrRemoveItem(acMessage.Item);
+
+        auto waitingView = m_world.view<FormIdComponent, WaitingFor3D>();
+        const auto waitingIt = std::find_if(waitingView.begin(), waitingView.end(), [waitingView, formId = pActor->formID](const auto aEntity)
+        {
+            return waitingView.get<FormIdComponent>(aEntity).Id == formId;
+        });
+        if (waitingIt != waitingView.end())
+            CharacterInventoryPolicy::ApplyInventoryDelta(
+                waitingView.get<WaitingFor3D>(*waitingIt).SpawnRequest.InventoryContent,
+                acMessage.Item);
 
         return;
     }

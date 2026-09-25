@@ -1,4 +1,6 @@
 #include <Services/ObjectInteractionPolicy.h>
+#include <Structs/GameId.h>
+#include <Structs/GridCellCoords.h>
 
 #include <catch2/catch.hpp>
 
@@ -222,13 +224,13 @@ TEST_CASE("World loot is taken once by a nearby owner and relayed once", "[objec
     const auto relay = [&] { ++relayCount; };
 
     REQUIRE(ObjectInteractionPolicy::TryTakeWorldItem(
-        true, taken, true, true, objectCell, senderCell, worldSpace, coords,
+        true, true, taken, true, true, objectCell, senderCell, worldSpace, coords,
         objectCell, worldSpace, coords, objectCell, worldSpace, coords, relay));
     REQUIRE(taken);
     REQUIRE(relayCount == 1);
 
     REQUIRE_FALSE(ObjectInteractionPolicy::TryTakeWorldItem(
-        true, taken, true, true, objectCell, senderCell, worldSpace, coords,
+        true, true, taken, true, true, objectCell, senderCell, worldSpace, coords,
         objectCell, worldSpace, coords, objectCell, worldSpace, coords, relay));
     REQUIRE(taken);
     REQUIRE(relayCount == 1);
@@ -242,24 +244,25 @@ TEST_CASE("World loot rejects containers, foreign actors, forged cells and dista
     const GridCellCoords coords{10, -10};
     const GridCellCoords farCoords{20, -10};
 
-    const auto assertRejected = [&](const bool openLoot, const bool actorExists, const bool owned,
+    const auto assertRejected = [&](const bool trustedObjectState, const bool openLoot, const bool actorExists, const bool owned,
                                     const GameId& requestedCell, const GridCellCoords& activatorCoords)
     {
         bool taken = false;
         std::size_t relayCount = 0;
         REQUIRE_FALSE(ObjectInteractionPolicy::TryTakeWorldItem(
-            openLoot, taken, actorExists, owned, requestedCell, senderCell, worldSpace, coords,
+            trustedObjectState, openLoot, taken, actorExists, owned, requestedCell, senderCell, worldSpace, coords,
             objectCell, worldSpace, activatorCoords, objectCell, worldSpace, coords,
             [&] { ++relayCount; }));
         REQUIRE_FALSE(taken);
         REQUIRE(relayCount == 0);
     };
 
-    assertRejected(false, true, true, objectCell, coords);  // containers and corpses never enter the open-loot path
-    assertRejected(true, false, true, objectCell, coords);
-    assertRejected(true, true, false, objectCell, coords);
-    assertRejected(true, true, true, GameId{0, 9}, coords);
-    assertRejected(true, true, true, objectCell, farCoords);
+    assertRejected(true, false, true, true, objectCell, coords);  // containers and corpses never enter the open-loot path
+    assertRejected(false, true, true, true, objectCell, coords);  // client-discovered type and placement are not trusted
+    assertRejected(true, true, false, true, objectCell, coords);
+    assertRejected(true, true, true, false, objectCell, coords);
+    assertRejected(true, true, true, true, GameId{0, 9}, coords);
+    assertRejected(true, true, true, true, objectCell, farCoords);
 }
 
 TEST_CASE("Harvest and taken world state survive cell cleanup for the required lifetime", "[object_authority][harvest][world_loot]")

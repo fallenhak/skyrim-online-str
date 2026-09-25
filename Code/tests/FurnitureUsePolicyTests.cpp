@@ -1,7 +1,9 @@
+#include <TiltedCore/Stl.hpp>
 #include <catch2/catch.hpp>
 
 #include <Game/Animation/ActionReplayCache.h>
 #include <Services/FurnitureUsePolicy.h>
+#include <Structs/GameId.h>
 
 TEST_CASE("Seat transitions are recognized without matching seated idle variations", "[furniture]")
 {
@@ -16,9 +18,28 @@ TEST_CASE("Seat transitions are recognized without matching seated idle variatio
 
 TEST_CASE("A furniture reference can be reserved by only one actor", "[furniture]")
 {
-    REQUIRE(FurnitureUsePolicy::CanEnter(0x1234, false));
-    REQUIRE_FALSE(FurnitureUsePolicy::CanEnter(0, false));
-    REQUIRE_FALSE(FurnitureUsePolicy::CanEnter(0x1234, true));
+    const GameId target{0x12, 0x345678};
+    REQUIRE(FurnitureUsePolicy::CanEnter(target, true, true, false));
+    REQUIRE_FALSE(FurnitureUsePolicy::CanEnter(GameId{}, true, true, false));
+    REQUIRE(FurnitureUsePolicy::CanEnter(target, false, false, false)); // undiscovered furniture stays usable
+    REQUIRE_FALSE(FurnitureUsePolicy::CanEnter(target, true, false, false));
+    REQUIRE_FALSE(FurnitureUsePolicy::CanEnter(target, true, true, true));
+}
+
+TEST_CASE("Furniture reservations are cleared when actor control changes", "[furniture]")
+{
+    GameId furnitureTarget{0x12, 0x345678};
+    GameId rejectedTarget{0x34, 0x567890};
+    bool hasEnteredFurniture = true;
+    bool rejectedFurnitureSawActiveState = true;
+
+    FurnitureUsePolicy::ClearReservation(
+        furnitureTarget, rejectedTarget, hasEnteredFurniture, rejectedFurnitureSawActiveState);
+
+    REQUIRE(furnitureTarget == GameId{});
+    REQUIRE(rejectedTarget == GameId{});
+    REQUIRE_FALSE(hasEnteredFurniture);
+    REQUIRE_FALSE(rejectedFurnitureSawActiveState);
 }
 
 TEST_CASE("The player furniture animation flag is read from the synchronized graph variables", "[furniture]")
@@ -35,7 +56,7 @@ TEST_CASE("Late furniture entry actions use their instant replay counterpart on 
 {
     ActionEvent action;
     action.ActionId = 0x123;
-    action.TargetId = 0x456;
+    action.TargetId = GameId{2, 0x456};
     action.IdleId = 0x789;
     action.EventName = "IdleChairEnterToSit";
     action.TargetEventName = "IdleChairEnterToSit";

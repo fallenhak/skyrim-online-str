@@ -32,6 +32,7 @@ struct ObjectData
     // Stable plugin-placed pickupable item (not a temporary player drop).
     bool IsOpenLoot{};
     bool IsLootTaken{};
+    bool IsFurniture{};
     // A non-load door; the open state is owned by the server once known.
     bool IsDoor{};
     bool IsDoorStateKnown{};

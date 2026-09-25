@@ -46,7 +46,7 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
         const auto& first = *it;
 
         const auto actionId = first.ActionId;
-        const auto targetId = first.TargetId;
+        const auto targetId = World::Get().GetModSystem().GetGameId(first.TargetId);
 
         const auto pAction = Cast<BGSAction>(TESForm::GetById(actionId));
         const auto pTarget = Cast<TESObjectREFR>(TESForm::GetById(targetId));
@@ -76,7 +76,7 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
         {
             ++aAnimationComponent.FailedSeatActionAttempts;
             spdlog::warn("Seat action '{}' was not accepted for remote actor {:X}, target {:X}; retry {}/3",
-                         eventName, apActor->formID, first.TargetId,
+                         eventName, apActor->formID, first.TargetId.LogFormat(),
                          static_cast<int>(aAnimationComponent.FailedSeatActionAttempts));
             return;
         }
@@ -84,7 +84,7 @@ void AnimationSystem::Update(World& aWorld, Actor* apActor, RemoteAnimationCompo
         if (isSeatTransition)
         {
             spdlog::info("Replayed seat action '{}' for remote actor {:X}, target {:X}, tick {}, result {}, retries {}",
-                         eventName, apActor->formID, first.TargetId, first.Tick, static_cast<int>(result),
+                         eventName, apActor->formID, first.TargetId.LogFormat(), first.Tick, static_cast<int>(result),
                          static_cast<int>(aAnimationComponent.FailedSeatActionAttempts));
         }
 
@@ -185,9 +185,7 @@ bool AnimationSystem::Serialize(World& aWorld, const ActionEvent& aActionEvent, 
     if (!aWorld.GetModSystem().GetServerModId(aActionEvent.ActionId, actionModId, actionBaseId))
         return false;
 
-    uint32_t targetBaseId = 0;
-    uint32_t targetModId = 0;
-    if (!aWorld.GetModSystem().GetServerModId(aActionEvent.TargetId, targetModId, targetBaseId))
+    if (aActionEvent.TargetId && !aWorld.GetModSystem().GetGameId(aActionEvent.TargetId))
         return false;
 
     uint8_t scratch[1 << 14];

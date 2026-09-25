@@ -1,6 +1,7 @@
 #include <TiltedCore/Stl.hpp>
 #include <optional>
 
+#include <Structs/Inventory.h>
 #include <Services/CharacterInventoryPolicy.h>
 
 #include <catch2/catch.hpp>
@@ -35,4 +36,23 @@ TEST_CASE("Leveled NPC reconciliation uses current actor inventory when no spawn
     const Inventory& selected = CharacterInventoryPolicy::GetLeveledConformSnapshot(currentInventory, nullptr);
 
     REQUIRE(selected.Entries == currentInventory.Entries);
+}
+
+TEST_CASE("Inventory deltas update an in-flight leveled NPC spawn snapshot", "[inventory]")
+{
+    Inventory pendingSpawnInventory{};
+    Inventory::Entry potion{};
+    potion.BaseId = GameId{1, 0x2345};
+    potion.Count = 2;
+    pendingSpawnInventory.Entries.push_back(potion);
+
+    Inventory::Entry added = potion;
+    added.Count = 3;
+    CharacterInventoryPolicy::ApplyInventoryDelta(pendingSpawnInventory, added);
+    REQUIRE(pendingSpawnInventory.Entries.size() == 1);
+    REQUIRE(pendingSpawnInventory.Entries.front().Count == 5);
+
+    added.Count = -1;
+    CharacterInventoryPolicy::ApplyInventoryDelta(pendingSpawnInventory, added);
+    REQUIRE(pendingSpawnInventory.Entries.front().Count == 4);
 }

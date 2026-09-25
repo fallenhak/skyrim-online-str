@@ -8,6 +8,7 @@
 #include <Services/ActorNonOwnerDamagePolicy.h>
 #include <Services/SessionService.h>
 #include <Services/CanonicalCreatureDeathPolicy.h>
+#include <Services/FurnitureUsePolicy.h>
 #include <Events/AcceptedCanonicalHealthDecreaseEvent.h>
 #include <Events/AcceptedCanonicalCreatureDeathEvent.h>
 #include <World.h>
@@ -225,6 +226,13 @@ void ActorValueService::OnDeathStateChange(const PacketEvent<RequestDeathStateCh
     if (wasDead != message.IsDead)
     {
         characterComponent.SetDead(message.IsDead);
+
+        if (auto* const pAnimationComponent = m_world.try_get<AnimationComponent>(entity))
+            FurnitureUsePolicy::ClearReservation(
+                pAnimationComponent->FurnitureUseTargetId,
+                pAnimationComponent->RejectedFurnitureTargetId,
+                pAnimationComponent->HasEnteredFurniture,
+                pAnimationComponent->RejectedFurnitureSawActiveState);
 
         const auto* const pPopulationIdentity = m_world.try_get<ActorPopulationIdentityComponent>(entity);
         auto* const pLifecycle = m_world.try_get<ActorLifecycleComponent>(entity);

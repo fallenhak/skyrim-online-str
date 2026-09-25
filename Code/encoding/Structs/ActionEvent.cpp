@@ -72,7 +72,7 @@ void ActionEvent::GenerateDifferential(const ActionEvent& aPrevious, TiltedPhoqu
 
     if (flags & kTargetId)
     {
-        Serialization::WriteVarInt(aWriter, TargetId);
+        TargetId.Serialize(aWriter);
     }
 
     if (flags & kIdleId)
@@ -126,7 +126,7 @@ bool ActionEvent::ApplyDifferential(TiltedPhoques::Buffer::Reader& aReader) noex
 
     if (flags & kTargetId)
     {
-        TargetId = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
+        TargetId.Deserialize(aReader);
     }
 
     if (flags & kIdleId)

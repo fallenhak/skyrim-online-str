@@ -8,4 +8,9 @@ inline const Inventory& GetLeveledConformSnapshot(const Inventory& acCurrentInve
 {
     return apPendingSpawnInventory ? *apPendingSpawnInventory : acCurrentInventory;
 }
+
+inline void ApplyInventoryDelta(Inventory& aInventory, const Inventory::Entry& acDelta) noexcept
+{
+    aInventory.AddOrRemoveEntry(acDelta);
+}
 }

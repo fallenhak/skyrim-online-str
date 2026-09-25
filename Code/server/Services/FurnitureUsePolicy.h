@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Structs/GameId.h>
 #include <Structs/AnimationVariables.h>
 
 #include <cstddef>
@@ -37,8 +38,32 @@ struct FurnitureUsePolicy final
                acVariables.Booleans[kIsInFurnitureBooleanIndex];
     }
 
-    [[nodiscard]] static bool CanEnter(uint32_t aFurnitureId, bool aOccupiedByAnotherActor) noexcept
+    [[nodiscard]] static bool CanEnter(
+        const GameId& aFurnitureId,
+        const bool aIsKnownFurniture,
+        const bool aIsInRange,
+        const bool aOccupiedByAnotherActor) noexcept
     {
-        return aFurnitureId != 0 && !aOccupiedByAnotherActor;
+        // Furniture the server has not been told about yet is still reservable, so a missed
+        // discovery cannot stop players from sitting. Known furniture must be in range.
+        return aFurnitureId && (!aIsKnownFurniture || aIsInRange) && !aOccupiedByAnotherActor;
+    }
+
+    static void ClearReservation(
+        GameId& aFurnitureTargetId,
+        GameId& aRejectedTargetId,
+        bool& aHasEnteredFurniture,
+        bool& aRejectedFurnitureSawActiveState) noexcept
+    {
+        aFurnitureTargetId = {};
+        aRejectedTargetId = {};
+        aHasEnteredFurniture = false;
+        aRejectedFurnitureSawActiveState = false;
+    }
+
+    static void ClearRejectedTarget(GameId& aRejectedTargetId, bool& aRejectedFurnitureSawActiveState) noexcept
+    {
+        aRejectedTargetId = {};
+        aRejectedFurnitureSawActiveState = false;
     }
 };

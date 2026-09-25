@@ -34,7 +34,8 @@ uint8_t TP_MAKE_THISCALL(HookPerformAction, ActorMediator, TESActionData* apActi
         action.Tick = World::Get().GetTick();
         action.ActorId = pActor->formID;
         action.ActionId = apAction->action->formID;
-        action.TargetId = apAction->target ? apAction->target->formID : 0;
+        if (apAction->target)
+            World::Get().GetModSystem().GetServerModId(apAction->target->formID, action.TargetId);
 
         pActor->SaveAnimationVariables(action.Variables);
 

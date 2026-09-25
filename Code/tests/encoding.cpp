@@ -157,6 +157,28 @@ TEST_CASE("AssignObjectsResponse carries harvest state", "[encoding.object_autho
     REQUIRE(received->Objects.front() == object);
 }
 
+TEST_CASE("AssignObjectsResponse carries furniture discovery state", "[encoding.object_authority][furniture]")
+{
+    AssignObjectsResponse sent;
+    ObjectData object{};
+    object.ServerId = 13;
+    object.Id = GameId{1, 0x360};
+    object.IsFurniture = true;
+    sent.Objects.push_back(object);
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<AssignObjectsResponse>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(received->Objects.size() == 1);
+    REQUIRE(received->Objects.front().IsFurniture);
+    REQUIRE(received->Objects.front() == object);
+}
+
 TEST_CASE("AssignObjectsResponse carries open loot state", "[encoding.object_authority][world_loot]")
 {
     AssignObjectsResponse sent;
@@ -370,7 +392,7 @@ TEST_CASE("Differential structures", "[encoding.differential]")
         sendAction.IdleId = 87964;
         sendAction.State2 = 8963;
         sendAction.TargetEventName = "toast";
-        sendAction.TargetId = 963741;
+        sendAction.TargetId = GameId{0x12, 963741};
         sendAction.Type = 4;
 
         {
@@ -414,7 +436,7 @@ TEST_CASE("Differential structures", "[encoding.differential]")
         sendAction.IdleId = 87964;
         sendAction.State2 = 8963;
         sendAction.TargetEventName = "toast";
-        sendAction.TargetId = 963741;
+        sendAction.TargetId = GameId{0x12, 963741};
         sendAction.Type = 4;
 
         {
@@ -597,7 +619,7 @@ TEST_CASE("Packets", "[encoding.packets]")
         sendAction.IdleId = 87964;
         sendAction.State2 = 8963;
         sendAction.TargetEventName = "toast";
-        sendAction.TargetId = 963741;
+        sendAction.TargetId = GameId{0x12, 963741};
         sendAction.Type = 4;
 
         AssignCharacterRequest sendMessage, recvMessage;

@@ -119,6 +119,13 @@ bool CharacterService::BeginOwnerRespawnLifecycle(
         return false;
     }
 
+    if (auto* const pAnimationComponent = m_world.try_get<AnimationComponent>(aEntity))
+        FurnitureUsePolicy::ClearReservation(
+            pAnimationComponent->FurnitureUseTargetId,
+            pAnimationComponent->RejectedFurnitureTargetId,
+            pAnimationComponent->HasEnteredFurniture,
+            pAnimationComponent->RejectedFurnitureSawActiveState);
+
     m_world.GetDispatcher().trigger(ActorRespawnedEvent{
         World::ToInteger(aEntity),
         pCurrentLifecycle->GetGeneration()});
@@ -454,6 +461,13 @@ void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwner
         movementComponent.Sent = true;
     }
 
+    if (auto* const pAnimationComponent = m_world.try_get<AnimationComponent>(cEntity))
+        FurnitureUsePolicy::ClearReservation(
+            pAnimationComponent->FurnitureUseTargetId,
+            pAnimationComponent->RejectedFurnitureTargetId,
+            pAnimationComponent->HasEnteredFurniture,
+            pAnimationComponent->RejectedFurnitureSawActiveState);
+
     // A normal release starts a fresh search. A declined grant continues the current
     // search, retaining failed candidates so unloaded clients cannot bounce ownership.
     if (message.Reason == OwnershipReleaseReason::Relinquish)
@@ -466,6 +480,13 @@ void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwner
 
 void CharacterService::OnOwnershipTransferEvent(const OwnershipTransferEvent& acEvent) const noexcept
 {
+    if (auto* const pAnimationComponent = m_world.try_get<AnimationComponent>(acEvent.Entity))
+        FurnitureUsePolicy::ClearReservation(
+            pAnimationComponent->FurnitureUseTargetId,
+            pAnimationComponent->RejectedFurnitureTargetId,
+            pAnimationComponent->HasEnteredFurniture,
+            pAnimationComponent->RejectedFurnitureSawActiveState);
+
     // A disconnect starts a fresh search; previously unavailable clients may be ready now.
     const auto view = m_world.view<OwnerComponent>();
     if (const auto it = view.find(acEvent.Entity); it != view.end())
@@ -565,12 +586,13 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
                 return FurnitureUsePolicy::IsFurnitureExitAction(eventName);
             });
 
-        if (animationComponent.RejectedFurnitureTargetId != 0)
+        if (animationComponent.RejectedFurnitureTargetId)
         {
             if (hasFurnitureExitAction || (!isInFurniture && animationComponent.RejectedFurnitureSawActiveState))
             {
-                animationComponent.RejectedFurnitureTargetId = 0;
-                animationComponent.RejectedFurnitureSawActiveState = false;
+                FurnitureUsePolicy::ClearRejectedTarget(
+                    animationComponent.RejectedFurnitureTargetId,
+                    animationComponent.RejectedFurnitureSawActiveState);
             }
             else if (isInFurniture)
             {
@@ -585,8 +607,9 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
                 constexpr float kPositionCorrectionTolerance = 16.f;
                 if (dx * dx + dy * dy + dz * dz <= kPositionCorrectionTolerance * kPositionCorrectionTolerance)
                 {
-                    animationComponent.RejectedFurnitureTargetId = 0;
-                    animationComponent.RejectedFurnitureSawActiveState = false;
+                    FurnitureUsePolicy::ClearRejectedTarget(
+                        animationComponent.RejectedFurnitureTargetId,
+                        animationComponent.RejectedFurnitureSawActiveState);
                 }
                 else
                 {
@@ -602,11 +625,31 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
             if (!FurnitureUsePolicy::IsSeatEntryAction(eventName))
                 continue;
 
-            if (action.TargetId == 0)
+            if (!action.TargetId)
             {
                 spdlog::warn("Seat action '{}' from actor {:X} has no furniture target; occupancy was not reserved",
                              eventName, entry.first);
                 continue;
+            }
+
+            const auto furnitureView = m_world.view<FormIdComponent, ObjectComponent, CellIdComponent>();
+            const auto furnitureIt = std::find_if(
+                furnitureView.begin(), furnitureView.end(),
+                [furnitureView, targetId = action.TargetId](const entt::entity aEntity)
+                {
+                    return furnitureView.get<FormIdComponent>(aEntity).Id == targetId &&
+                        furnitureView.get<ObjectComponent>(aEntity).IsFurniture;
+                });
+            const bool isKnownFurniture = furnitureIt != furnitureView.end();
+            bool isFurnitureInRange = false;
+            if (isKnownFurniture)
+            {
+                const auto& furnitureCell = furnitureView.get<CellIdComponent>(*furnitureIt);
+                const auto& characterComponent = view.get<CharacterComponent>(*itor);
+                isFurnitureInRange = ObjectInteractionPolicy::IsInSenderRange(
+                    cellIdComponent.Cell, cellIdComponent.WorldSpaceId, cellIdComponent.CenterCoords,
+                    furnitureCell.Cell, furnitureCell.WorldSpaceId, furnitureCell.CenterCoords,
+                    characterComponent.IsDragon());
             }
 
             entt::entity occupant = entt::null;
@@ -620,7 +663,8 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
                 break;
             }
 
-            if (!FurnitureUsePolicy::CanEnter(action.TargetId, occupant != entt::null))
+            if (!FurnitureUsePolicy::CanEnter(
+                    action.TargetId, isKnownFurniture, isFurnitureInRange, occupant != entt::null))
             {
                 animationComponent.RejectedFurnitureTargetId = action.TargetId;
                 animationComponent.RejectedFurnitureSawActiveState = isInFurniture;
@@ -637,8 +681,8 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
                 denied.AuthoritativeMovement.Variables = movementCopy.Variables;
                 acMessage.pPlayer->Send(denied);
 
-                spdlog::warn("Denied seat action '{}' for actor {:X} on occupied furniture {:X}; occupant actor {:X}, epoch {}",
-                             eventName, entry.first, action.TargetId, World::ToInteger(occupant), update.OwnershipEpoch);
+                spdlog::warn("Denied seat action '{}' for actor {:X} on invalid or occupied furniture {:X}; occupant actor {:X}, epoch {}",
+                             eventName, entry.first, action.TargetId.LogFormat(), World::ToInteger(occupant), update.OwnershipEpoch);
                 furnitureUseDenied = true;
                 break;
             }
@@ -648,7 +692,7 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
                 animationComponent.FurnitureUseTargetId = action.TargetId;
                 animationComponent.HasEnteredFurniture = isInFurniture;
                 spdlog::info("Reserved furniture {:X} for actor {:X}, seat action '{}', epoch {}",
-                             action.TargetId, entry.first, eventName, update.OwnershipEpoch);
+                             action.TargetId.LogFormat(), entry.first, eventName, update.OwnershipEpoch);
             }
         }
 
@@ -672,16 +716,16 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
                 const std::string_view eventName{action.EventName.data(), action.EventName.size()};
                 if (FurnitureUsePolicy::IsSeatEntryAction(eventName) && !animationComponent.HasEnteredFurniture &&
                     animationComponent.FurnitureUseTargetId == action.TargetId)
-                    animationComponent.FurnitureUseTargetId = 0;
+                    animationComponent.FurnitureUseTargetId = {};
                 continue;
             }
 
             const std::string_view eventName{action.EventName.data(), action.EventName.size()};
-            if (FurnitureUsePolicy::IsFurnitureExitAction(eventName) && animationComponent.FurnitureUseTargetId != 0)
+            if (FurnitureUsePolicy::IsFurnitureExitAction(eventName) && animationComponent.FurnitureUseTargetId)
             {
                 spdlog::info("Furniture use released by actor {:X}, furniture {:X}, event '{}'",
-                             entry.first, animationComponent.FurnitureUseTargetId, eventName);
-                animationComponent.FurnitureUseTargetId = 0;
+                             entry.first, animationComponent.FurnitureUseTargetId.LogFormat(), eventName);
+                animationComponent.FurnitureUseTargetId = {};
                 animationComponent.HasEnteredFurniture = false;
             }
 
@@ -694,12 +738,12 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
         }
 
         if (isInFurniture)
-            animationComponent.HasEnteredFurniture = animationComponent.FurnitureUseTargetId != 0;
+            animationComponent.HasEnteredFurniture = static_cast<bool>(animationComponent.FurnitureUseTargetId);
         else if (animationComponent.HasEnteredFurniture)
         {
             spdlog::info("Furniture use ended for actor {:X}, furniture {:X}",
-                         entry.first, animationComponent.FurnitureUseTargetId);
-            animationComponent.FurnitureUseTargetId = 0;
+                         entry.first, animationComponent.FurnitureUseTargetId.LogFormat());
+            animationComponent.FurnitureUseTargetId = {};
             animationComponent.HasEnteredFurniture = false;
         }
 
@@ -1188,6 +1232,13 @@ bool CharacterService::TransferOwnership(Player* apPlayer, const entt::entity aE
     Player* const pOldOwner = ownerComponent.GetOwner();
     if (pOldOwner == apPlayer)
         return true;
+
+    if (auto* const pAnimationComponent = m_world.try_get<AnimationComponent>(aEntity))
+        FurnitureUsePolicy::ClearReservation(
+            pAnimationComponent->FurnitureUseTargetId,
+            pAnimationComponent->RejectedFurnitureTargetId,
+            pAnimationComponent->HasEnteredFurniture,
+            pAnimationComponent->RejectedFurnitureSawActiveState);
 
     const uint32_t oldOwnerId = pOldOwner ? pOldOwner->GetId() : 0;
     const uint32_t oldEpoch = ownerComponent.OwnershipEpoch;
