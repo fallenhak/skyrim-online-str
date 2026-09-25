@@ -1,6 +1,8 @@
 #include <Services/ObjectService.h>
 #include <Services/LocalOnlyActivators.h>
 #include <Services/ObjectSyncPolicy.h>
+#include <Services/ActivatorReplayPolicy.h>
+#include <Services/WorldObjectTrackingPolicy.h>
 
 #include <World.h>
 #include <Utils.h>
@@ -366,28 +368,39 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
             }
         }
 
-        // Replaying the server's accepted activation history lets toggle-style
-        // levers and script-driven puzzle objects reach the same state.
+        // Replay only a bounded approximation of activation history. Trap-like
+        // forms are skipped, while binary controls use parity to preserve state.
         if (objectData.IsActivator && IsSyncedActivator(pObject))
         {
             auto& appliedCount = s_appliedActivatorActivationCounts[pObject->formID];
             if (objectData.ActivationCount > appliedCount)
             {
-                PlayerCharacter* pPlayer = PlayerCharacter::Get();
-                if (!pPlayer)
+                const char* const pEditorId = pObject->baseForm->GetFormEditorID();
+                const auto kind = ActivatorReplayPolicy::Classify(pEditorId ? pEditorId : "");
+                const auto replayCount = ActivatorReplayPolicy::ReplayCount(kind, objectData.ActivationCount, appliedCount);
+                if (replayCount == 0)
                 {
-                    spdlog::warn("Activator {:X} state cannot be replayed before the local player exists", pObject->formID);
+                    appliedCount = objectData.ActivationCount;
+                    if (kind == ActivatorReplayPolicy::Kind::kNeverReplay)
+                        spdlog::info("Activator {:X} history skipped as trap/hazard-like (editor id '{}')", pObject->formID, pEditorId ? pEditorId : "");
                 }
                 else
                 {
-                    const auto missingActivations = objectData.ActivationCount - appliedCount;
+                    PlayerCharacter* pPlayer = PlayerCharacter::Get();
+                    if (!pPlayer)
                     {
-                        ScopedActivatorStateReplay replay(pObject->formID);
-                        for (std::uint32_t index = 0; index < missingActivations; ++index)
-                            pObject->Activate(pPlayer, 0, nullptr, 1, 0);
+                        spdlog::warn("Activator {:X} state cannot be replayed before the local player exists", pObject->formID);
                     }
-                    appliedCount = objectData.ActivationCount;
-                    spdlog::info("Activator {:X} replayed {} server activation(s) to match the world", pObject->formID, missingActivations);
+                    else
+                    {
+                        {
+                            ScopedActivatorStateReplay replay(pObject->formID);
+                            for (std::uint32_t index = 0; index < replayCount; ++index)
+                                pObject->Activate(pPlayer, 0, nullptr, 1, 0);
+                        }
+                        appliedCount = objectData.ActivationCount;
+                        spdlog::info("Activator {:X} replayed {} bounded server activation(s) (editor id '{}')", pObject->formID, replayCount, pEditorId ? pEditorId : "");
+                    }
                 }
             }
         }
@@ -451,11 +464,13 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
     }
 
     const bool wasDisabled = acEvent.pObject && acEvent.pObject->IsDisabled();
-    const bool trackLocalHarvest = acEvent.ActivateFlag &&
-        ObjectSyncPolicy::ShouldTrackLocalHarvest(
-            IsHarvestableObject(acEvent.pObject),
-            acEvent.pActivator == PlayerCharacter::Get(),
-            wasDisabled);
+    const bool isLocalHarvest = ObjectSyncPolicy::ShouldTrackLocalHarvest(
+        IsHarvestableObject(acEvent.pObject),
+        acEvent.pActivator == PlayerCharacter::Get(),
+        wasDisabled);
+    const bool trackLocalHarvest = WorldObjectTrackingPolicy::ShouldTrackHarvest(
+        m_transport.IsConnected(),
+        acEvent.ActivateFlag && isLocalHarvest);
 
     if (acEvent.ActivateFlag)
     {

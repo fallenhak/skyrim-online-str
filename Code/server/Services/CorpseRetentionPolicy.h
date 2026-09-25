@@ -39,4 +39,9 @@ struct CorpseRetentionPolicy final
     {
         return !aHasCorpseMarker || !aIsDead || aRequestedDead;
     }
+
+    [[nodiscard]] static constexpr bool ShouldClearForRespawn(const bool aHasCorpseMarker, const bool aIsDead) noexcept
+    {
+        return aHasCorpseMarker && aIsDead;
+    }
 };

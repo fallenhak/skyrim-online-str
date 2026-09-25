@@ -48,3 +48,10 @@ TEST_CASE("only a dead incarnation with a server corpse marker expires", "[corps
     REQUIRE_FALSE(CorpseRetentionPolicy::IsExpired(true, false, expiresAt, expiresAt));
     REQUIRE_FALSE(CorpseRetentionPolicy::IsExpired(true, true, expiresAt, expiresAt - 1));
 }
+
+TEST_CASE("respawning a retained dead actor clears its old corpse lifetime", "[corpse_retention]")
+{
+    REQUIRE(CorpseRetentionPolicy::ShouldClearForRespawn(true, true));
+    REQUIRE_FALSE(CorpseRetentionPolicy::ShouldClearForRespawn(false, true));
+    REQUIRE_FALSE(CorpseRetentionPolicy::ShouldClearForRespawn(true, false));
+}

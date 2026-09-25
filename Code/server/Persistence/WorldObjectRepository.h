@@ -5,6 +5,7 @@
 #include <Structs/GameId.h>
 #include <Structs/GridCellCoords.h>
 
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -83,6 +84,7 @@ private:
     std::condition_variable m_queueChanged;
     std::unordered_map<Key, PendingWrite, KeyHash> m_pending;
     bool m_stopping{};
+    std::chrono::steady_clock::time_point m_shutdownDeadline{};
     std::thread m_writer;
 };
 } // namespace Persistence

@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <limits>
@@ -12,6 +13,8 @@ namespace Persistence
 namespace
 {
 constexpr std::uint64_t kMaxStoredValue = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+constexpr auto kShutdownFlushTimeout = std::chrono::seconds(30);
+constexpr auto kWriteRetryDelay = std::chrono::seconds(1);
 
 [[nodiscard]] std::int64_t GetUnixTimestamp() noexcept
 {
@@ -69,6 +72,7 @@ WorldObjectRepository::~WorldObjectRepository() noexcept
     {
         std::lock_guard<std::mutex> lock(m_queueMutex);
         m_stopping = true;
+        m_shutdownDeadline = std::chrono::steady_clock::now() + kShutdownFlushTimeout;
     }
     m_queueChanged.notify_one();
     if (m_writer.joinable())
@@ -225,7 +229,6 @@ void WorldObjectRepository::EnqueueDelete(const GameId& acId, const GameId& acCe
 
 void WorldObjectRepository::RunWriter() noexcept
 {
-    std::size_t shutdownFailures = 0;
     for (;;)
     {
         std::unordered_map<Key, PendingWrite, KeyHash> batch;
@@ -240,46 +243,40 @@ void WorldObjectRepository::RunWriter() noexcept
         try
         {
             WriteBatch(batch);
-            shutdownFailures = 0;
+            continue;
         }
         catch (const std::exception& exception)
         {
             spdlog::error("[Persistence] World object batch write failed: {}", exception.what());
-            std::unique_lock<std::mutex> lock(m_queueMutex);
-            const bool stopping = m_stopping;
-            if (stopping && ++shutdownFailures >= 5)
-            {
-                spdlog::error("[Persistence] Giving up flushing world object writes after 5 shutdown retries");
-                return;
-            }
-            if (!stopping)
-                shutdownFailures = 0;
-            for (auto& [key, write] : batch)
-            {
-                if (!m_pending.contains(key))
-                    m_pending.emplace(key, std::move(write));
-            }
-            m_queueChanged.wait_for(lock, std::chrono::seconds(1));
         }
         catch (...)
         {
             spdlog::error("[Persistence] World object batch write failed with an unknown error");
-            std::unique_lock<std::mutex> lock(m_queueMutex);
-            const bool stopping = m_stopping;
-            if (stopping && ++shutdownFailures >= 5)
-            {
-                spdlog::error("[Persistence] Giving up flushing world object writes after 5 shutdown retries");
-                return;
-            }
-            if (!stopping)
-                shutdownFailures = 0;
-            for (auto& [key, write] : batch)
-            {
-                if (!m_pending.contains(key))
-                    m_pending.emplace(key, std::move(write));
-            }
-            m_queueChanged.wait_for(lock, std::chrono::seconds(1));
         }
+
+        std::unique_lock<std::mutex> lock(m_queueMutex);
+        for (auto& [key, write] : batch)
+        {
+            if (!m_pending.contains(key))
+                m_pending.emplace(key, std::move(write));
+        }
+
+        if (m_stopping && std::chrono::steady_clock::now() >= m_shutdownDeadline)
+        {
+            spdlog::error(
+                "[Persistence] Shutdown flush timed out after 30 seconds; {} queued world object write(s) could not be saved",
+                m_pending.size());
+            return;
+        }
+
+        auto retryDelay = std::chrono::duration_cast<std::chrono::milliseconds>(kWriteRetryDelay);
+        if (m_stopping)
+        {
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(m_shutdownDeadline - std::chrono::steady_clock::now());
+            retryDelay = std::min(retryDelay, remaining);
+        }
+        if (retryDelay > std::chrono::steady_clock::duration::zero())
+            m_queueChanged.wait_for(lock, retryDelay);
     }
 }
 

@@ -125,6 +125,16 @@ bool CharacterService::BeginOwnerRespawnLifecycle(
         return false;
     }
 
+    auto& character = m_world.get<CharacterComponent>(aEntity);
+    if (CorpseRetentionPolicy::ShouldClearForRespawn(
+            m_world.all_of<CorpseRetentionComponent>(aEntity), character.IsDead()))
+    {
+        // An owner-authorized respawn starts a new incarnation, so the old
+        // corpse marker and its expiry must not reject the new alive state.
+        m_world.remove<CorpseRetentionComponent>(aEntity);
+        spdlog::info("[CorpseRetention] cleared retained corpse marker for respawned actor {:X}", World::ToInteger(aEntity));
+    }
+
     if (auto* const pAnimationComponent = m_world.try_get<AnimationComponent>(aEntity))
         FurnitureUsePolicy::ClearReservation(
             pAnimationComponent->FurnitureUseTargetId,
