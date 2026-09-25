@@ -6,6 +6,7 @@
 #include <GameServer.h>
 #include <Services/InventoryInteractionPolicy.h>
 #include <Services/ObjectInteractionPolicy.h>
+#include <Services/ObjectService.h>
 
 #include <Messages/NotifyObjectInventoryChanges.h>
 #include <Messages/RequestInventoryChanges.h>
@@ -280,6 +281,10 @@ void InventoryService::OnContainerTransfer(const PacketEvent<RequestContainerTra
 
     if (pCorpseMarker)
         pCorpseMarker->OwnerSeedClosed = true;
+
+    // Object containers outlive the session; retained corpses are transient and are not persisted.
+    if (!isCorpseTarget)
+        m_world.ctx().at<ObjectService>().PersistContainerContents(containerEntity);
 
     const bool isTake = static_cast<ContainerTransferDirection>(message.Direction) == ContainerTransferDirection::kTake;
 

@@ -71,7 +71,7 @@ TEST(PersistenceWorldClockRepository, MigratesAVersionFiveDatabase)
 
     auto version = database.Prepare("SELECT version FROM schema_version WHERE id = 1;");
     ASSERT_TRUE(version.Step());
-    EXPECT_EQ(version.ColumnInt64(0), 6);
+    EXPECT_EQ(version.ColumnInt64(0), 7); // migrates through to the current version
 
     Persistence::WorldClockRepository repository(database);
     EXPECT_FALSE(repository.Load().has_value());

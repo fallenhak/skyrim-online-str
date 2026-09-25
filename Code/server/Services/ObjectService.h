@@ -26,6 +26,10 @@ class ObjectService
 public:
     ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Persistence::WorldObjectRepository& aRepository);
 
+    // Called after an accepted container transfer: queues the container's server-owned
+    // contents for write-back so they survive a server restart.
+    void PersistContainerContents(entt::entity aEntity) noexcept;
+
 private:
     void OnPlayerLeaveCellEvent(const PlayerLeaveCellEvent& acEvent) noexcept;
     void OnAssignObjectsRequest(const PacketEvent<AssignObjectsRequest>&) noexcept;
@@ -42,10 +46,12 @@ private:
     void ApplyPersistedState(ObjectComponent& aObject, const Persistence::WorldObjectState& acState) noexcept;
     void PersistState(entt::entity aEntity) noexcept;
     [[nodiscard]] const Persistence::WorldObjectState* FindPersistedState(const GameId& acId, const GameId& acCellId) const noexcept;
+    [[nodiscard]] const Persistence::ContainerContentsState* FindPersistedContainer(const GameId& acId, const GameId& acCellId) const noexcept;
 
     World& m_world;
     Persistence::WorldObjectRepository& m_repository;
     std::vector<Persistence::WorldObjectState> m_persistedStates;
+    std::vector<Persistence::ContainerContentsState> m_persistedContainers;
     std::uint64_t m_tick{};
     double m_tickAccumulator{};
     DesyncPolicy::Tracker m_desyncTracker;

@@ -14,7 +14,7 @@ namespace Persistence
 {
 namespace
 {
-constexpr int kCurrentSchemaVersion = 6;
+constexpr int kCurrentSchemaVersion = 7;
 
 [[noreturn]] void ThrowSqliteError(sqlite3* apDatabase, const int aResult, const std::string_view acOperation)
 {
@@ -361,6 +361,27 @@ void Database::Migrate()
             );
         )sql");
         Execute("UPDATE schema_version SET version = 6 WHERE id = 1;");
+    }
+
+    if (schemaVersion < 7)
+    {
+        // Server-owned container contents; inventory is hex of ContainerContentsCodec.
+        Execute(R"sql(
+            CREATE TABLE IF NOT EXISTS container_contents (
+                object_mod_id INTEGER NOT NULL CHECK (object_mod_id >= 0 AND object_mod_id <= 4294967295),
+                object_base_id INTEGER NOT NULL CHECK (object_base_id > 0 AND object_base_id <= 4294967295),
+                cell_mod_id INTEGER NOT NULL CHECK (cell_mod_id >= 0 AND cell_mod_id <= 4294967295),
+                cell_base_id INTEGER NOT NULL CHECK (cell_base_id > 0 AND cell_base_id <= 4294967295),
+                worldspace_mod_id INTEGER NOT NULL CHECK (worldspace_mod_id >= 0 AND worldspace_mod_id <= 4294967295),
+                worldspace_base_id INTEGER NOT NULL CHECK (worldspace_base_id >= 0 AND worldspace_base_id <= 4294967295),
+                center_x INTEGER NOT NULL,
+                center_y INTEGER NOT NULL,
+                inventory TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (object_mod_id, object_base_id, cell_mod_id, cell_base_id)
+            ) WITHOUT ROWID;
+        )sql");
+        Execute("UPDATE schema_version SET version = 7 WHERE id = 1;");
     }
 
     transaction.Commit();

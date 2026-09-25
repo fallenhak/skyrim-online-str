@@ -7,6 +7,7 @@
 #include <Services/ObjectInteractionPolicy.h>
 #include <Services/PresentationAuthorityPolicy.h>
 #include <Services/InventoryInteractionPolicy.h>
+#include <Services/ContainerContentsCodec.h>
 
 #include <Events/PlayerLeaveCellEvent.h>
 #include <Events/PlayerLeaveEvent.h>
@@ -68,8 +69,10 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Persi
     : m_world(aWorld)
     , m_repository(aRepository)
     , m_persistedStates(m_repository.LoadAll())
+    , m_persistedContainers(m_repository.LoadAllContainers())
 {
     RestorePersistedStates();
+    spdlog::info("[World] {} persisted container(s) loaded", m_persistedContainers.size());
 
     m_leaveCellConnection = aDispatcher.sink<PlayerLeaveCellEvent>().connect<&ObjectService::OnPlayerLeaveCellEvent>(this);
     m_assignObjectConnection = aDispatcher.sink<PacketEvent<AssignObjectsRequest>>().connect<&ObjectService::OnAssignObjectsRequest>(this);
@@ -174,6 +177,57 @@ const Persistence::WorldObjectState* ObjectService::FindPersistedState(const Gam
         return acState.Id == acId && acState.CellId == acCellId;
     });
     return iter == m_persistedStates.end() ? nullptr : &*iter;
+}
+
+const Persistence::ContainerContentsState* ObjectService::FindPersistedContainer(const GameId& acId, const GameId& acCellId) const noexcept
+{
+    const auto iter = std::find_if(m_persistedContainers.begin(), m_persistedContainers.end(), [&](const auto& acState)
+    {
+        return acState.Id == acId && acState.CellId == acCellId;
+    });
+    return iter == m_persistedContainers.end() ? nullptr : &*iter;
+}
+
+void ObjectService::PersistContainerContents(const entt::entity aEntity) noexcept
+{
+    const auto* pFormId = m_world.try_get<FormIdComponent>(aEntity);
+    const auto* pObject = m_world.try_get<ObjectComponent>(aEntity);
+    const auto* pCell = m_world.try_get<CellIdComponent>(aEntity);
+    const auto* pInventory = m_world.try_get<InventoryComponent>(aEntity);
+    if (!pFormId || !pObject || !pCell || !pInventory || !pObject->IsContainer || !pObject->HasTrustedState)
+        return;
+
+    try
+    {
+        auto encoded = ContainerContentsCodec::Encode(pInventory->Content);
+        if (!encoded)
+        {
+            spdlog::error("[World] container {:X}:{:X} contents too large to persist ({} entries)", pFormId->Id.ModId, pFormId->Id.BaseId,
+                pInventory->Content.Entries.size());
+            return;
+        }
+
+        Persistence::ContainerContentsState state{};
+        state.Id = pFormId->Id;
+        state.CellId = pCell->Cell;
+        state.WorldSpaceId = pCell->WorldSpaceId;
+        state.CenterCoords = pCell->CenterCoords;
+        state.InventoryHex = std::move(*encoded);
+        m_repository.EnqueueContainerUpsert(state);
+
+        const auto iter = std::find_if(m_persistedContainers.begin(), m_persistedContainers.end(), [&](const auto& acState)
+        {
+            return acState.Id == state.Id && acState.CellId == state.CellId;
+        });
+        if (iter == m_persistedContainers.end())
+            m_persistedContainers.push_back(std::move(state));
+        else
+            *iter = std::move(state);
+    }
+    catch (const std::exception& exception)
+    {
+        spdlog::error("[World] could not persist container {:X}:{:X}: {}", pFormId->Id.ModId, pFormId->Id.BaseId, exception.what());
+    }
 }
 
 void ObjectService::PersistState(const entt::entity aEntity) noexcept
@@ -353,20 +407,35 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             m_world.emplace<CellIdComponent>(entity, cellId, worldSpaceId, centerCoords);
             auto& inventoryComponent = m_world.emplace<InventoryComponent>(entity);
 
-            // Container baseline: the first discoverer's contents become the server's copy.
-            // Not verified against the CONT record yet (second phase), so it is logged.
+            // Container baseline: contents persisted by an earlier transfer win; otherwise the
+            // first discoverer's contents become the server's copy. The client baseline is not
+            // verified against the CONT record yet (second phase), so it is logged.
             if (object.IsContainer && !object.IsDoor && !object.IsHarvestable && !objectComponent.IsActivator)
             {
-                for (const auto& entry : object.CurrentInventory.Entries)
+                std::optional<Inventory> persistedContents;
+                if (const auto* pPersistedContainer = FindPersistedContainer(object.Id, object.CellId))
+                {
+                    persistedContents = ContainerContentsCodec::Decode(pPersistedContainer->InventoryHex);
+                    if (!persistedContents)
+                        spdlog::warn("[World] container {:X}:{:X} persisted contents are corrupt; falling back to the client baseline",
+                            object.Id.ModId, object.Id.BaseId);
+                }
+
+                const auto& source = persistedContents ? persistedContents->Entries : object.CurrentInventory.Entries;
+                for (const auto& entry : source)
                 {
                     if (entry.Count > 0 && InventoryInteractionPolicy::HasValidItemPayload(entry))
                         inventoryComponent.Content.AddOrRemoveEntry(entry);
                 }
                 objectComponent.IsContainer = true;
                 objectComponent.HasTrustedState = true;
-                spdlog::info(
-                    "[World] container {:X}:{:X} baseline learned from player {:X}: {} entries ({} reported)", object.Id.ModId, object.Id.BaseId,
-                    acMessage.pPlayer->GetId(), inventoryComponent.Content.Entries.size(), object.CurrentInventory.Entries.size());
+                if (persistedContents)
+                    spdlog::info("[World] container {:X}:{:X} restored from persistence: {} entries (client reported {})", object.Id.ModId,
+                        object.Id.BaseId, inventoryComponent.Content.Entries.size(), object.CurrentInventory.Entries.size());
+                else
+                    spdlog::info(
+                        "[World] container {:X}:{:X} baseline learned from player {:X}: {} entries ({} reported)", object.Id.ModId, object.Id.BaseId,
+                        acMessage.pPlayer->GetId(), inventoryComponent.Content.Entries.size(), object.CurrentInventory.Entries.size());
             }
         }
 
