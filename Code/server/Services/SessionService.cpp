@@ -1,4 +1,6 @@
 #include <Services/SessionService.h>
+
+#include <Services/CharacterLookCodec.h>
 #include <Services/CharacterNamePolicy.h>
 
 #include <algorithm>
@@ -227,6 +229,24 @@ bool SessionService::UpdateSelectedCharacterAppearance(const ConnectionId_t aCon
     return m_characterRepository.UpdateCharacterAppearance(character->Id, *pSession->OwnerProfileId, aRace, aSex);
 }
 
+bool SessionService::UpdateSelectedCharacterLook(const ConnectionId_t aConnectionId, const std::string_view acLook)
+{
+    auto* pSession = Get(aConnectionId);
+    if (!pSession || pSession->State != SessionState::kInWorld || !pSession->OwnerProfileId.has_value() || !pSession->SelectedCharacterId.has_value() || acLook.empty())
+        return false;
+
+    return m_characterRepository.UpdateCharacterLook(*pSession->SelectedCharacterId, *pSession->OwnerProfileId, acLook);
+}
+
+std::optional<std::string> SessionService::GetSelectedCharacterLook(const ConnectionId_t aConnectionId) const
+{
+    const auto* pSession = Get(aConnectionId);
+    if (!pSession || !pSession->OwnerProfileId.has_value() || !pSession->SelectedCharacterId.has_value())
+        return std::nullopt;
+
+    return m_characterRepository.GetCharacterLook(*pSession->SelectedCharacterId, *pSession->OwnerProfileId);
+}
+
 CharacterSelectionStatus SessionService::SelectCharacter(const ConnectionId_t aConnectionId, const std::uint64_t aCharacterId)
 {
     auto* pSession = Get(aConnectionId);
@@ -261,7 +281,19 @@ std::optional<CharacterLoadSnapshot> SessionService::PrepareCharacterLoadSnapsho
         return std::nullopt;
     }
 
-    const auto snapshot = MakeSnapshot(*character);
+    auto snapshot = MakeSnapshot(*character);
+    if (const auto storedLook = m_characterRepository.GetCharacterLook(character->Id, *pSession->OwnerProfileId))
+    {
+        const auto bytes = CharacterLookCodec::FromHex(*storedLook);
+        if (const auto look = bytes ? CharacterLookCodec::Decode(*bytes) : std::nullopt)
+        {
+            snapshot.AppearanceChangeFlags = look->ChangeFlags;
+            snapshot.Appearance = TiltedPhoques::String(look->Appearance.data(), look->Appearance.size());
+        }
+        else
+            spdlog::error("[Appearance] stored look of character {} is unreadable; entering with race and sex only", character->Id);
+    }
+
     if (!IsCharacterLoadSnapshotValid(snapshot))
     {
         spdlog::error("Persistent character {} failed snapshot validation; refusing world entry.", character->Id);

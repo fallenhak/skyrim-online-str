@@ -18,6 +18,8 @@ void CharacterLoadSnapshot::Serialize(TiltedPhoques::Buffer::Writer& aWriter) co
     TiltedPhoques::Serialization::WriteFloat(aWriter, Magicka);
     TiltedPhoques::Serialization::WriteFloat(aWriter, Stamina);
     TiltedPhoques::Serialization::WriteVarInt(aWriter, NeedsRaceMenu ? 1u : 0u);
+    TiltedPhoques::Serialization::WriteVarInt(aWriter, AppearanceChangeFlags);
+    TiltedPhoques::Serialization::WriteString(aWriter, Appearance);
 }
 
 void CharacterLoadSnapshot::Deserialize(TiltedPhoques::Buffer::Reader& aReader) noexcept
@@ -36,11 +38,13 @@ void CharacterLoadSnapshot::Deserialize(TiltedPhoques::Buffer::Reader& aReader) 
     Magicka = TiltedPhoques::Serialization::ReadFloat(aReader);
     Stamina = TiltedPhoques::Serialization::ReadFloat(aReader);
     NeedsRaceMenu = TiltedPhoques::Serialization::ReadVarInt(aReader) != 0;
+    AppearanceChangeFlags = static_cast<std::uint32_t>(TiltedPhoques::Serialization::ReadVarInt(aReader) & 0xFFFFFFFF);
+    Appearance = TiltedPhoques::Serialization::ReadString(aReader);
 }
 
 bool CharacterLoadSnapshot::operator==(const CharacterLoadSnapshot& acRhs) const noexcept
 {
     return CharacterId == acRhs.CharacterId && Name == acRhs.Name && Race == acRhs.Race && Sex == acRhs.Sex && Level == acRhs.Level && WorldSpaceId == acRhs.WorldSpaceId && CellId == acRhs.CellId &&
            PositionX == acRhs.PositionX && PositionY == acRhs.PositionY && PositionZ == acRhs.PositionZ && Health == acRhs.Health && Magicka == acRhs.Magicka && Stamina == acRhs.Stamina &&
-           NeedsRaceMenu == acRhs.NeedsRaceMenu;
+           NeedsRaceMenu == acRhs.NeedsRaceMenu && AppearanceChangeFlags == acRhs.AppearanceChangeFlags && Appearance == acRhs.Appearance;
 }

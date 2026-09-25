@@ -14,7 +14,8 @@ enum class CharacterLoadSnapshotValidationError : std::uint8_t
     kInvalidCell,
     kInvalidWorldSpace,
     kInvalidPosition,
-    kInvalidVitals
+    kInvalidVitals,
+    kInvalidAppearance
 };
 
 [[nodiscard]] CharacterLoadSnapshotValidationError ValidateCharacterLoadSnapshot(const CharacterLoadSnapshot& acSnapshot) noexcept;

@@ -15,6 +15,8 @@
 #include <Forms/TESNPC.h>
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESRace.h>
+#include <Messages/UpdatePlayerAppearanceRequest.h>
+#include <Services/TransportService.h>
 #include <Forms/TESWorldSpace.h>
 #include <Games/Primitives.h>
 #include <Forms/ActorValueInfo.h>
@@ -290,6 +292,13 @@ bool CharacterApplyService::ApplySnapshot(const CharacterLoadSnapshot& acSnapsho
     else
         pNpc->actorData.actorBaseFlags &= ~TESActorBaseData::IS_FEMALE;
 
+    // Without this the player comes back as the stored race on default features (no face, wrong parts).
+    if (!acSnapshot.Appearance.empty())
+    {
+        pNpc->Deserialize(acSnapshot.Appearance, acSnapshot.AppearanceChangeFlags);
+        spdlog::info("[Appearance] restored stored look: {} bytes", acSnapshot.Appearance.size());
+    }
+
     pPlayer->SetLevelMod(static_cast<uint32_t>(acSnapshot.Level));
 
     // V1 persists current vitals only. ForceActorValue routes through ForceCurrent so these
@@ -332,6 +341,26 @@ void CharacterApplyService::FinishRaceMenu() noexcept
     {
         spdlog::error("Could not persist the RaceMenu race and sex for character {}.", m_pendingSnapshot->CharacterId);
     }
+
+    // The player was assigned before RaceMenu, with the default NPC; send the chosen look so other
+    // players and the next login get it. Same data RequestServerAssignment serializes for the player.
+    UpdatePlayerAppearanceRequest lookRequest{};
+    pNpc->MarkChanged(0x2000800);
+    lookRequest.ChangeFlags = pNpc->GetChangeFlags();
+    pNpc->Serialize(&lookRequest.AppearanceBuffer);
+    const auto& tints = pPlayer->GetTints();
+    lookRequest.FaceTints.Entries.resize(tints.length);
+    for (auto i = 0u; i < tints.length; ++i)
+    {
+        auto& entry = lookRequest.FaceTints.Entries[i];
+        entry.Alpha = tints[i]->alpha;
+        entry.Color = tints[i]->color;
+        entry.Type = tints[i]->type;
+        if (tints[i]->texture)
+            entry.Name = tints[i]->texture->name.AsAscii();
+    }
+    m_world.GetTransport().Send(lookRequest);
+    spdlog::info("[Appearance] sent RaceMenu look: {} bytes, {} tints", lookRequest.AppearanceBuffer.size(), lookRequest.FaceTints.Entries.size());
 
     EmitLoadingStage(LoadingStage::kEnteringWorld, 0.9f);
     EmitLoadingStage(LoadingStage::kDone, 1.f);

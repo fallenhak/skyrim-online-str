@@ -92,6 +92,9 @@ struct SessionService final
     void SetCharacterSlotConfiguration(std::uint32_t aTotal, std::uint32_t aUnlocked) noexcept;
     [[nodiscard]] CharacterCreateResult CreateCharacter(ConnectionId_t aConnectionId, std::uint32_t aSlotIndex, std::string_view acName);
     [[nodiscard]] bool UpdateSelectedCharacterAppearance(ConnectionId_t aConnectionId, GameId aRace, std::int32_t aSex);
+    // The in-world player's look (hex CharacterLookCodec text), owner-scoped to the selected character.
+    [[nodiscard]] bool UpdateSelectedCharacterLook(ConnectionId_t aConnectionId, std::string_view acLook);
+    [[nodiscard]] std::optional<std::string> GetSelectedCharacterLook(ConnectionId_t aConnectionId) const;
     [[nodiscard]] CharacterSelectionStatus SelectCharacter(ConnectionId_t aConnectionId, std::uint64_t aCharacterId);
     [[nodiscard]] std::optional<CharacterLoadSnapshot> PrepareCharacterLoadSnapshot(ConnectionId_t aConnectionId);
     [[nodiscard]] CharacterReadyStatus AcceptCharacterReady(ConnectionId_t aConnectionId, std::uint64_t aCharacterId, float aPositionX, float aPositionY, float aPositionZ);

@@ -303,6 +303,32 @@ bool CharacterRepository::UpdateCharacterAppearance(const CharacterId aCharacter
     return updated;
 }
 
+bool CharacterRepository::UpdateCharacterLook(const CharacterId aCharacterId, const std::string_view acOwnerProfileId, const std::string_view acLook)
+{
+    Database::Transaction transaction(m_database);
+
+    auto statement = m_database.Prepare("UPDATE characters SET look = ?, updated_at = ? WHERE id = ? AND owner_profile_id = ?;");
+    statement.Bind(1, acLook);
+    statement.Bind(2, GetUnixTimestamp());
+    statement.Bind(3, aCharacterId);
+    statement.Bind(4, acOwnerProfileId);
+    (void)statement.Step();
+
+    const bool updated = m_database.Changes() == 1;
+    transaction.Commit();
+    return updated;
+}
+
+std::optional<std::string> CharacterRepository::GetCharacterLook(const CharacterId aCharacterId, const std::string_view acOwnerProfileId) const
+{
+    auto statement = m_database.Prepare("SELECT look FROM characters WHERE id = ? AND owner_profile_id = ? AND look IS NOT NULL;");
+    statement.Bind(1, aCharacterId);
+    statement.Bind(2, acOwnerProfileId);
+    if (!statement.Step())
+        return std::nullopt;
+    return statement.ColumnText(0);
+}
+
 bool CharacterRepository::DeleteCharacter(const CharacterId aCharacterId, const std::string_view acOwnerProfileId)
 {
     Database::Transaction transaction(m_database);
