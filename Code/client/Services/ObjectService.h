@@ -14,6 +14,7 @@ struct NotifyActivate;
 struct LockChangeEvent;
 struct NotifyLockChange;
 struct CellChangeEvent;
+struct UpdateEvent;
 struct ScriptAnimationEvent;
 struct AssignObjectsResponse;
 struct NotifyScriptAnimation;
@@ -31,6 +32,8 @@ public:
 private:
     void OnDisconnected(const DisconnectedEvent&) noexcept;
     void OnCellChange(const CellChangeEvent&) noexcept;
+    void OnUpdate(const UpdateEvent&) noexcept;
+    void SendAssignObjectsRequest() noexcept;
     void OnAssignObjectsResponse(const AssignObjectsResponse&) noexcept;
     void OnActivate(const ActivateEvent&) noexcept;
     void OnActivateNotify(const NotifyActivate&) noexcept;
@@ -47,9 +50,13 @@ private:
 
     World& m_world;
     TransportService& m_transport;
+    // Set on a cell change, sent on the next update: PlayerService reports the new cell in the same
+    // CellChangeEvent dispatch but is connected after us, and the server range-checks against it.
+    bool m_assignObjectsPending{false};
 
     entt::scoped_connection m_disconnectedConnection;
     entt::scoped_connection m_cellChangeConnection;
+    entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_onActivateConnection;
     entt::scoped_connection m_activateConnection;
     entt::scoped_connection m_lockChangeConnection;
