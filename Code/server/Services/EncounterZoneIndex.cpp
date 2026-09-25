@@ -4,13 +4,22 @@
 
 EncounterZoneIndex::Resolution EncounterZoneIndex::ResolveReference(const ESLoader::RecordCollection& acRecords, const uint32_t aReferenceId) const noexcept
 {
-    const REFR* pReference = acRecords.FindObjectRefById(aReferenceId);
-    if (!pReference)
+    ReferenceInput input{};
+    uint32_t parentCell = 0;
+    if (const REFR* pReference = acRecords.FindObjectRefById(aReferenceId))
+    {
+        input.ReferenceZone = pReference->m_encounterZone;
+        parentCell = pReference->m_parentCell;
+    }
+    else if (const ACHR* pActor = acRecords.FindActorReferenceById(aReferenceId))
+    {
+        input.ReferenceZone = pActor->m_encounterZone;
+        parentCell = pActor->m_parentCell;
+    }
+    else
         return {};
 
-    ReferenceInput input{};
-    input.ReferenceZone = pReference->m_encounterZone;
-    if (const CELL* pCell = acRecords.FindCellById(pReference->m_parentCell))
+    if (const CELL* pCell = acRecords.FindCellById(parentCell))
     {
         input.CellZone = pCell->m_encounterZone;
         input.CellLocation = pCell->m_location;

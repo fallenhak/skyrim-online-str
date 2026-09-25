@@ -306,6 +306,7 @@ bool TESFile::ReadGroupOrRecord(
             parsedRecord.CopyRecordData(pRecord);
             parsedRecord.SetBaseId(resolvedFormIdPrefix);
             actorRecordValid = parsedRecord.ParseChunks(pRecordBytes, m_parentToFormIdPrefix);
+            parsedRecord.m_parentCell = m_currentCell;
             if (actorRecordValid)
             {
                 const uint32_t resolvedFormId = parsedRecord.GetFormId();

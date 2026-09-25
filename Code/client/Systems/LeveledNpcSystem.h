@@ -18,4 +18,10 @@ struct LeveledNpcSystem
     // Requires an actor that has finished disabling and has no 3D.
     // Returns false if the base cannot be rebuilt, leaving the actor unchanged.
     static bool ApplyPick(Actor* apActor, TESNPC* apPick) noexcept;
+
+    // Deleveled world: a base whose level scales with the player ("PC level mult") gets a
+    // fixed level instead, the multiplier applied to the default place level and clamped
+    // to the base's calc range. Every client computes the same level. Returns whether
+    // the base was changed.
+    static bool FixPlayerLevelScaling(TESNPC* apBase) noexcept;
 };
