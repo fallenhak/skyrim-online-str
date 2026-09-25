@@ -22,4 +22,7 @@ struct AssignObjectsRequest final : ClientMessage
     bool operator==(const AssignObjectsRequest& acRhs) const noexcept { return Objects == acRhs.Objects && GetOpcode() == acRhs.GetOpcode(); }
 
     Vector<ObjectData> Objects{};
+    // Wire count refused by the read bound; 0 when the list was read. Not serialized: the
+    // server logs and drops such a message instead of handling it as an empty list.
+    uint64_t OverLimitCount{};
 };

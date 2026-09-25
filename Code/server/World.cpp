@@ -1,5 +1,6 @@
 #include <World.h>
 #include <Components.h>
+#include <ReservedEntity.h>
 
 #include <Services/CharacterService.h>
 #include <Services/PresenceService.h>
@@ -28,6 +29,9 @@ World::World(
     std::filesystem::path aDatabasePath, bool aEnableActorRecordLoading, bool aEnableHumanoidAssignmentGate, bool aAllowUnknownActorAssignments,
     const char* apRaceClassificationOverrides, const std::uint32_t aCreatureCorpseLifetimeSeconds)
 {
+    if (const auto reserved = ReserveNullServerEntity(*this); ToInteger(reserved) != 0)
+        spdlog::error("Reserved null server entity is {:X}, not 0; id 0 may still reach a player", ToInteger(reserved));
+
     m_spAdminService = std::make_shared<AdminService>(*this, m_dispatcher);
     spdlog::default_logger()->sinks().push_back(std::static_pointer_cast<spdlog::sinks::sink>(m_spAdminService));
 

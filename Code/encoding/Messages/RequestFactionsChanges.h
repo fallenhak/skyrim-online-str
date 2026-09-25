@@ -20,4 +20,7 @@ struct RequestFactionsChanges final : ClientMessage
     bool operator==(const RequestFactionsChanges& acRhs) const noexcept { return Changes == acRhs.Changes && GetOpcode() == acRhs.GetOpcode(); }
 
     TiltedPhoques::Map<uint32_t, FactionUpdate> Changes;
+    // Wire count refused by the read bound; 0 when the list was read. Not serialized: the
+    // server logs and drops such a message instead of handling it as an empty list.
+    uint64_t OverLimitCount{};
 };

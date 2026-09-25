@@ -1,8 +1,14 @@
 #include <Messages/AssignObjectsRequest.h>
 
+namespace
+{
+// A cell sends every synced reference at once; Bleak Falls Barrow alone has 308. The count was 8 bits and wrapped (308 -> 52).
+constexpr uint64_t kMaxAssignedObjects = 4096;
+}
+
 void AssignObjectsRequest::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
 {
-    aWriter.WriteBits(Objects.size() & 0xFF, 8);
+    Serialization::WriteVarInt(aWriter, Objects.size());
 
     for (const auto& object : Objects)
     {
@@ -14,8 +20,14 @@ void AssignObjectsRequest::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader
 {
     ClientMessage::DeserializeRaw(aReader);
 
-    uint64_t count = 0;
-    aReader.ReadBits(count, 8);
+    const uint64_t count = Serialization::ReadVarInt(aReader);
+    Objects.clear();
+    OverLimitCount = 0;
+    if (count > kMaxAssignedObjects)
+    {
+        OverLimitCount = count;
+        return;
+    }
 
     Objects.resize(count);
 

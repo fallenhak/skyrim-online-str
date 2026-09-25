@@ -3,6 +3,7 @@
 #include "Events/PlayerLeaveCellEvent.h"
 
 #include <Services/PlayerService.h>
+#include <Services/DropLog.h>
 #include <Services/CharacterService.h>
 #include <Components.h>
 #include <GameServer.h>
@@ -52,6 +53,12 @@ void SendPlayerCellChanged(const Player* apPlayer) noexcept
 
 void PlayerService::HandleGridCellShift(const PacketEvent<ShiftGridCellRequest>& acMessage) const noexcept
 {
+    if (acMessage.Packet.OverLimitCount != 0)
+    {
+        DropLog::Info("grid shift: count over limit", "player {:X}, {} cell(s)", acMessage.pPlayer->GetId(), acMessage.Packet.OverLimitCount);
+        return;
+    }
+
     auto* pPlayer = acMessage.pPlayer;
 
     auto& message = acMessage.Packet;
@@ -189,7 +196,11 @@ void PlayerService::OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnReques
         const auto* const pOwnerComponent = m_world.try_get<OwnerComponent>(*character);
         if (!pOwnerComponent ||
             !m_world.GetCharacterService().BeginOwnerRespawnLifecycle(*character, acMessage.pPlayer, pOwnerComponent->OwnershipEpoch))
+        {
+            DropLog::Info("player respawn: lifecycle refused", "player {:X}, character {:X}, has owner {}", acMessage.pPlayer->GetId(),
+                World::ToInteger(*character), pOwnerComponent != nullptr);
             return;
+        }
 
         if (goldLossFactor != 0.0)
         {
@@ -226,6 +237,9 @@ void PlayerService::OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnReques
         // Let all other players in cell respawn this player, since the body state seems to be bugged otherwise
         NotifyRespawn notifyRespawn{};
         notifyRespawn.ActorId = World::ToInteger(*character);
+        // Observers match the respawn by server id and epoch; without the epoch the respawned player stayed invisible.
+        if (const auto* pOwnerComponent = m_world.try_get<OwnerComponent>(*character))
+            notifyRespawn.OwnershipEpoch = pOwnerComponent->OwnershipEpoch;
 
         if (!GameServer::Get()->SendToPlayersInRange(notifyRespawn, *character, acMessage.GetSender()))
             spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);

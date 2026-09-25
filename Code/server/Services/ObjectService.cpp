@@ -1,4 +1,5 @@
 #include <Services/ObjectService.h>
+#include <Services/DropLog.h>
 
 #include <GameServer.h>
 #include <World.h>
@@ -277,6 +278,12 @@ void ObjectService::PruneUnobservedObjects() noexcept
 // This is fine for containers and doors, but if this system is expanded, think of temporaries.
 void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsRequest>& acMessage) noexcept
 {
+    if (acMessage.Packet.OverLimitCount != 0)
+    {
+        DropLog::Info("assign objects: count over limit", "player {:X}, {} object(s)", acMessage.pPlayer->GetId(), acMessage.Packet.OverLimitCount);
+        return;
+    }
+
     RespawnWorldObjects();
     auto view = m_world.view<FormIdComponent, ObjectComponent, CellIdComponent, InventoryComponent>();
     const auto& senderCell = acMessage.pPlayer->GetCellComponent();
@@ -409,7 +416,11 @@ void ObjectService::OnTakeWorldItem(const PacketEvent<TakeWorldItemRequest>& acM
             return objectView.get<FormIdComponent>(entity).Id == id && objectView.get<CellIdComponent>(entity).Cell == cellId;
         });
     if (objectIt == objectView.end())
+    {
+        DropLog::Info("take world item: object not registered", "player {:X}, object {:X}:{:X}, cell {:X}:{:X}", acMessage.pPlayer->GetId(),
+            packet.Id.ModId, packet.Id.BaseId, packet.CellId.ModId, packet.CellId.BaseId);
         return;
+    }
 
     const auto& senderCell = acMessage.pPlayer->GetCellComponent();
     const auto& objectCell = objectView.get<CellIdComponent>(*objectIt);
@@ -421,7 +432,11 @@ void ObjectService::OnTakeWorldItem(const PacketEvent<TakeWorldItemRequest>& acM
     const bool activatorExists = activatorIt != activatorView.end();
     const bool ownedBySender = activatorExists && activatorView.get<OwnerComponent>(*activatorIt).GetOwner() == acMessage.pPlayer;
     if (!activatorExists)
+    {
+        DropLog::Info("take world item: actor not found", "player {:X}, actor {:X}, object {:X}:{:X}", acMessage.pPlayer->GetId(),
+            packet.ActivatorId, packet.Id.ModId, packet.Id.BaseId);
         return;
+    }
 
     const auto& activatorCell = activatorView.get<CellIdComponent>(*activatorIt);
     std::size_t notifiedPlayers = 0;
@@ -454,7 +469,11 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) no
 {
     const auto& packet = acMessage.Packet;
     if (!ObjectInteractionPolicy::IsValidOpenState(packet.PreActivationOpenState))
+    {
+        DropLog::Info("activate: invalid open state", "player {:X}, object {:X}:{:X}, state {}", acMessage.pPlayer->GetId(), packet.Id.ModId,
+            packet.Id.BaseId, packet.PreActivationOpenState);
         return;
+    }
 
     RespawnWorldObjects();
 
@@ -466,7 +485,11 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) no
             return objectView.get<FormIdComponent>(entity).Id == id && objectView.get<CellIdComponent>(entity).Cell == cellId;
         });
     if (objectIt == objectView.end())
+    {
+        DropLog::Info("activate: object not registered", "player {:X}, object {:X}:{:X}, cell {:X}:{:X}", acMessage.pPlayer->GetId(),
+            packet.Id.ModId, packet.Id.BaseId, packet.CellId.ModId, packet.CellId.BaseId);
         return;
+    }
 
     const auto& senderCell = acMessage.pPlayer->GetCellComponent();
     const auto& objectCell = objectView.get<CellIdComponent>(*objectIt);
@@ -478,7 +501,11 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) no
     const bool activatorExists = activatorIt != activatorView.end();
     const bool ownedBySender = activatorExists && activatorView.get<OwnerComponent>(*activatorIt).GetOwner() == acMessage.pPlayer;
     if (!activatorExists)
+    {
+        DropLog::Info("activate: actor not found", "player {:X}, actor {:X}, object {:X}:{:X}", acMessage.pPlayer->GetId(), packet.ActivatorId,
+            packet.Id.ModId, packet.Id.BaseId);
         return;
+    }
 
     const auto& activatorCell = activatorView.get<CellIdComponent>(*activatorIt);
 
@@ -566,7 +593,12 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) no
             packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
             activatorCell.Cell, activatorCell.WorldSpaceId, activatorCell.CenterCoords,
             objectCell.Cell, objectCell.WorldSpaceId, objectCell.CenterCoords))
+    {
+        DropLog::Info("activate: not allowed", "player {:X}, object {:X}:{:X}, trusted {}, owns actor {}, requested cell {:X}:{:X}, object cell {:X}:{:X}",
+            acMessage.pPlayer->GetId(), packet.Id.ModId, packet.Id.BaseId, objectComponent.HasTrustedState, ownedBySender, packet.CellId.ModId,
+            packet.CellId.BaseId, objectCell.Cell.ModId, objectCell.Cell.BaseId);
         return;
+    }
 
     NotifyActivate notifyActivate;
     notifyActivate.Id = packet.Id;
@@ -644,14 +676,23 @@ void ObjectService::OnLockChange(const PacketEvent<LockChangeRequest>& acMessage
             return formIdComponent.Id == id;
         });
     if (iter == std::end(objectView))
+    {
+        DropLog::Info("lock change: object not registered", "player {:X}, object {:X}:{:X}, cell {:X}:{:X}", acMessage.pPlayer->GetId(),
+            packet.Id.ModId, packet.Id.BaseId, packet.CellId.ModId, packet.CellId.BaseId);
         return;
+    }
 
     const auto& senderCell = acMessage.pPlayer->GetCellComponent();
     const auto& objectCell = objectView.get<CellIdComponent>(*iter);
     if (!ObjectInteractionPolicy::CanInteract(
             packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
             objectCell.Cell, objectCell.WorldSpaceId, objectCell.CenterCoords))
+    {
+        DropLog::Info("lock change: out of range", "player {:X}, object {:X}:{:X}, requested cell {:X}:{:X}, sender cell {:X}:{:X}, object cell {:X}:{:X}",
+            acMessage.pPlayer->GetId(), packet.Id.ModId, packet.Id.BaseId, packet.CellId.ModId, packet.CellId.BaseId, senderCell.Cell.ModId,
+            senderCell.Cell.BaseId, objectCell.Cell.ModId, objectCell.Cell.BaseId);
         return;
+    }
 
     auto& objectComponent = objectView.get<ObjectComponent>(*iter);
     if (!ObjectInteractionPolicy::TryHandleLockChange(
@@ -674,7 +715,11 @@ void ObjectService::OnLockChange(const PacketEvent<LockChangeRequest>& acMessage
                     pPlayer->Send(notifyLockChange);
             }
         }))
+    {
+        DropLog::Info("lock change: rejected", "player {:X}, object {:X}:{:X}, trusted {}, locked {}, level {}", acMessage.pPlayer->GetId(),
+            packet.Id.ModId, packet.Id.BaseId, objectComponent.HasTrustedState, packet.IsLocked, packet.LockLevel);
         return;
+    }
 }
 
 void ObjectService::OnScriptAnimationRequest(const PacketEvent<ScriptAnimationRequest>& acMessage) noexcept

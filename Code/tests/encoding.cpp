@@ -807,3 +807,117 @@ TEST_CASE("NotifyContainerTransferResult round-trips", "[encoding.container_tran
     REQUIRE(received);
     REQUIRE(*received == sent);
 }
+
+// Lists sized like real cells: a 1-byte count once wrapped 308 objects in Bleak Falls Barrow to 52.
+namespace
+{
+constexpr uint32_t kRealisticListSize = 308;
+
+template <class T, class TFactory> auto RoundTrip(const T& acSent, const TFactory& acFactory, const size_t aBufferSize = 1 << 17)
+{
+    Buffer buffer(aBufferSize);
+    Buffer::Writer writer(&buffer);
+    acSent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    return CastUnique<T>(acFactory.Extract(reader));
+}
+} // namespace
+
+TEST_CASE("AssignObjectsRequest keeps every object of a large cell", "[encoding.list_counts]")
+{
+    AssignObjectsRequest sent;
+    for (uint32_t i = 0; i < kRealisticListSize; ++i)
+    {
+        ObjectData object{};
+        object.Id = GameId{0, 0xAA000 + i};
+        object.CellId = GameId{0, 0x371DE};
+        object.IsActivator = (i % 2) == 0;
+        sent.Objects.push_back(object);
+    }
+
+    const auto received = RoundTrip(sent, ClientMessageFactory{});
+    REQUIRE(received);
+    REQUIRE(received->Objects.size() == kRealisticListSize);
+    REQUIRE(*received == sent);
+}
+
+TEST_CASE("AssignObjectsResponse keeps every object of a large cell", "[encoding.list_counts]")
+{
+    AssignObjectsResponse sent;
+    for (uint32_t i = 0; i < kRealisticListSize; ++i)
+    {
+        ObjectData object{};
+        object.ServerId = i;
+        object.Id = GameId{0, 0xAA000 + i};
+        sent.Objects.push_back(object);
+    }
+
+    const auto received = RoundTrip(sent, ServerMessageFactory{});
+    REQUIRE(received);
+    REQUIRE(received->Objects.size() == kRealisticListSize);
+    REQUIRE(*received == sent);
+}
+
+TEST_CASE("Party and grid lists survive more than 255 entries", "[encoding.list_counts]")
+{
+    NotifyPartyInfo party;
+    NotifyPartyJoined joined;
+    ShiftGridCellRequest grid;
+    for (uint32_t i = 0; i < kRealisticListSize; ++i)
+    {
+        party.PlayerIds.push_back(i);
+        joined.PlayerIds.push_back(i);
+        grid.Cells.push_back(GameId{0, 0x1000 + i});
+    }
+
+    const auto receivedParty = RoundTrip(party, ServerMessageFactory{});
+    REQUIRE(receivedParty);
+    REQUIRE(receivedParty->PlayerIds.size() == kRealisticListSize);
+
+    const auto receivedJoined = RoundTrip(joined, ServerMessageFactory{});
+    REQUIRE(receivedJoined);
+    REQUIRE(receivedJoined->PlayerIds.size() == kRealisticListSize);
+
+    const auto receivedGrid = RoundTrip(grid, ClientMessageFactory{});
+    REQUIRE(receivedGrid);
+    REQUIRE(*receivedGrid == grid);
+}
+
+TEST_CASE("ActionReplayChain keeps more than 255 actions", "[encoding.list_counts]")
+{
+    ActionReplayChain sent;
+    for (uint32_t i = 0; i < kRealisticListSize; ++i)
+    {
+        ActionEvent action{};
+        action.Tick = i;
+        action.ActionId = 0x1000 + i;
+        sent.Actions.push_back(action);
+    }
+
+    Buffer buffer(1 << 17);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    ActionReplayChain received;
+    Buffer::Reader reader(&buffer);
+    received.Deserialize(reader);
+
+    REQUIRE(received.Actions.size() == kRealisticListSize);
+    REQUIRE(received == sent);
+}
+
+TEST_CASE("A malformed object count is refused instead of allocated", "[encoding.list_counts]")
+{
+    Buffer buffer(64);
+    Buffer::Writer writer(&buffer);
+    Serialization::WriteVarInt(writer, 1'000'000'000);
+
+    AssignObjectsRequest received;
+    Buffer::Reader reader(&buffer);
+    received.DeserializeRaw(reader);
+
+    REQUIRE(received.Objects.empty());
+    // The server drops such a message with a [Drop] line instead of handling an empty list.
+    REQUIRE(received.OverLimitCount == 1'000'000'000);
+}

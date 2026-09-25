@@ -1,8 +1,14 @@
 #include <Messages/AssignObjectsResponse.h>
 
+namespace
+{
+// Mirrors AssignObjectsRequest: one entry per object the request named.
+constexpr uint64_t kMaxAssignedObjects = 4096;
+}
+
 void AssignObjectsResponse::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter) const noexcept
 {
-    aWriter.WriteBits(Objects.size() & 0xFF, 8);
+    Serialization::WriteVarInt(aWriter, Objects.size());
 
     for (const auto& object : Objects)
     {
@@ -14,8 +20,9 @@ void AssignObjectsResponse::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReade
 {
     ServerMessage::DeserializeRaw(aReader);
 
-    uint64_t count = 0;
-    aReader.ReadBits(count, 8);
+    const uint64_t count = Serialization::ReadVarInt(aReader);
+    if (count > kMaxAssignedObjects)
+        return;
 
     Objects.resize(count);
 
