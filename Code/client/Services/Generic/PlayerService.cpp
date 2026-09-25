@@ -9,8 +9,7 @@
 #include <Events/CellChangeEvent.h>
 #include <Events/PlayerDialogueEvent.h>
 #include <Events/PlayerLevelEvent.h>
-#include <Events/PartyJoinedEvent.h>
-#include <Events/PartyLeftEvent.h>
+#include <Events/AuthorityChangedEvent.h>
 #include <Events/BeastFormChangeEvent.h>
 
 #include <Messages/PlayerRespawnRequest.h>
@@ -46,8 +45,7 @@ PlayerService::PlayerService(World& aWorld, entt::dispatcher& aDispatcher, Trans
     m_cellChangeConnection = m_dispatcher.sink<CellChangeEvent>().connect<&PlayerService::OnCellChangeEvent>(this);
     m_playerDialogueConnection = m_dispatcher.sink<PlayerDialogueEvent>().connect<&PlayerService::OnPlayerDialogueEvent>(this);
     m_playerLevelConnection = m_dispatcher.sink<PlayerLevelEvent>().connect<&PlayerService::OnPlayerLevelEvent>(this);
-    m_partyJoinedConnection = aDispatcher.sink<PartyJoinedEvent>().connect<&PlayerService::OnPartyJoinedEvent>(this);
-    m_partyLeftConnection = aDispatcher.sink<PartyLeftEvent>().connect<&PlayerService::OnPartyLeftEvent>(this);
+    m_authorityChangedConnection = aDispatcher.sink<AuthorityChangedEvent>().connect<&PlayerService::OnAuthorityChangedEvent>(this);
 }
 
 void PlayerService::OnUpdate(const UpdateEvent&) noexcept
@@ -152,10 +150,6 @@ void PlayerService::OnPlayerDialogueEvent(const PlayerDialogueEvent& acEvent) co
     if (!m_transport.IsConnected())
         return;
 
-    const auto& partyService = m_world.GetPartyService();
-    if (!partyService.IsInParty())
-        return;
-
     PlayerDialogueRequest request{};
     request.Text = acEvent.Text;
 
@@ -173,24 +167,13 @@ void PlayerService::OnPlayerLevelEvent(const PlayerLevelEvent& acEvent) const no
     m_transport.Send(request);
 }
 
-void PlayerService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept
+void PlayerService::OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept
 {
-    // TODO: this can be done a bit prettier
-    if (acEvent.IsLeader)
-    {
-        TESGlobal* pWorldEncountersEnabled = Cast<TESGlobal>(TESForm::GetById(0xB8EC1));
-        pWorldEncountersEnabled->f = 1.f;
-    }
-}
+    if (!m_transport.IsConnected())
+        return;
 
-void PlayerService::OnPartyLeftEvent(const PartyLeftEvent& acEvent) noexcept
-{
-    // TODO: this can be done a bit prettier
-    if (World::Get().GetTransport().IsConnected())
-    {
-        TESGlobal* pWorldEncountersEnabled = Cast<TESGlobal>(TESForm::GetById(0xB8EC1));
-        pWorldEncountersEnabled->f = 0.f;
-    }
+    TESGlobal* pWorldEncountersEnabled = Cast<TESGlobal>(TESForm::GetById(0xB8EC1));
+    pWorldEncountersEnabled->f = acEvent.HasLocalWorldAuthority ? 1.f : 0.f;
 }
 
 void PlayerService::RunRespawnUpdates() noexcept

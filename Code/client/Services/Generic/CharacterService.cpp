@@ -1,8 +1,6 @@
 #include "Forms/TESObjectCELL.h"
 #include "Forms/TESWorldSpace.h"
 #include "Services/PapyrusService.h"
-#include <Services/PartyService.h>
-
 #include <Services/CharacterService.h>
 #include <Services/QuestService.h>
 #include <Services/TransportService.h>
@@ -35,7 +33,7 @@
 #include <Events/DialogueEvent.h>
 #include <Events/SubtitleEvent.h>
 #include <Events/MoveActorEvent.h>
-#include <Events/PartyJoinedEvent.h>
+#include <Events/AuthorityChangedEvent.h>
 
 #include <Structs/ActionEvent.h>
 #include <Messages/AssignCharacterRequest.h>
@@ -107,7 +105,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
 
     m_actorTeleportConnection = m_dispatcher.sink<NotifyActorTeleport>().connect<&CharacterService::OnNotifyActorTeleport>(this);
 
-    m_partyJoinedConnection = aDispatcher.sink<PartyJoinedEvent>().connect<&CharacterService::OnPartyJoinedEvent>(this);
+    m_authorityChangedConnection = aDispatcher.sink<AuthorityChangedEvent>().connect<&CharacterService::OnAuthorityChangedEvent>(this);
 }
 
 void CharacterService::DeleteRemoteEntityComponents(entt::entity aEntity) const noexcept
@@ -1150,10 +1148,10 @@ void CharacterService::OnNotifyActorTeleport(const NotifyActorTeleport& acMessag
     spdlog::info("Successfully teleported actor, form id: {:X}, world space: {:X}, cell: {:X}, position: ({}, {}, {})", pActor->formID, acMessage.WorldSpaceId.BaseId, acMessage.CellId.BaseId, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
 }
 
-void CharacterService::OnPartyJoinedEvent(const PartyJoinedEvent& acEvent) noexcept
+void CharacterService::OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept
 {
-    // Takes ownership of all actors
-    if (acEvent.IsLeader)
+    // Reprocess actors when this client becomes eligible to drive actor authority.
+    if (acEvent.HasLocalActorAuthority)
     {
         auto view = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
         Vector<entt::entity> entities(view.begin(), view.end());
@@ -1210,7 +1208,7 @@ void CharacterService::ProcessNewEntity(entt::entity aEntity) const noexcept
     {
         // TODO(cosideci): don't just take all actors (i.e. from other parties),
         // maybe check it server side, add a variable to the request.
-        if (m_world.GetPartyService().IsLeader() && !pActor->IsTemporary() && !pActor->IsMount())
+        if (m_world.GetAuthorityService().HasLocalActorAuthority() && !pActor->IsTemporary() && !pActor->IsMount())
         {
             spdlog::info("Sending ownership claim for actor {:X} with server id {:X}", pActor->formID, pRemoteComponent->Id);
 
@@ -1906,29 +1904,9 @@ void CharacterService::RunSpawnUpdates() const noexcept
 
 void CharacterService::RunExperienceUpdates() noexcept
 {
-    static std::chrono::steady_clock::time_point lastSendTimePoint;
-    constexpr auto cDelayBetweenSnapshots = 1000ms;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTimePoint < cDelayBetweenSnapshots)
-        return;
-
-    lastSendTimePoint = now;
-
-    if (m_cachedExperience == 0.f)
-        return;
-
-    if (!World::Get().GetPartyService().IsInParty())
-        return;
-
-    SyncExperienceRequest message;
-    message.Experience = m_cachedExperience;
-
+    // Persistent-world characters keep combat skill XP local.
+    // Clear the legacy co-op sharing accumulator without sending it.
     m_cachedExperience = 0.f;
-
-    m_transport.Send(message);
-
-    spdlog::debug("Sending over experience {}", message.Experience);
 }
 
 void CharacterService::ApplyCachedWeaponDraws(const UpdateEvent& acUpdateEvent) noexcept

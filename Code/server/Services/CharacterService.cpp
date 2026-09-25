@@ -41,7 +41,7 @@
 #include <Setting.h>
 namespace
 {
-Console::Setting bEnableXpSync{"Gameplay:bEnableXpSync", "Syncs combat XP within the party", true};
+Console::Setting bEnableXpSync{"Gameplay:bEnableXpSync", "Legacy co-op combat XP sharing. Disabled by default for persistent-world mode.", false};
 }
 
 CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher) noexcept
@@ -777,13 +777,8 @@ bool CharacterService::CanClaimOwnership(Player* apPlayer, const entt::entity aE
     if (!apPlayer->GetCellComponent().IsInRange(cellIdComponent, characterComponent.IsDragon()))
         return reject("the actor is out of range");
 
-    auto& partyService = m_world.GetPartyService();
-    if (!partyService.IsPlayerInParty(apPlayer) || !partyService.IsPlayerLeader(apPlayer))
-        return reject("the player is not the party leader");
-
-    PartyService::Party* const pParty = partyService.GetPlayerParty(apPlayer);
-    if (!pParty || std::find(pParty->Members.begin(), pParty->Members.end(), pCurrentOwner) == pParty->Members.end())
-        return reject("the current owner is not in the party");
+    if (!m_world.GetAuthorityService().CanClaimActor(apPlayer, pCurrentOwner))
+        return reject("the player is not eligible to claim actor authority");
 
     return true;
 }

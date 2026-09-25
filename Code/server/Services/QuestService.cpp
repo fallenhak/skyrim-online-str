@@ -10,8 +10,8 @@
 #include <Setting.h>
 namespace
 {
+constexpr bool kEnableVanillaQuestSync = false;
 Console::Setting bEnableMiscQuestSync{"Gameplay:bEnableMiscQuestSync", "(Experimental) Syncs miscellaneous quests when possible", false};
-
 }
 
 QuestService::QuestService(World& aWorld, entt::dispatcher& aDispatcher)
@@ -22,6 +22,11 @@ QuestService::QuestService(World& aWorld, entt::dispatcher& aDispatcher)
 
 void QuestService::OnQuestChanges(const PacketEvent<RequestQuestUpdate>& acMessage) noexcept
 {
+    // Persistent-world mode keeps vanilla quest progression local to each character.
+    // Reject legacy or incompatible clients at the server boundary as well.
+    if (!kEnableVanillaQuestSync)
+        return;
+
     const auto& message = acMessage.Packet;
 
     auto* pPlayer = acMessage.pPlayer;

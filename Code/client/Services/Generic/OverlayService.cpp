@@ -477,7 +477,7 @@ void OverlayService::RunDebugDataUpdates() noexcept
 // health sync code being somewhat broken for players.
 void OverlayService::RunPlayerHealthUpdates() noexcept
 {
-    if (!m_transport.IsConnected() || !m_world.GetPartyService().IsInParty())
+    if (!m_transport.IsConnected())
         return;
 
     static std::chrono::steady_clock::time_point lastSendTimePoint;
