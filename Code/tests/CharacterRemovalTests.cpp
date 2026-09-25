@@ -66,3 +66,14 @@ TEST_CASE("Character removal with nobody connected still destroys the entity", "
     REQUIRE(scripted);
     REQUIRE(destroyed == 1);
 }
+
+TEST_CASE("Disconnect cleanup never mistakes a character-less player for entity 0", "[character_removal][disconnect]")
+{
+    const std::optional<std::uint32_t> noCharacter;
+    CHECK_FALSE(IsDisconnectingPlayersCharacter(noCharacter, std::uint32_t{0}));
+    CHECK_FALSE(IsDisconnectingPlayersCharacter(noCharacter, std::uint32_t{7}));
+
+    const std::optional<std::uint32_t> firstJoiner{0u};
+    CHECK(IsDisconnectingPlayersCharacter(firstJoiner, std::uint32_t{0}));
+    CHECK_FALSE(IsDisconnectingPlayersCharacter(firstJoiner, std::uint32_t{1}));
+}
