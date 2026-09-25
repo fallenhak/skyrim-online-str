@@ -88,7 +88,7 @@ void CharacterSaveService::OnPlayerLeave(const PlayerLeaveEvent& acEvent) noexce
     (void)SaveEntity(*character, "disconnect");
 }
 
-bool CharacterSaveService::CaptureRuntimeState(const entt::entity aEntity, Persistence::CharacterRuntimeState& aState) const noexcept
+Persistence::CharacterRuntimeStateVerdict CharacterSaveService::CaptureRuntimeState(const entt::entity aEntity, Persistence::CharacterRuntimeState& aState) const noexcept
 {
     const auto* const pPersistentComponent = m_world.try_get<PersistentCharacterComponent>(aEntity);
     const auto* const pCellComponent = m_world.try_get<CellIdComponent>(aEntity);
@@ -98,7 +98,7 @@ bool CharacterSaveService::CaptureRuntimeState(const entt::entity aEntity, Persi
     const auto* const pOwnerComponent = m_world.try_get<OwnerComponent>(aEntity);
     if (!pPersistentComponent || !pCellComponent || !pMovementComponent || !pActorValuesComponent || !pCharacterComponent || !pOwnerComponent ||
         !pCharacterComponent->IsPlayer() || !pOwnerComponent->GetOwner())
-        return false;
+        return Persistence::CharacterRuntimeStateVerdict::Invalid;
 
     const auto findCurrentValue = [&pActorValuesComponent](const std::uint32_t aActorValue, float& aOutput) noexcept
     {
@@ -120,9 +120,9 @@ bool CharacterSaveService::CaptureRuntimeState(const entt::entity aEntity, Persi
     // are intentionally not part of CharacterRuntimeState.
     if (!findCurrentValue(kHealthActorValue, aState.Health) || !findCurrentValue(kMagickaActorValue, aState.Magicka) ||
         !findCurrentValue(kStaminaActorValue, aState.Stamina))
-        return false;
+        return Persistence::CharacterRuntimeStateVerdict::Invalid;
 
-    return Persistence::IsValidCharacterRuntimeState(pPersistentComponent->CharacterId, pPersistentComponent->OwnerProfileId, aState);
+    return Persistence::EvaluateCharacterRuntimeState(pPersistentComponent->CharacterId, pPersistentComponent->OwnerProfileId, aState);
 }
 
 bool CharacterSaveService::SaveEntity(const entt::entity aEntity, const std::string_view acReason) noexcept
@@ -132,7 +132,17 @@ bool CharacterSaveService::SaveEntity(const entt::entity aEntity, const std::str
         return false;
 
     Persistence::CharacterRuntimeState state{};
-    if (!CaptureRuntimeState(aEntity, state))
+    const auto verdict = CaptureRuntimeState(aEntity, state);
+    if (verdict == Persistence::CharacterRuntimeStateVerdict::Dead)
+    {
+        // A dead player's health is below zero until respawn. Persisting that would load the
+        // character dead, so keep the last saved state; the next save after respawn catches up.
+        spdlog::info("[CharacterSave] Skipping {} save for character {} (entity {:x}): character is dead", acReason, pPersistentComponent->CharacterId,
+                     World::ToInteger(aEntity));
+        return false;
+    }
+
+    if (verdict != Persistence::CharacterRuntimeStateVerdict::Valid)
     {
         spdlog::warn("[CharacterSave] Refusing {} save for character {} (entity {:x}): invalid runtime state", acReason, pPersistentComponent->CharacterId,
                      World::ToInteger(aEntity));

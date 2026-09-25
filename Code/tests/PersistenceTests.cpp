@@ -262,6 +262,36 @@ TEST(PersistenceCharacterRuntimeState, ValidatesOnlySafeFiniteV1RuntimeValues)
     EXPECT_FALSE(Persistence::IsValidCharacterRuntimeState(1, "owner", invalidState));
 }
 
+TEST(PersistenceCharacterRuntimeState, SeparatesDeadFromInvalidState)
+{
+    using Persistence::CharacterRuntimeStateVerdict;
+
+    const auto validState = MakeRuntimeState();
+    EXPECT_EQ(Persistence::EvaluateCharacterRuntimeState(1, "owner", validState), CharacterRuntimeStateVerdict::Valid);
+
+    // Skyrim drives current health below zero on death: a transient state, not corruption.
+    auto state = validState;
+    state.Health = -37.5f;
+    EXPECT_EQ(Persistence::EvaluateCharacterRuntimeState(1, "owner", state), CharacterRuntimeStateVerdict::Dead);
+
+    state = validState;
+    state.Health = 0.f;
+    EXPECT_EQ(Persistence::EvaluateCharacterRuntimeState(1, "owner", state), CharacterRuntimeStateVerdict::Valid);
+
+    // Corruption wins over death: a dead character with a broken position is still invalid.
+    state.Health = -1.f;
+    state.PositionZ = std::numeric_limits<float>::quiet_NaN();
+    EXPECT_EQ(Persistence::EvaluateCharacterRuntimeState(1, "owner", state), CharacterRuntimeStateVerdict::Invalid);
+
+    state = validState;
+    state.Magicka = -1.f;
+    EXPECT_EQ(Persistence::EvaluateCharacterRuntimeState(1, "owner", state), CharacterRuntimeStateVerdict::Invalid);
+
+    state = validState;
+    state.Health = -1.f;
+    EXPECT_EQ(Persistence::EvaluateCharacterRuntimeState(0, "owner", state), CharacterRuntimeStateVerdict::Invalid);
+}
+
 TEST(PersistenceCharacterRepository, EnforcesOwnerScopedSlotAndCaseInsensitiveNameUniqueness)
 {
     Persistence::Database database(":memory:");
