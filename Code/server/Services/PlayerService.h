@@ -23,6 +23,7 @@ protected:
     void HandleGridCellShift(const PacketEvent<ShiftGridCellRequest>& acMessage) const noexcept;
     void HandleExteriorCellEnter(const PacketEvent<EnterExteriorCellRequest>& acMessage) const noexcept;
     void HandleInteriorCellEnter(const PacketEvent<EnterInteriorCellRequest>& acMessage) const noexcept;
+    void RestoreRespawnVitals(entt::entity aCharacter, Player* apPlayer) const noexcept;
     void OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnRequest>& acMessage) const noexcept;
     void OnPlayerLevelRequest(const PacketEvent<PlayerLevelRequest>& acMessage) const noexcept;
 
