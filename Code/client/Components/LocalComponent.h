@@ -6,6 +6,8 @@
 
 #include <Structs/ActionEvent.h>
 
+#include <chrono>
+
 struct LocalComponent
 {
     LocalComponent(uint32_t aId, uint32_t aOwnershipEpoch) noexcept
@@ -19,4 +21,6 @@ struct LocalComponent
     ActionEvent CurrentAction;
     bool IsDead = false;
     bool IsWeaponDrawn = false;
+    bool PendingCorpsePositionSync = false;
+    std::chrono::steady_clock::time_point CorpsePositionSyncDeadline{};
 };
