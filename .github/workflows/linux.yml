@@ -85,6 +85,17 @@ jobs:
           install -m 755 packaged/bin/SkyrimTogetherServer release-stage/
           install -m 644 packaged/lib/libSTServer.so release-stage/
 
+      - name: Check server has no unresolved OpenSSL symbols
+        run: |
+          # libSTServer.so embeds OpenSSL 1.1.1w; an undefined EVP_/SSL_ symbol binds to the
+          # host's OpenSSL 3 at runtime and crashes the first client handshake.
+          unresolved="$(nm -D --undefined-only release-stage/libSTServer.so | grep -E ' (EVP|SSL|CRYPTO|BIO|X509|HMAC|RAND)_' || true)"
+          if [ -n "$unresolved" ]; then
+            echo "::error::libSTServer.so has unresolved OpenSSL symbols:"
+            echo "$unresolved"
+            exit 1
+          fi
+
       - name: Verify Linux binary architecture
         run: |
           file release-stage/SkyrimTogetherServer
