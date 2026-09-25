@@ -28,8 +28,8 @@ namespace
 bool IsPlayerInObjectRange(const Player& acPlayer, const CellIdComponent& acObjectCell) noexcept
 {
     const auto& playerCell = acPlayer.GetCellComponent();
-    return ObjectInteractionPolicy::IsInSenderRange(
-        playerCell.Cell, playerCell.WorldSpaceId, playerCell.CenterCoords,
+    return ObjectInteractionPolicy::CanInteract(
+        acObjectCell.Cell, playerCell.Cell, playerCell.WorldSpaceId, playerCell.CenterCoords,
         acObjectCell.Cell, acObjectCell.WorldSpaceId, acObjectCell.CenterCoords);
 }
 
@@ -296,6 +296,7 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
 
     if (objectComponent.IsDoor)
     {
+        std::size_t recipientCount = 0;
         const bool toggled = ObjectInteractionPolicy::TryToggleDoor(
             true, objectComponent.Door, packet.PreActivationOpenState, activatorExists, ownedBySender,
             packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
@@ -307,20 +308,18 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
                 notifyActivate.Id = packet.Id;
                 notifyActivate.ActivatorId = packet.ActivatorId;
                 notifyActivate.PreActivationOpenState = packet.PreActivationOpenState;
-
-                for (Player* pPlayer : m_world.GetPlayerManager())
-                {
-                    if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == packet.CellId)
-                        pPlayer->Send(notifyActivate);
-                }
+                recipientCount = NotifyObjectPeersInRange(m_world, notifyActivate, objectCell, acMessage.pPlayer);
             });
-        if (!toggled)
-            spdlog::info("Door toggle of {:X}:{:X} rejected (stale state {} or not allowed)", packet.Id.ModId, packet.Id.BaseId, packet.PreActivationOpenState);
+        if (toggled)
+            spdlog::info("[World] door {:X}:{:X} is now {} (player {:X}, cell {:X}:{:X}, peers {})", packet.Id.ModId, packet.Id.BaseId, objectComponent.Door.IsOpen ? "open" : "closed", acMessage.pPlayer->GetId(), objectCell.Cell.ModId, objectCell.Cell.BaseId, recipientCount);
+        else
+            spdlog::info("[World] door {:X}:{:X} toggle rejected (player {:X}, pre-state {}, requested cell {:X}:{:X}, object cell {:X}:{:X})", packet.Id.ModId, packet.Id.BaseId, acMessage.pPlayer->GetId(), packet.PreActivationOpenState, packet.CellId.ModId, packet.CellId.BaseId, objectCell.Cell.ModId, objectCell.Cell.BaseId);
         return;
     }
 
     if (objectComponent.IsActivator)
     {
+        std::size_t recipientCount = 0;
         const bool relayed = ObjectInteractionPolicy::TryRelayActivator(
             true, objectComponent.Activator, m_tick, activatorExists, ownedBySender,
             packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
@@ -332,17 +331,12 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
                 notifyActivate.Id = packet.Id;
                 notifyActivate.ActivatorId = packet.ActivatorId;
                 notifyActivate.PreActivationOpenState = packet.PreActivationOpenState;
-
-                for (Player* pPlayer : m_world.GetPlayerManager())
-                {
-                    if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == packet.CellId)
-                        pPlayer->Send(notifyActivate);
-                }
+                recipientCount = NotifyObjectPeersInRange(m_world, notifyActivate, objectCell, acMessage.pPlayer);
             });
         if (relayed)
-            spdlog::info("[World] activator {:X}:{:X} activation #{}", packet.Id.ModId, packet.Id.BaseId, objectComponent.Activator.ActivationCount);
+            spdlog::info("[World] activator {:X}:{:X} activation #{} from player {:X}, cell {:X}:{:X}, peers {}", packet.Id.ModId, packet.Id.BaseId, objectComponent.Activator.ActivationCount, acMessage.pPlayer->GetId(), objectCell.Cell.ModId, objectCell.Cell.BaseId, recipientCount);
         else
-            spdlog::info("Activator {:X}:{:X} activation rejected (cooldown or not allowed)", packet.Id.ModId, packet.Id.BaseId);
+            spdlog::info("[World] activator {:X}:{:X} activation rejected (player {:X}, requested cell {:X}:{:X}, object cell {:X}:{:X}, cooldown or range/ownership)", packet.Id.ModId, packet.Id.BaseId, acMessage.pPlayer->GetId(), packet.CellId.ModId, packet.CellId.BaseId, objectCell.Cell.ModId, objectCell.Cell.BaseId);
         return;
     }
 
@@ -358,13 +352,7 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) co
     notifyActivate.ActivatorId = packet.ActivatorId;
     notifyActivate.PreActivationOpenState = packet.PreActivationOpenState;
 
-    for (auto pPlayer : m_world.GetPlayerManager())
-    {
-        if (pPlayer != acMessage.pPlayer && pPlayer->GetCellComponent().Cell == packet.CellId)
-        {
-            pPlayer->Send(notifyActivate);
-        }
-    }
+    NotifyObjectPeersInRange(m_world, notifyActivate, objectCell, acMessage.pPlayer);
 }
 
 void ObjectService::OnUpdate(const UpdateEvent& acEvent) noexcept

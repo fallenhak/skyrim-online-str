@@ -371,13 +371,33 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
         acEvent.pObject->Activate(acEvent.pActivator, acEvent.Unk1, acEvent.pObjectToGet, acEvent.Count, acEvent.DefaultProcessing);
     }
 
+    const bool cIsSyncedDoor = IsSyncedDoor(acEvent.pObject);
+    const bool cIsSyncedActivator = IsSyncedActivator(acEvent.pObject);
+    const bool cIsTrackedActivation = cIsSyncedDoor || cIsSyncedActivator;
+
     if (!m_transport.IsConnected())
+    {
+        if (cIsTrackedActivation)
+            spdlog::warn("[World] activation not sent: transport is disconnected (object {:X})", acEvent.pObject->formID);
         return;
+    }
+
+    // A relayed activator runs with the original player's actor on observers.
+    // Do not echo that remote replay back as a fresh request from this client.
+    if ((cIsSyncedDoor || cIsSyncedActivator) && acEvent.pActivator != PlayerCharacter::Get())
+        return;
+
+    if (cIsTrackedActivation)
+        spdlog::info("[World] captured {} activation for form {:X} (state {}, actor form {:X})", cIsSyncedDoor ? "door" : "activator", acEvent.pObject->formID, static_cast<uint8_t>(acEvent.PreActivationOpenState), acEvent.pActivator->formID);
 
     if (Lock* pLock = acEvent.pObject->GetLock())
     {
         if (pLock->flags & 0xFF)
+        {
+            if (cIsTrackedActivation)
+                spdlog::info("[World] activation not sent: object {:X} is locked", acEvent.pObject->formID);
             return;
+        }
     }
 
     ActivateRequest request;
@@ -406,53 +426,77 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
 
     if (pEntity == std::end(view))
     {
-        // spdlog::error("Activator entity not found for form id {:X}", acEvent.pActivator->formID);
+        if (cIsTrackedActivation)
+            spdlog::warn("[World] activation not sent: local actor {:X} has no server entity (object {:X})", acEvent.pActivator->formID, acEvent.pObject->formID);
         return;
     }
 
     std::optional<uint32_t> serverIdRes = Utils::GetServerId(*pEntity);
     if (!serverIdRes.has_value())
+    {
+        if (cIsTrackedActivation)
+            spdlog::warn("[World] activation not sent: local actor {:X} has no server id (object {:X})", acEvent.pActivator->formID, acEvent.pObject->formID);
         return;
+    }
 
     request.ActivatorId = serverIdRes.value();
     request.PreActivationOpenState = acEvent.PreActivationOpenState;
 
     m_transport.Send(request);
+
+    if (cIsTrackedActivation)
+        spdlog::info("[World] sent {} activation for form {:X} (server id {:X}:{:X}, cell {:X}:{:X}, pre-state {}, actor {:X})", cIsSyncedDoor ? "door" : "activator", acEvent.pObject->formID, request.Id.ModId, request.Id.BaseId, request.CellId.ModId, request.CellId.BaseId, request.PreActivationOpenState, request.ActivatorId);
 }
 
 void ObjectService::OnActivateNotify(const NotifyActivate& acMessage) noexcept
 {
-    Actor* pActor = Utils::GetByServerId<Actor>(acMessage.ActivatorId);
-    if (!pActor)
-    {
-        spdlog::error("{}: could not find actor server id {:X}", __FUNCTION__, acMessage.ActivatorId);
-        return;
-    }
-
     const uint32_t cObjectId = World::Get().GetModSystem().GetGameId(acMessage.Id);
     TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(cObjectId));
     if (!pObject)
     {
-        spdlog::error("Failed to retrieve object to activate.");
+        spdlog::error("[World] remote activation could not find object {:X}:{:X} (local form {:X})", acMessage.Id.ModId, acMessage.Id.BaseId, cObjectId);
         return;
     }
 
-    if (pObject->baseForm->formType == FormType::Door)
+    if (IsSyncedDoor(pObject))
     {
-        auto remotePreActivationState = static_cast<TESObjectREFR::OpenState>(acMessage.PreActivationOpenState);
-        TESObjectREFR::OpenState localState = pObject->GetOpenState();
-
-        if (remotePreActivationState != localState)
+        const auto cPreActivationState = static_cast<TESObjectREFR::OpenState>(acMessage.PreActivationOpenState);
+        bool cWasOpen = false;
+        if (cPreActivationState == TESObjectREFR::kOpen || cPreActivationState == TESObjectREFR::kOpening)
+            cWasOpen = true;
+        else if (cPreActivationState != TESObjectREFR::kClosed && cPreActivationState != TESObjectREFR::kClosing)
         {
-            // The doors are unsynced at this point. If we'll Activate the one on our side
-            // it'll just continue to be unsynced (open remotely, closed locally and vice versa)
+            spdlog::warn("[World] ignored door notification for {:X}:{:X}: invalid pre-state {}", acMessage.Id.ModId, acMessage.Id.BaseId, acMessage.PreActivationOpenState);
             return;
         }
+
+        const bool cTargetOpen = !cWasOpen;
+        const auto cLocalState = pObject->GetOpenState();
+        const bool cLocalOpen = cLocalState == TESObjectREFR::kOpen || cLocalState == TESObjectREFR::kOpening;
+        if (cLocalOpen != cTargetOpen)
+        {
+            // The server accepted this toggle, so apply its resulting state directly.
+            // Replaying Activate is timing-sensitive and can leave observers behind.
+            pObject->SetOpen(cTargetOpen);
+        }
+
+        spdlog::info("[World] applied remote door activation {:X}:{:X} (local form {:X}, pre-state {}, local state {}, now {})", acMessage.Id.ModId, acMessage.Id.BaseId, pObject->formID, acMessage.PreActivationOpenState, static_cast<uint8_t>(cLocalState), cTargetOpen ? "open" : "closed");
+        return;
+    }
+
+    Actor* pActor = Utils::GetByServerId<Actor>(acMessage.ActivatorId);
+    if (!pActor)
+    {
+        spdlog::error("[World] remote activation for {:X}:{:X} could not find actor server id {:X}", acMessage.Id.ModId, acMessage.Id.BaseId, acMessage.ActivatorId);
+        return;
     }
 
     // unsure if these flags are the best, but these are passed with the papyrus Activate fn
     // might be an idea to have the client send the flags through NotifyActivate
     pObject->Activate(pActor, 0, nullptr, 1, 0);
+
+    if (IsSyncedActivator(pObject))
+        spdlog::info("[World] applied remote activator activation {:X}:{:X} (local form {:X}, actor {:X})", acMessage.Id.ModId, acMessage.Id.BaseId, pObject->formID, acMessage.ActivatorId);
 }
 
 void ObjectService::OnObjectHarvestedNotify(const NotifyObjectHarvested& acMessage) noexcept
