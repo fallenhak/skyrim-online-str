@@ -5,6 +5,7 @@
 #include <Services/PlayerService.h>
 #include <Services/DropLog.h>
 #include <Services/CharacterService.h>
+#include <Services/PlayerRespawnVitalsPolicy.h>
 #include <Components.h>
 #include <GameServer.h>
 
@@ -16,6 +17,7 @@
 #include <Messages/NotifyInventoryChanges.h>
 #include <Messages/NotifyPlayerRespawn.h>
 #include <Messages/NotifyRespawn.h>
+#include <Messages/NotifyActorValueChanges.h>
 #include <Messages/PlayerLevelRequest.h>
 #include <Messages/NotifyPlayerLevel.h>
 #include <Messages/NotifyPlayerCellChanged.h>
@@ -179,6 +181,40 @@ void PlayerService::HandleInteriorCellEnter(const PacketEvent<EnterInteriorCellR
     SendPlayerCellChanged(pPlayer);
 }
 
+void PlayerService::ApplyRespawnState(const entt::entity aCharacter, Player* apPlayer) const noexcept
+{
+    // Observers re-spawn this player from the server's flags as soon as NotifyRespawn reaches them,
+    // which can be before the owner reports its new state. A respawned player starts alive with its
+    // weapon sheathed; left stale, observers spawned it dead or with the weapon drawn and nothing
+    // corrected it afterwards (the drawn flag is only read at spawn).
+    if (auto* const pCharacter = m_world.try_get<CharacterComponent>(aCharacter))
+    {
+        pCharacter->SetDead(false);
+        pCharacter->SetWeaponDrawn(false);
+    }
+
+    auto* const pActorValues = m_world.try_get<ActorValuesComponent>(aCharacter);
+    if (!pActorValues)
+        return;
+
+    auto restored = PlayerRespawnVitalsPolicy::RestoreToMax(
+        pActorValues->CurrentActorValues.ActorValuesList, pActorValues->CurrentActorValues.ActorMaxValuesList);
+    if (restored.empty())
+        return;
+
+    spdlog::info("[Respawn] restored {} vitals to max for character {:X}", restored.size(), World::ToInteger(aCharacter));
+
+    NotifyActorValueChanges notify;
+    notify.Id = World::ToInteger(aCharacter);
+    if (const auto* pOwnerComponent = m_world.try_get<OwnerComponent>(aCharacter))
+        notify.OwnershipEpoch = pOwnerComponent->OwnershipEpoch;
+    notify.Values = std::move(restored);
+
+    // The owner already restored its vitals locally when it respawned.
+    if (!GameServer::Get()->SendToPlayersInRange(notify, aCharacter, apPlayer))
+        spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
+}
+
 void PlayerService::OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnRequest>& acMessage) const noexcept
 {
     float goldLossFactor = fGoldLossFactor.as_float();
@@ -201,6 +237,8 @@ void PlayerService::OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnReques
                 World::ToInteger(*character), pOwnerComponent != nullptr);
             return;
         }
+
+        ApplyRespawnState(*character, acMessage.pPlayer);
 
         if (goldLossFactor != 0.0)
         {
