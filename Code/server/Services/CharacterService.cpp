@@ -53,32 +53,37 @@
 #include <Services/CorpseRetentionPolicy.h>
 #include <Services/PresentationAuthorityPolicy.h>
 #include <Services/LeveledActorPicker.h>
+#include <Setting.h>
 
 #include <cmath>
 
 namespace
 {
-// Deleveled world, measuring step: the server's fixed-level pick is logged next to the
-// owner's engine pick. Nothing is applied yet; the client write side comes separately.
-void LogLeveledActorPick(World& aWorld, const GameId& acReferenceId, const GameId& acClientPick) noexcept
+Console::Setting bServerLeveledActorPicks{
+    "Gameplay:bServerLeveledActorPicks", "Leveled actors become the NPC the server picks at the place's fixed level (deleveled world)", true};
+
+// Deleveled world: the server's fixed-level pick is logged next to the owner's engine pick
+// and, when enabled, replaces it. Every client (the owner included) then conforms to it.
+std::optional<GameId> ResolveLeveledActorPick(World& aWorld, const GameId& acReferenceId, const GameId& acClientPick) noexcept
 {
     const auto& mods = aWorld.ctx().at<ModsComponent>();
     uint32_t referenceFormId = 0;
     if (!mods.ResolveServerFormId(acReferenceId, referenceFormId))
-        return;
+        return std::nullopt;
 
     const auto pick = aWorld.ctx().at<LeveledActorPicker>().PickForReference(referenceFormId);
-    if (!pick)
-        return;
+    if (!pick || pick->NpcFormId == 0)
+        return std::nullopt;
 
     GameId serverPick{};
-    if (pick->NpcFormId != 0 && !mods.ToNetworkId(pick->NpcFormId, serverPick))
-        return;
+    if (!mods.ToNetworkId(pick->NpcFormId, serverPick))
+        return std::nullopt;
 
     spdlog::info(
         "[World] leveled actor {:X}:{:X}: server pick {:X}:{:X} at level {} (zone {:X}, list {:X}); client picked {:X}:{:X} ({})", acReferenceId.ModId,
         acReferenceId.BaseId, serverPick.ModId, serverPick.BaseId, pick->Level, pick->ZoneId, pick->LeveledListId, acClientPick.ModId, acClientPick.BaseId,
         serverPick == acClientPick ? "same" : "differs");
+    return serverPick;
 }
 constexpr std::uint32_t kHealthActorValue = 24;
 constexpr std::uint32_t kMagickaActorValue = 25;
@@ -1223,7 +1228,11 @@ void CharacterService::CreateCharacter(const PacketEvent<AssignCharacterRequest>
     if (characterComponent.LeveledNpcPickId)
         spdlog::debug("Stored leveled NPC pick {:x}:{:x} for FormId {:x}:{:x}", message.LeveledNpcPickId.ModId, message.LeveledNpcPickId.BaseId, gameId.ModId, gameId.BaseId);
     if (!isPlayer)
-        LogLeveledActorPick(m_world, message.ReferenceId, message.LeveledNpcPickId);
+    {
+        const auto serverPick = ResolveLeveledActorPick(m_world, message.ReferenceId, message.LeveledNpcPickId);
+        if (serverPick && bServerLeveledActorPicks)
+            characterComponent.LeveledNpcPickId = FormIdComponent(*serverPick);
+    }
     characterComponent.FaceTints = message.FaceTints;
     characterComponent.FactionsContent = message.FactionsContent;
     characterComponent.SetDead(message.CurrentActorData.IsDead);

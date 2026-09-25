@@ -523,6 +523,11 @@ void CharacterService::OnAssignCharacter(const AssignCharacterResponse& acMessag
         localComponent.IsDead = acMessage.IsDead;
         localComponent.IsWeaponDrawn = acMessage.IsWeaponDrawn;
         pActor->GetExtension()->SetRemote(false);
+
+        // Deleveled world: the server picks leveled actors at the place's fixed level, so the
+        // owner conforms too. A matching pick is a no-op; otherwise the actor is rebuilt and
+        // reassigned once, now reporting the server's pick.
+        ApplyLeveledNpcPick(pActor, acMessage.LeveledNpcPickId);
     }
     else
     {
