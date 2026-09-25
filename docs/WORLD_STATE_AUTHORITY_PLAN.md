@@ -1,6 +1,6 @@
 # Dünya Durumu Otoritesi: Tek Tek Senkron Yamasından Genel Modele
 
-Durum: **taslak, tartışma için** (2026-09-25). Yazan: Burak'ın Claude'u. Okuyacaklar: Burak, Batuhan ve Batuhan'ın Claude'u.
+Durum: **taslak; Burak'ın 1. ve 2. kararları işlendi** (2026-09-25). Yazan: Burak'ın Claude'u. Okuyacaklar: Burak, Batuhan ve Batuhan'ın Claude'u.
 İlgili: `AUTHORITY_ARCHITECTURE.md`, `ACTOR_AUTHORITY_AUDIT.md`, GitHub #40.
 
 ## 1. Sorun
@@ -98,8 +98,31 @@ Bu sürede test paketleri çıkmaya devam eder. Her aşama kendi başına bir iy
 - Mod'lu içerik (Skyrim.esm dışı) için ESLoader'ın aynı kayıtları okuması gerekir. Load order sunucuda doğru olmalı (VDS'te `loadorder.txt` eksikliği daha önce uyarı üretti).
 - Performans: onbinlerce referans sunucuda bellekte tutulur. Tahminimiz sorun olmaz, ama ölçülmedi.
 
-## 9. Karar bekleyen sorular
-1. Sıra doğru mu: önce dedektör, sonra ESM tablosu?
-2. Leveled seviye kuralı: ilk açanın seviyesi mi, hücre/bölge seviyesi mi, sabit bir değer mi?
-3. Aşama 3 için script sahibi modeli kabul mü? (Alternatif: yalnız bilinen puzzle türleri için özel çözüm.)
-4. İş bölümü tablosu uygun mu?
+## 9. Kararlar
+
+### 9.1 Yön: tam sunucu otoritesi, her konuda (Burak, 2026-09-25)
+> "Clienttan servera aktarma sistemi yerine serverdan clienta aktarma olmadı. Online oyunların çalışma mantığına çevirmemiz lazım. Senkronu tamamen kilitlemek lazım her konuda. HER konuda."
+
+Bundan sonra:
+- **Dünyanın gerçeği sunucuda.** İstemci durum bildirmez, eylem ister. Sunucu karar verir ve herkese yayar. Reddedilen eylem istemcide geri alınır. Bu kural nesneler, envanter, kilitler, activator'lar, ceset ve loot, can ve dead state, zaman ve hava için geçerli.
+- **Olay aktaran yeni yama yapılmaz.** Geçici çözüm gerekirse PR'da "geçici" diye işaretlenir ve bu plandaki yerine bağlanır.
+- **Dürüst sınır:** sunucuda Skyrim motoru yok. Fizik, animasyon, yapay zekâ ve vuruş tespiti gibi **simülasyon** istemcide koşmaya devam eder: aktörün sahibinde, scriptli nesnenin script sahibinde. Sunucu bu simülasyonun **sonuçlarını** doğrular ve tek gerçek olarak dağıtır. Bu, motoru olmayan her Skyrim çok oyunculu projesinin yaptığı ayrım (SkyMP de aktör hareketinde istemciye dayanıyor; Papyrus'u ise sunucuda koşuyor). "Her konuda kilitli senkron", sunucunun her durumun tek sahibi olması anlamına geliyor, simülasyonun sunucuda koşması değil.
+
+### 9.2 Seviye: deleveled world, konuma bağlı (Burak, 2026-09-25)
+> "Oyuncuların kendi seviyesine göre karşılaştığı düşman, lootları ortadan kaldırmamız lazım. Loot konum ve düşman seviyesine bağlı olmalı. Oyuncuya bağlı değil."
+
+Önerilen uygulama (mod gerektirmez, sunucu otoritesiyle birebir uyumlu):
+- Skyrim'in kendi **encounter zone (ECZN)** kayıtları konuma bağlı seviye taşıyor. Skyrim.esm'de 278 zone var ve hepsinin bir minimum seviyesi var, örneğin `BleakFallsBarrowZone` 6–20, `EmbershardMineZone` 6–10. Vanilla oyun zone seviyesini ilk girenin seviyesiyle bu aralıkta sabitliyor. Biz oyuncu seviyesini tamamen çıkarıp **zone'un sabit seviyesini** kullanıyoruz. Kural (öneri): `min` seviye, ya da `min` ile `max` arasında elle ayarlanan bir tablo.
+- **Loot:** sunucu LVLI'yi (Aşama 1b) kabın bulunduğu hücrenin zone seviyesiyle çözer. Ceset loot'u da düşmanın seviyesiyle çözülür.
+- **Düşman:** leveled aktörün (LVLN) şablonunu sunucu zone seviyesiyle seçer ve sahibine bildirir. Sahip istemci kendi seviyesine göre seçmez. İstemcide `Actor::GetLeveledPick` / `ExtraLeveledCreature` üzerinden seçim bugün de okunuyor, yazma tarafı eklenecek.
+- ESM'de zone'u olmayan konumlar için bölge (hold) bazlı bir varsayılan tablo gerekir.
+- Mod alternatifi (Requiem ya da benzeri "static level" modları): dünyayı ESP düzeyinde değiştirir, ama seviyeyi yine istemci motoru hesaplar. Sunucu otoritesiyle çakışır ve her güncellemede ESP dağıtımı gerekir. Önerilmiyor. İstenirse aday modlar ayrıca incelenebilir; isimleri ve 1.7.104 uyumlulukları doğrulanmadı.
+
+### 9.3 Scriptli nesneler (Burak: "bilmiyorum" → öneri)
+Öneri: Aşama 3'teki **script sahibi** modeli. Sebep: 9.1'e uyuyor (gerçek sunucuda, simülasyon tek sahipte) ve sunucuda Papyrus VM'den (SkyMP yolu) çok daha küçük bir iş. Aşama 2 bitince yeniden değerlendirilir.
+
+### 9.4 İş bölümü (Burak: "bilmiyorum" → öneri)
+- **Burak'ın Claude'u:** Aşama 0 (dedektör), Aşama 1a (ESLoader'a LVLI/DOOR/FLOR/ACTI/ECZN ve statik referans tablosu), Aşama 1b (sunucuda leveled çözümü ve zone seviyesi), Aşama 2'nin sunucu tarafı.
+- **Batuhan:** `container-persist` v7 (1b'ye bağlanır), Aşama 4 aktör işleri (respawn/dead state, ceset, draw state), L2 bot ve dedektörün CI'da kullanılması, leveled aktör seçiminin istemci yazma tarafı.
+- Aşama 2'nin istemci tarafı ve Aşama 3: 1b bittikten sonra paylaşılır.
+- Batuhan'ın itirazı varsa #40'ta konuşulur.
