@@ -26,6 +26,10 @@ struct ModsComponent
     // ESLoader form identity selected by the server's load order.
     bool ResolveServerFormId(const GameId& acNetworkId, uint32_t& aResolvedFormId) const noexcept;
 
+    // The reverse: an ESLoader form id to the network GameId clients use. Fails until a
+    // client has registered the owning plugin (network ids come from client mod lists).
+    bool ToNetworkId(uint32_t aServerFormId, GameId& aNetworkId) const noexcept;
+
     uint32_t AddStandard(const TiltedPhoques::String& acpFilename) noexcept;
     uint32_t AddLite(const TiltedPhoques::String& acpFilename) noexcept;
 

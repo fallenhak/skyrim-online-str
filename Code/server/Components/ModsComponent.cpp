@@ -116,6 +116,29 @@ bool ModsComponent::ResolveServerFormId(const GameId& acNetworkId, uint32_t& aRe
     return true;
 }
 
+bool ModsComponent::ToNetworkId(const uint32_t aServerFormId, GameId& aNetworkId) const noexcept
+{
+    const bool isLite = (aServerFormId & 0xFF000000u) == 0xFE000000u;
+    const uint16_t loadOrderId = isLite ? static_cast<uint16_t>((aServerFormId >> 12) & 0x0FFFu) : static_cast<uint16_t>(aServerFormId >> 24);
+
+    for (const auto& [filenameKey, identity] : m_serverPluginIdentities)
+    {
+        if (identity.IsLite != isLite || identity.LoadOrderId != loadOrderId)
+            continue;
+
+        for (const auto& [networkId, networkIdentity] : m_networkModIdentities)
+        {
+            if (networkIdentity.IsLite == isLite && networkIdentity.FilenameKey == filenameKey)
+            {
+                aNetworkId = GameId(networkId, aServerFormId & (isLite ? 0x00000FFFu : 0x00FFFFFFu));
+                return true;
+            }
+        }
+        return false;
+    }
+    return false;
+}
+
 bool ModsComponent::IsInstalled(const String& acpFilename) const noexcept
 {
     String filenameKey;

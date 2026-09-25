@@ -5,6 +5,7 @@
 #include <World.h>
 #include <Components.h>
 #include <Services/ObjectInteractionPolicy.h>
+#include <Services/PluginContainerContents.h>
 #include <Services/PresentationAuthorityPolicy.h>
 #include <Services/InventoryInteractionPolicy.h>
 #include <Services/ContainerContentsCodec.h>
@@ -407,9 +408,9 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
             m_world.emplace<CellIdComponent>(entity, cellId, worldSpaceId, centerCoords);
             auto& inventoryComponent = m_world.emplace<InventoryComponent>(entity);
 
-            // Container baseline: contents persisted by an earlier transfer win; otherwise the
-            // first discoverer's contents become the server's copy. The client baseline is not
-            // verified against the CONT record yet (second phase), so it is logged.
+            // Container baseline, in priority order: contents persisted by an earlier transfer;
+            // contents the server builds from the CONT record at the place's fixed level
+            // (world-state plan, phase 1b); otherwise the first discoverer's contents, logged.
             if (object.IsContainer && !object.IsDoor && !object.IsHarvestable && !objectComponent.IsActivator)
             {
                 std::optional<Inventory> persistedContents;
@@ -417,25 +418,40 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
                 {
                     persistedContents = ContainerContentsCodec::Decode(pPersistedContainer->InventoryHex);
                     if (!persistedContents)
-                        spdlog::warn("[World] container {:X}:{:X} persisted contents are corrupt; falling back to the client baseline",
+                        spdlog::warn("[World] container {:X}:{:X} persisted contents are corrupt; falling back to the plugin or client baseline",
                             object.Id.ModId, object.Id.BaseId);
                 }
 
-                const auto& source = persistedContents ? persistedContents->Entries : object.CurrentInventory.Entries;
-                for (const auto& entry : source)
+                std::optional<PluginContainerContents::Result> pluginContents;
+                if (!persistedContents)
+                    pluginContents = m_world.ctx().at<PluginContainerContents>().Build(object.Id, m_world.ctx().at<ModsComponent>());
+
+                if (pluginContents)
                 {
-                    if (entry.Count > 0 && InventoryInteractionPolicy::HasValidItemPayload(entry))
-                        inventoryComponent.Content.AddOrRemoveEntry(entry);
+                    inventoryComponent.Content = std::move(pluginContents->Contents);
+                    spdlog::info(
+                        "[World] container {:X}:{:X} contents from plugins: {} entries at level {} (zone {:X}); client reported {}", object.Id.ModId,
+                        object.Id.BaseId, inventoryComponent.Content.Entries.size(), pluginContents->Level, pluginContents->ZoneId,
+                        object.CurrentInventory.Entries.size());
+                }
+                else
+                {
+                    const auto& source = persistedContents ? persistedContents->Entries : object.CurrentInventory.Entries;
+                    for (const auto& entry : source)
+                    {
+                        if (entry.Count > 0 && InventoryInteractionPolicy::HasValidItemPayload(entry))
+                            inventoryComponent.Content.AddOrRemoveEntry(entry);
+                    }
+                    if (persistedContents)
+                        spdlog::info("[World] container {:X}:{:X} restored from persistence: {} entries (client reported {})", object.Id.ModId,
+                            object.Id.BaseId, inventoryComponent.Content.Entries.size(), object.CurrentInventory.Entries.size());
+                    else
+                        spdlog::info(
+                            "[World] container {:X}:{:X} baseline learned from player {:X}: {} entries ({} reported)", object.Id.ModId, object.Id.BaseId,
+                            acMessage.pPlayer->GetId(), inventoryComponent.Content.Entries.size(), object.CurrentInventory.Entries.size());
                 }
                 objectComponent.IsContainer = true;
                 objectComponent.HasTrustedState = true;
-                if (persistedContents)
-                    spdlog::info("[World] container {:X}:{:X} restored from persistence: {} entries (client reported {})", object.Id.ModId,
-                        object.Id.BaseId, inventoryComponent.Content.Entries.size(), object.CurrentInventory.Entries.size());
-                else
-                    spdlog::info(
-                        "[World] container {:X}:{:X} baseline learned from player {:X}: {} entries ({} reported)", object.Id.ModId, object.Id.BaseId,
-                        acMessage.pPlayer->GetId(), inventoryComponent.Content.Entries.size(), object.CurrentInventory.Entries.size());
             }
         }
 

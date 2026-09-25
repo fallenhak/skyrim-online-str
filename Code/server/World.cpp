@@ -23,6 +23,7 @@
 
 #include <es_loader/ESLoader.h>
 #include <Services/EncounterZoneIndex.h>
+#include <Services/PluginContainerContents.h>
 
 #include <utility>
 
@@ -72,6 +73,7 @@ World::World(
 
     // Deleveled world: fixed levels of placed references come from encounter zones.
     ctx().emplace<EncounterZoneIndex>(m_recordCollection ? EncounterZoneIndex::Build(*m_recordCollection) : EncounterZoneIndex{});
+    ctx().emplace<PluginContainerContents>(m_recordCollection.get(), ctx().at<EncounterZoneIndex>());
 
     ctx().emplace<ActorPopulationPolicy>(m_recordCollection.get());
     auto& populationPolicy = ctx().at<ActorPopulationPolicy>();
