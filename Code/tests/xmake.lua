@@ -5,7 +5,7 @@ target("TPTests")
     add_includedirs(
         ".", "../encoding", "../client", "../server")
     add_headerfiles("**.h")
-    add_files("*.cpp|PersistenceTests.cpp|RenewableEncounterRepositoryTests.cpp|SessionServiceTests.cpp|ActorPopulationTests.cpp|CharacterNamePolicyTests.cpp|AuthTokenVerifierTests.cpp")
+    add_files("*.cpp|PersistenceTests.cpp|RenewableEncounterRepositoryTests.cpp|SessionServiceTests.cpp|ActorPopulationTests.cpp|CharacterNamePolicyTests.cpp|AuthTokenVerifierTests.cpp|WorldClockRepositoryTests.cpp")
     add_files("../server/Game/Animation/ActionReplayCache.cpp", "../server/Game/Animation/AnimationEventLists.cpp")
     add_deps("SkyrimEncoding")
     add_packages(
@@ -20,7 +20,7 @@ target("PersistenceTests")
     set_group("Tests")
     add_includedirs(
         ".", "../encoding", "../server")
-    add_files("PersistenceTests.cpp", "RenewableEncounterRepositoryTests.cpp", "CharacterNamePolicyTests.cpp", "../TestMain.cpp")
+    add_files("PersistenceTests.cpp", "RenewableEncounterRepositoryTests.cpp", "WorldClockRepositoryTests.cpp", "CharacterNamePolicyTests.cpp", "../TestMain.cpp")
     add_files("../server/Persistence/*.cpp")
     add_files("../server/Services/CharacterNamePolicy.cpp")
     add_deps("SkyrimEncoding")

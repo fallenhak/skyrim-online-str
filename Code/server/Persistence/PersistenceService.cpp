@@ -18,6 +18,7 @@ PersistenceService::PersistenceService(std::filesystem::path aDatabasePath)
     , m_characterRepository(m_database)
     , m_renewableEncounterRepository(m_database)
     , m_worldObjectRepository(m_database)
+    , m_worldClockRepository(m_database)
 {
     m_database.Migrate();
 }
