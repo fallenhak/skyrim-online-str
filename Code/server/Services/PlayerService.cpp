@@ -3,6 +3,7 @@
 #include "Events/PlayerLeaveCellEvent.h"
 
 #include <Services/PlayerService.h>
+#include <Services/DropLog.h>
 #include <Services/CharacterService.h>
 #include <Components.h>
 #include <GameServer.h>
@@ -189,7 +190,11 @@ void PlayerService::OnPlayerRespawnRequest(const PacketEvent<PlayerRespawnReques
         const auto* const pOwnerComponent = m_world.try_get<OwnerComponent>(*character);
         if (!pOwnerComponent ||
             !m_world.GetCharacterService().BeginOwnerRespawnLifecycle(*character, acMessage.pPlayer, pOwnerComponent->OwnershipEpoch))
+        {
+            DropLog::Info("player respawn: lifecycle refused", "player {:X}, character {:X}, has owner {}", acMessage.pPlayer->GetId(),
+                World::ToInteger(*character), pOwnerComponent != nullptr);
             return;
+        }
 
         if (goldLossFactor != 0.0)
         {

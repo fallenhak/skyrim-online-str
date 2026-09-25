@@ -1,4 +1,5 @@
 #include "InventoryService.h"
+#include <Services/DropLog.h>
 
 #include <Components.h>
 #include <World.h>
@@ -38,7 +39,7 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
 
     if (!InventoryInteractionPolicy::HasValidItemPayload(message.Item))
     {
-        spdlog::debug("Rejected malformed inventory change from player {:X} for entity {:X}", acMessage.pPlayer->GetId(), message.ServerId);
+        DropLog::Info("inventory change: malformed item", "player {:X}, entity {:X}", acMessage.pPlayer->GetId(), message.ServerId);
         return;
     }
 
@@ -47,7 +48,10 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     const auto it = view.find(static_cast<entt::entity>(message.ServerId));
 
     if (it == view.end())
+    {
+        DropLog::Info("inventory change: entity not found", "player {:X}, entity {:X}", acMessage.pPlayer->GetId(), message.ServerId);
         return;
+    }
 
     const auto* pOwnerComponent = m_world.try_get<OwnerComponent>(*it);
     const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(*it);
@@ -82,8 +86,8 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
             isInAuthorizedRange))
     {
         const uint32_t ownerId = pOwnerComponent && pOwnerComponent->GetOwner() ? pOwnerComponent->GetOwner()->GetId() : 0;
-        spdlog::debug(
-            "Rejected inventory change from player {:X} for entity {:X}; owner {:X}, epoch {} (current {}), object {} (trusted {}), character {}, persistent {}, in range {}",
+        DropLog::Info("inventory change: not authorized",
+            "player {:X}, entity {:X}; owner {:X}, epoch {} (current {}), object {} (trusted {}), character {}, persistent {}, in range {}",
             acMessage.pPlayer->GetId(), message.ServerId, ownerId, message.OwnershipEpoch, pOwnerComponent ? pOwnerComponent->OwnershipEpoch : 0,
             isObject, hasTrustedObjectState, pCharacterComponent != nullptr, pPersistentCharacterComponent != nullptr, isInAuthorizedRange);
         return;
@@ -94,7 +98,7 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
     auto& inventoryComponent = view.get<InventoryComponent>(*it);
     if (!InventoryInteractionPolicy::CanApplyItem(inventoryComponent.Content, message.Item))
     {
-        spdlog::debug("Rejected inventory change from player {:X} for entity {:X}: item cannot be applied to the current inventory", acMessage.pPlayer->GetId(), message.ServerId);
+        DropLog::Info("inventory change: cannot apply item", "player {:X}, entity {:X}, item {:X}:{:X} x{}", acMessage.pPlayer->GetId(), message.ServerId, message.Item.BaseId.ModId, message.Item.BaseId.BaseId, message.Item.Count);
         return;
     }
 
@@ -124,7 +128,10 @@ void InventoryService::OnEquipmentChanges(const PacketEvent<RequestEquipmentChan
     const auto it = view.find(static_cast<entt::entity>(message.ServerId));
 
     if (it == view.end())
+    {
+        DropLog::Info("equipment change: entity not found", "player {:X}, entity {:X}", acMessage.pPlayer->GetId(), message.ServerId);
         return;
+    }
 
     const auto* pOwnerComponent = m_world.try_get<OwnerComponent>(*it);
     const auto* pCharacterComponent = m_world.try_get<CharacterComponent>(*it);
@@ -136,8 +143,8 @@ void InventoryService::OnEquipmentChanges(const PacketEvent<RequestEquipmentChan
             message.OwnershipEpoch, currentEpoch))
     {
         const uint32_t ownerId = hasOwner ? pOwnerComponent->GetOwner()->GetId() : 0;
-        spdlog::debug(
-            "Rejected equipment change from player {:X} for entity {:X}; character {}, owner {:X}, requested epoch {} (current {})",
+        DropLog::Info("equipment change: not authorized",
+            "player {:X}, entity {:X}; character {}, owner {:X}, requested epoch {} (current {})",
             acMessage.pPlayer->GetId(), message.ServerId, pCharacterComponent != nullptr,
             ownerId, message.OwnershipEpoch, currentEpoch);
         return;
@@ -169,13 +176,16 @@ void InventoryService::OnWeaponDrawnRequest(const PacketEvent<DrawWeaponRequest>
     const auto it = characterView.find(static_cast<entt::entity>(message.Id));
 
     if (it == std::end(characterView))
+    {
+        DropLog::Info("weapon drawn: actor not found", "player {:X}, actor {:X}", acMessage.pPlayer->GetId(), message.Id);
         return;
+    }
 
     auto& ownerComponent = characterView.get<OwnerComponent>(*it);
     if (!ownerComponent.IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
     {
-        spdlog::debug(
-            "Rejected weapon drawn update from player {:X} for actor {:X}; requested epoch {} does not match current epoch {}",
+        DropLog::Info("weapon drawn: not owner",
+            "player {:X}, actor {:X}; requested epoch {} does not match current epoch {}",
             acMessage.pPlayer->GetId(), message.Id, message.OwnershipEpoch, ownerComponent.OwnershipEpoch);
         return;
     }

@@ -1,4 +1,5 @@
 #include <Services/CharacterService.h>
+#include <Services/DropLog.h>
 #include <Components.h>
 #include <GameServer.h>
 #include <World.h>
@@ -504,7 +505,7 @@ void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwner
     const auto it = view.find(cEntity);
     if (it == view.end())
     {
-        spdlog::debug("Ignored ownership release from player {:X} for missing actor {:X}", acMessage.pPlayer->GetId(), message.ServerId);
+        DropLog::Info("ownership release: actor not found", "player {:X}, actor {:X}", acMessage.pPlayer->GetId(), message.ServerId);
         return;
     }
 
@@ -512,8 +513,8 @@ void CharacterService::OnOwnershipTransferRequest(const PacketEvent<RequestOwner
     if (ownerComponent.GetOwner() != acMessage.pPlayer || ownerComponent.OwnershipEpoch != message.OwnershipEpoch)
     {
         const uint32_t ownerId = ownerComponent.GetOwner() ? ownerComponent.GetOwner()->GetId() : 0;
-        spdlog::debug(
-            "Ignored ownership release from player {:X} for actor {:X}; current owner is {:X} and requested epoch {} does not match {}",
+        DropLog::Info("ownership release: not owner or stale epoch",
+            "player {:X}, actor {:X}; current owner {:X}, requested epoch {} (current {})",
             acMessage.pPlayer->GetId(), message.ServerId, ownerId, message.OwnershipEpoch, ownerComponent.OwnershipEpoch);
         return;
     }
@@ -630,7 +631,11 @@ void CharacterService::OnOwnershipClaimRequest(const PacketEvent<RequestOwnershi
     const entt::entity cEntity = static_cast<entt::entity>(message.ServerId);
 
     if (!CanClaimOwnership(acMessage.pPlayer, cEntity, message.ExpectedOwnershipEpoch, OwnershipTransferReason::LeaderClaim))
+    {
+        DropLog::Info("ownership claim: refused", "player {:X}, actor {:X}, expected epoch {}", acMessage.pPlayer->GetId(), message.ServerId,
+            message.ExpectedOwnershipEpoch);
         return;
+    }
 
     TransferOwnership(acMessage.pPlayer, cEntity, OwnershipTransferReason::LeaderClaim);
 }
@@ -964,7 +969,11 @@ void CharacterService::OnNewPackageRequest(const PacketEvent<NewPackageRequest>&
     const auto characterView = m_world.view<CharacterComponent, OwnerComponent>();
     const auto it = characterView.find(static_cast<entt::entity>(message.ActorId));
     if (it == characterView.end() || !characterView.get<OwnerComponent>(*it).IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
+    {
+        DropLog::Info("new package: actor not found or not owner", "player {:X}, actor {:X}, epoch {}", acMessage.pPlayer->GetId(), message.ActorId,
+            message.OwnershipEpoch);
         return;
+    }
 
     NotifyNewPackage notify;
     notify.ActorId = message.ActorId;
@@ -1029,13 +1038,17 @@ void CharacterService::OnRequestRespawn(const PacketEvent<RequestRespawn>& acMes
     auto it = view.find(static_cast<entt::entity>(acMessage.Packet.ActorId));
     if (it == view.end())
     {
-        spdlog::warn("No OwnerComponent found for actor id {:X}", acMessage.Packet.ActorId);
+        DropLog::Info("respawn: actor not found", "player {:X}, actor {:X}", acMessage.pPlayer->GetId(), acMessage.Packet.ActorId);
         return;
     }
 
     auto& ownerComponent = view.get<OwnerComponent>(*it);
     if (acMessage.Packet.OwnershipEpoch == 0 || ownerComponent.OwnershipEpoch != acMessage.Packet.OwnershipEpoch)
+    {
+        DropLog::Info("respawn: stale epoch", "player {:X}, actor {:X}, requested epoch {} (current {})", acMessage.pPlayer->GetId(),
+            acMessage.Packet.ActorId, acMessage.Packet.OwnershipEpoch, ownerComponent.OwnershipEpoch);
         return;
+    }
 
     if (ownerComponent.IsCurrentOwner(acMessage.pPlayer, acMessage.Packet.OwnershipEpoch))
     {
