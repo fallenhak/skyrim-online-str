@@ -4,6 +4,7 @@
 #include <Services/ObjectSyncPolicy.h>
 #include <Services/ActivatorReplayPolicy.h>
 #include <Services/WorldObjectTrackingPolicy.h>
+#include <Services/PuzzlePillarPolicy.h>
 
 #include <World.h>
 #include <Utils.h>
@@ -155,13 +156,20 @@ struct ScopedActivatorStateReplay final
 {
     explicit ScopedActivatorStateReplay(const uint32_t aFormId) noexcept
         : PreviousFormId(s_replayingActivatorFormId)
+        , PreviousPillarReplay(PuzzlePillarPolicy::g_isReplayingServerState)
     {
         s_replayingActivatorFormId = aFormId;
+        PuzzlePillarPolicy::g_isReplayingServerState = true;
     }
 
-    ~ScopedActivatorStateReplay() noexcept { s_replayingActivatorFormId = PreviousFormId; }
+    ~ScopedActivatorStateReplay() noexcept
+    {
+        s_replayingActivatorFormId = PreviousFormId;
+        PuzzlePillarPolicy::g_isReplayingServerState = PreviousPillarReplay;
+    }
 
     uint32_t PreviousFormId{};
+    bool PreviousPillarReplay{};
 };
 
 void TrackLocalWorldItemTaken(const uint32_t aFormId) noexcept

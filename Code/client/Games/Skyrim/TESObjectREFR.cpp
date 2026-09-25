@@ -34,6 +34,9 @@
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>
 #include <Forms/TESActorBase.h>
+#include <Services/PuzzlePillarPolicy.h>
+
+#include <chrono>
 
 #include <Structs/AnimationGraphDescriptorManager.h>
 #include <Structs/AnimationVariables.h>
@@ -1059,6 +1062,19 @@ bool TP_MAKE_THISCALL(HookPlayAnimation, void, uint32_t auiStackID, TESObjectREF
 bool TP_MAKE_THISCALL(HookActivate, TESObjectREFR, TESObjectREFR* apActivator, uint8_t aUnk1, TESBoundObject* apObjectToGet, int32_t aCount, char aDefaultProcessing)
 {
     Actor* pActivator = Cast<Actor>(apActivator);
+
+    if (pActivator && apThis->baseForm && PuzzlePillarPolicy::IsPuzzlePillar(apThis->baseForm->formID))
+    {
+        static PuzzlePillarPolicy::Lockout s_pillarLockout;
+        const auto cNowMs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+        if (!s_pillarLockout.TryActivate(
+                apThis->formID, pActivator == PlayerCharacter::Get() && !PuzzlePillarPolicy::g_isReplayingServerState, cNowMs))
+        {
+            spdlog::info("[World] puzzle pillar {:X} still turning; local activation ignored", apThis->formID);
+            return false;
+        }
+    }
 
     // Exclude books from activation since only reading them removes them from the cell
     // Note: Books are now unsynced 
