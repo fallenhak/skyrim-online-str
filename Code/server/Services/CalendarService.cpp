@@ -42,10 +42,10 @@ void CalendarService::OnPlayerJoin(const PlayerJoinEvent& acEvent) noexcept
     if (playerHasFurthestTime)
     {
         // Note that this doesn't set timescale because the server config should set that.
-        if (!m_timeSetFromFirstPlayer)
+        if (!m_timeInitialized)
         {
             m_dateTime.m_timeModel.Time = acEvent.PlayerTime.m_timeModel.Time;
-            m_timeSetFromFirstPlayer = true;
+            m_timeInitialized = true;
         }
         m_dateTime.m_timeModel.Day = acEvent.PlayerTime.m_timeModel.Day;
         m_dateTime.m_timeModel.Month = acEvent.PlayerTime.m_timeModel.Month;
@@ -61,6 +61,10 @@ void CalendarService::OnPlayerJoin(const PlayerJoinEvent& acEvent) noexcept
         GameServer::Get()->SendToPlayers(timeMsg);
     else
         acEvent.pPlayer->Send(timeMsg);
+
+    const auto [hour, minute] = GetTime();
+    spdlog::info("[CalendarService] Sent server clock {:02}:{:02}, timescale {}, to player {}", hour, minute,
+        m_dateTime.m_timeModel.TimeScale, acEvent.pPlayer->GetId());
 }
 
 bool CalendarService::SetTime(int aHours, int aMinutes, float aScale) noexcept
@@ -73,6 +77,7 @@ bool CalendarService::SetTime(int aHours, int aMinutes, float aScale) noexcept
         auto minutes = static_cast<float>(aMinutes) * 0.17f;
         minutes = floor(minutes * 100) / 1000;
         m_dateTime.m_timeModel.Time = static_cast<float>(aHours) + minutes;
+        m_timeInitialized = true;
 
         SendTimeResync();
 

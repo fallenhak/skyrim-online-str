@@ -42,7 +42,7 @@ private:
 
     DateTime m_dateTime;
     uint64_t m_lastTick = 0;
-    bool m_timeSetFromFirstPlayer = false;
+    bool m_timeInitialized = false;
 
     World& m_world;
 

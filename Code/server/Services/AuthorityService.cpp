@@ -31,21 +31,3 @@ bool AuthorityService::IsWorldAuthority(const Player* apPlayer) const noexcept
 
     return pAuthority == apPlayer;
 }
-
-bool AuthorityService::TrySetWeatherState(Player* apPlayer, const GameId& acWeather) noexcept
-{
-    if (!IsWorldAuthority(apPlayer))
-        return false;
-
-    m_weatherState = acWeather;
-    return true;
-}
-
-bool AuthorityService::TryGetWeatherState(Player* apPlayer, GameId& aWeather) const noexcept
-{
-    if (!apPlayer || m_weatherState == GameId{})
-        return false;
-
-    aWeather = m_weatherState;
-    return true;
-}

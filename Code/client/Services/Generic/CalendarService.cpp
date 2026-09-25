@@ -45,6 +45,9 @@ void CalendarService::OnTimeUpdate(const ServerTimeSettings& acMessage) noexcept
         m_onlineTime.m_timeModel.Month = m_offlineTime.m_timeModel.Month;
         m_onlineTime.m_timeModel.Year = m_offlineTime.m_timeModel.Year;
     }
+
+    spdlog::info("[CalendarService] Received server clock time {:.3f}, timescale {} (syncDate={})", m_onlineTime.m_timeModel.Time,
+        m_onlineTime.m_timeModel.TimeScale, m_world.GetServerSettings().SyncPlayerCalendar);
 }
 
 void CalendarService::OnDisconnected(const DisconnectedEvent&) noexcept
