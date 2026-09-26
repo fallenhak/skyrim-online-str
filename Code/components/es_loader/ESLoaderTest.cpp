@@ -41,6 +41,18 @@ TEST_F(ESLoaderTest, GetMapMarkerLandmark)
     EXPECT_EQ(mapMarker.m_markerData.m_marker, Chunks::MapMarkerData::MARKER_TYPE::kLandmark);
 }
 
+// A placed leveled item: a DummyPotion base with the list to roll in XLIB (Temple of Kynareth).
+TEST_F(ESLoaderTest, GetPlacedLeveledItemTemple)
+{
+    auto& pCollection = ESLoaderTest::GetCollection();
+
+    REFR& potion = pCollection->GetObjectRefById(0xEF047);
+
+    EXPECT_EQ(potion.m_basicObject.m_baseId, 0x6A07E);
+    EXPECT_EQ(potion.m_leveledItemBase, 0x3A1BE);
+    EXPECT_NE(pCollection->FindLeveledItemById(potion.m_leveledItemBase), nullptr);
+}
+
 TEST_F(ESLoaderTest, GetNpcFaendal)
 {
     auto& pCollection = ESLoaderTest::GetCollection();

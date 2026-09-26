@@ -43,8 +43,13 @@ public:
     // reference is not plugin-placed or its plugin is not registered by any client yet.
     [[nodiscard]] std::optional<LockData> InitialLock(const GameId& acReferenceId, const ModsComponent& acMods) const noexcept;
 
+    // The item a plugin-placed leveled item reference (XLIB) holds, rolled once on the server at the
+    // place's level and seeded by the reference. Empty for any other reference or when nothing is rolled.
+    [[nodiscard]] std::optional<GameId> ResolvePlacedLeveledItem(const GameId& acReferenceId, const ModsComponent& acMods) noexcept;
+
 private:
     [[nodiscard]] const LeveledItemResolver::List* FindList(uint32_t aFormId) noexcept;
+    [[nodiscard]] uint16_t PlaceLevel(uint32_t aReferenceFormId, uint32_t* apZoneId = nullptr) const noexcept;
 
     const ESLoader::RecordCollection* m_pRecords;
     const EncounterZoneIndex& m_zones;

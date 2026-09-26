@@ -35,6 +35,7 @@
 #include <Actor.h>
 #include <Components.h>
 #include <Interface/UI.h>
+#include <Forms/TESBoundObject.h>
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>
 #include <Forms/BGSEncounterZone.h>
@@ -238,8 +239,9 @@ void ProcessRotationReplays(const double aDelta) noexcept
 }
 
 // A plant is picked in place: the game keeps the reference and shows its harvested model (only the flowers
-// or the cap go). Placed ingredients are items and disappear. A model reads the harvested flag when it loads,
-// so a plant changed from here is reloaded: hidden now, shown again once its old 3D is gone.
+// or the cap go). Placed ingredients are items and disappear. A model reads the harvested flag (or a swapped
+// base) when it loads, so a reference changed from here is reloaded: hidden now, shown again once its old 3D
+// is gone.
 bool IsPickedInPlace(const TESObjectREFR* apObject) noexcept
 {
     return apObject && apObject->baseForm && apObject->baseForm->formType != FormType::Ingredient;
@@ -272,10 +274,29 @@ void ProcessModelRefreshes(const double aDelta) noexcept
             continue;
         }
 
-        if (TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(it->FormId)); pObject && pObject->IsDisabled())
+        // Taken meanwhile: stays hidden, the taken state owns it now.
+        TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(it->FormId));
+        if (pObject && pObject->IsDisabled() && s_worldItemDisabledRefs.find(it->FormId) == s_worldItemDisabledRefs.end())
             pObject->Enable();
         it = s_pendingModelRefreshes.erase(it);
     }
+}
+
+void ApplyServerLeveledItem(TESObjectREFR* apObject, const GameId& acItemId) noexcept
+{
+    if (!apObject || !acItemId)
+        return;
+
+    auto* pItem = Cast<TESBoundObject>(TESForm::GetById(World::Get().GetModSystem().GetGameId(acItemId)));
+    if (!pItem || apObject->baseForm == pItem)
+        return;
+
+    spdlog::info("World item {:X} set to the server's leveled pick {:X} (was {:X})", apObject->formID, pItem->formID,
+        apObject->baseForm ? apObject->baseForm->formID : 0);
+    apObject->SetObjectReference(pItem);
+
+    // A hidden (taken) item needs no new model now; a visible one is reloaded with the new base.
+    RefreshModel(apObject);
 }
 
 void TrackLocalWorldItemTaken(const uint32_t aFormId) noexcept
@@ -672,6 +693,9 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
             ApplyWorldItemTaken(pObject);
         else if (objectData.IsOpenLoot)
             RestoreWorldItem(pObject);
+
+        if (objectData.IsOpenLoot)
+            ApplyServerLeveledItem(pObject, objectData.LeveledItemId);
 
         // Late join / re-entry: match the door to the server's open state.
         if (objectData.IsDoor && objectData.IsDoorStateKnown && IsSyncedDoor(pObject))

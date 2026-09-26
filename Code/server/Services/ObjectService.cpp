@@ -497,6 +497,11 @@ ObjectData ObjectService::BuildObjectData(const entt::entity aEntity) const noex
     objectData.IsActivator = objectComponent.IsActivator;
     objectData.ActivationCount = objectComponent.Activator.ActivationCount;
     objectData.IsContainer = objectComponent.IsContainer;
+    if (objectComponent.IsOpenLoot)
+    {
+        if (const auto leveledItem = m_world.ctx().at<PluginContainerContents>().ResolvePlacedLeveledItem(objectData.Id, m_world.ctx().at<ModsComponent>()))
+            objectData.LeveledItemId = *leveledItem;
+    }
     if (objectComponent.HasTrustedState)
     {
         objectData.CurrentLockData = objectComponent.CurrentLockData;

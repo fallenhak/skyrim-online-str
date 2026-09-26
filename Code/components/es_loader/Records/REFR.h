@@ -18,6 +18,9 @@ public:
     uint32_t m_lockKey{};
     // XEZN on the reference itself overrides the cell's encounter zone.
     uint32_t m_encounterZone{};
+    // XLIB: a placed leveled item. The base (NAME) is a dummy such as DummyPotion; the game rolls this
+    // LVLI when the reference loads and swaps the base for the item it picked.
+    uint32_t m_leveledItemBase{};
 
     void ParseChunks(REFR& aSourceRecord, TiltedPhoques::Map<uint8_t, uint32_t>& aParentToFormIdPrefix) noexcept;
 };

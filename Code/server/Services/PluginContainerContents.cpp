@@ -58,6 +58,43 @@ std::optional<LockData> PluginContainerContents::InitialLock(const GameId& acRef
     return lock;
 }
 
+uint16_t PluginContainerContents::PlaceLevel(const uint32_t aReferenceFormId, uint32_t* apZoneId) const noexcept
+{
+    const auto zone = m_zones.ResolveReference(*m_pRecords, aReferenceFormId);
+    if (apZoneId)
+        *apZoneId = zone.ZoneId;
+    if (const auto range = m_zones.FindRange(zone.ZoneId))
+        return static_cast<uint16_t>(std::max<int32_t>(1, range->Min));
+    return kDefaultPlaceLevel;
+}
+
+std::optional<GameId> PluginContainerContents::ResolvePlacedLeveledItem(const GameId& acReferenceId, const ModsComponent& acMods) noexcept
+{
+    if (!m_pRecords)
+        return std::nullopt;
+
+    uint32_t referenceFormId = 0;
+    if (!acMods.ResolveServerFormId(acReferenceId, referenceFormId))
+        return std::nullopt;
+
+    const REFR* pReference = m_pRecords->FindObjectRefById(referenceFormId);
+    if (!pReference)
+        return std::nullopt;
+    const auto* pList = pReference->m_leveledItemBase ? FindList(pReference->m_leveledItemBase) : nullptr;
+    if (!pList)
+        return std::nullopt;
+
+    const auto lookup = [this](uint32_t aFormId) { return FindList(aFormId); };
+    const auto rolled = LeveledItemResolver::Resolve(*pList, PlaceLevel(referenceFormId), 1, lookup, referenceFormId * 31u + 7u);
+    if (rolled.empty())
+        return std::nullopt;
+
+    GameId itemId{};
+    if (!acMods.ToNetworkId(rolled.front().FormId, itemId))
+        return std::nullopt;
+    return itemId;
+}
+
 std::optional<PluginContainerContents::Result> PluginContainerContents::Build(const GameId& acReferenceId, const ModsComponent& acMods) noexcept
 {
     if (!m_pRecords)
@@ -75,11 +112,7 @@ std::optional<PluginContainerContents::Result> PluginContainerContents::Build(co
         return std::nullopt;
 
     Result result{};
-    const auto zone = m_zones.ResolveReference(*m_pRecords, referenceFormId);
-    result.ZoneId = zone.ZoneId;
-    result.Level = kDefaultPlaceLevel;
-    if (const auto range = m_zones.FindRange(zone.ZoneId))
-        result.Level = static_cast<uint16_t>(std::max<int32_t>(1, range->Min));
+    result.Level = PlaceLevel(referenceFormId, &result.ZoneId);
 
     const auto lookup = [this](uint32_t aFormId) { return FindList(aFormId); };
 

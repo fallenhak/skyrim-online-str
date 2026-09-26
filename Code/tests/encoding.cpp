@@ -119,6 +119,8 @@ TEST_CASE("AssignObjectsResponse preserves provisional object state", "[encoding
     object.ServerId = 42;
     object.Id = GameId{1, 0x200};
     object.IsStateUntrusted = true;
+    object.IsOpenLoot = true;
+    object.LeveledItemId = GameId{0, 0x3EADE};
     sent.Objects.push_back(object);
 
     Buffer buffer(1000);
