@@ -250,6 +250,11 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         request.ReferenceId = GameId(0, kPlayerReference);
         // FormId stays empty: the server rejects a base id on the player reference.
         request.CellId = GameId(m_fixtureModId, m_config.CellBaseId);
+        for (uint32_t i = 0; i < 3; ++i)
+        {
+            request.CurrentActorData.InitialActorValues.ActorValuesList[24 + i] = kBotMaxVitals[i];
+            request.CurrentActorData.InitialActorValues.ActorMaxValuesList[24 + i] = kBotMaxVitals[i];
+        }
         Send(request);
         break;
     }

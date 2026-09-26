@@ -26,4 +26,6 @@ using Bots = std::vector<std::unique_ptr<Bot>>;
 [[nodiscard]] int RunAfterRestart(Bots& aBots, const std::string& acExpectationFile);
 // Step 5: the placed leveled actor gets the server's pick for every client, whatever they claim.
 [[nodiscard]] int RunLeveledActor(Bots& aBots);
+// Step 6: a bot dies and respawns; the peer sees it dead, then respawned alive at full vitals.
+[[nodiscard]] int RunDeathAndRespawn(Bots& aBots);
 [[nodiscard]] int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string& acSecret);

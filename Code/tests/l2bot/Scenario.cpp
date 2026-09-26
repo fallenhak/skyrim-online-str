@@ -9,6 +9,12 @@
 #include <Messages/AssignObjectsResponse.h>
 #include <Messages/NotifyCharacterAssignmentRejected.h>
 #include <Messages/NotifyActivate.h>
+#include <Messages/NotifyActorValueChanges.h>
+#include <Messages/NotifyDeathStateChange.h>
+#include <Messages/NotifyRespawn.h>
+#include <Messages/PlayerRespawnRequest.h>
+#include <Messages/RequestActorValueChanges.h>
+#include <Messages/RequestDeathStateChange.h>
 #include <Messages/NotifyContainerTransferResult.h>
 #include <Messages/NotifyInventoryChanges.h>
 #include <Messages/RequestContainerTransfer.h>
@@ -429,5 +435,93 @@ int RunLeveledActor(Bots& aBots)
 
     if (failures == 0)
         spdlog::info("PASS step 5: both bots see the server's leveled pick {:X} for actor {}", L2Fixture::kBandit, responses[0]->ServerId);
+    return failures;
+}
+
+int RunDeathAndRespawn(Bots& aBots)
+{
+    Bot& victim = *aBots[0];
+    Bot& peer = *aBots[1];
+    const uint32_t victimId = victim.GetServerId();
+    const uint32_t epoch = victim.GetOwnershipEpoch();
+    constexpr uint32_t kHealth = 24;
+
+    bool sawZeroHealth = false;
+    bool sawDead = false;
+    std::optional<NotifyRespawn> respawn;
+    std::map<uint32_t, float> restored;
+    peer.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        switch (acMessage.GetOpcode())
+        {
+        case kNotifyActorValueChanges:
+        {
+            const auto& notify = static_cast<const NotifyActorValueChanges&>(acMessage);
+            if (notify.Id != victimId)
+                break;
+            for (const auto& [id, value] : notify.Values)
+            {
+                // The restored vitals go out just before NotifyRespawn, so count them from the death on.
+                if (!sawDead && id == kHealth && value <= 0.f)
+                    sawZeroHealth = true;
+                else if (sawDead)
+                    restored[id] = value;
+            }
+            break;
+        }
+        case kNotifyDeathStateChange:
+        {
+            const auto& notify = static_cast<const NotifyDeathStateChange&>(acMessage);
+            if (notify.Id == victimId && notify.IsDead)
+                sawDead = true;
+            break;
+        }
+        case kNotifyRespawn:
+        {
+            const auto& notify = static_cast<const NotifyRespawn&>(acMessage);
+            if (notify.ActorId == victimId)
+                respawn = notify;
+            break;
+        }
+        default: break;
+        }
+    };
+
+    // The owner reports the killing blow, then its death.
+    RequestActorValueChanges health{};
+    health.Id = victimId;
+    health.OwnershipEpoch = epoch;
+    health.Values[kHealth] = 0.f;
+    victim.Send(health);
+
+    RequestDeathStateChange death{};
+    death.Id = victimId;
+    death.OwnershipEpoch = epoch;
+    death.IsDead = true;
+    victim.Send(death);
+    static_cast<void>(Pump(aBots, [&] { return sawZeroHealth && sawDead; }, std::chrono::seconds(5)));
+
+    int failures = 0;
+    failures += Check(sawZeroHealth, "the peer sees the victim's health drop to 0");
+    failures += Check(sawDead, "the peer sees the victim die");
+
+    // The respawn: the server decides the new incarnation is alive at full vitals.
+    victim.Send(PlayerRespawnRequest{});
+    static_cast<void>(Pump(aBots, [&] { return respawn.has_value() && restored.size() == 3; }, std::chrono::seconds(5)));
+    peer.OnMessage = nullptr;
+
+    failures += Check(respawn.has_value(), "the peer is told the victim respawned");
+    if (respawn)
+        failures += Check(respawn->OwnershipEpoch != 0 && respawn->OwnershipEpoch == epoch, "the respawn carries the owner's current epoch");
+    for (uint32_t i = 0; i < 3; ++i)
+    {
+        const auto it = restored.find(kHealth + i);
+        if (it == restored.end() || it->second != kBotMaxVitals[i])
+            spdlog::error("vital {} after respawn: {}, expected {}", kHealth + i, it == restored.end() ? -1.f : it->second, kBotMaxVitals[i]);
+        failures += Check(it != restored.end() && it->second == kBotMaxVitals[i], "the peer sees the vital back at its maximum");
+    }
+
+    if (failures == 0)
+        spdlog::info("PASS step 6: {} died and respawned; {} saw it dead, then alive at full vitals (epoch {})", victim.GetName(), peer.GetName(), epoch);
     return failures;
 }

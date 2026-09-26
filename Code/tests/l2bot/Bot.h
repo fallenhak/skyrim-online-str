@@ -13,6 +13,9 @@
 // A scripted client with no game: it walks the same session protocol the game client does
 // (auth, character list, create or select, snapshot, ready, player assignment, cell entry)
 // and records what the server told it (#91).
+// Vitals the bot's character reports at assignment (health, magicka, stamina).
+inline constexpr float kBotMaxVitals[3] = {100.f, 50.f, 80.f};
+
 class Bot final : public TiltedPhoques::Client
 {
 public:
@@ -54,6 +57,7 @@ public:
     [[nodiscard]] std::uint64_t GetCharacterId() const noexcept { return m_characterId; }
     // The fixture plugin's mod id in this session; GameIds of fixture forms use it.
     [[nodiscard]] std::uint32_t GetFixtureModId() const noexcept { return m_fixtureModId; }
+    [[nodiscard]] std::uint32_t GetOwnershipEpoch() const noexcept { return m_ownershipEpoch; }
 
     // Called for every server message after the bot's own session handling.
     std::function<void(const ServerMessage&)> OnMessage;
