@@ -20,6 +20,9 @@
 #include <Messages/RequestDeathStateChange.h>
 #include <Messages/NotifyContainerTransferResult.h>
 #include <Messages/NotifyInventoryChanges.h>
+#include <Messages/NotifyObjectHarvested.h>
+#include <Messages/NotifyWorldItemTaken.h>
+#include <Messages/TakeWorldItemRequest.h>
 #include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/RequestContainerTransfer.h>
 
@@ -33,6 +36,9 @@
 
 namespace
 {
+// A plant the bots report as harvestable. Not in the plugin: the harvest flag comes from the client.
+constexpr uint32_t kHarvestRef = 0x000FFF;
+
 // The bandit RunLeveledActor assigned, for the scenarios that follow it.
 struct AssignedActor
 {
@@ -105,6 +111,7 @@ int RunAssignObjects(Bots& aBots)
         add(L2Fixture::kDoorRef).IsDoor = true;
         add(L2Fixture::kLeverRef).IsActivator = true;
         add(L2Fixture::kPlacedLootRef).IsOpenLoot = true;
+        add(kHarvestRef).IsHarvestable = true;
         while (request.Objects.size() < kObjectCount)
             add(kFillerBase + static_cast<uint32_t>(request.Objects.size()));
 
@@ -213,6 +220,14 @@ std::optional<AssignObjectsResponse> AssignFixtureObjects(Bots& aBots, Bot& aBot
     chest.Id = GameId(modId, L2Fixture::kChestRef);
     chest.CellId = GameId(modId, L2Fixture::kCell);
     chest.IsContainer = true;
+    auto& loot = request.Objects.emplace_back();
+    loot.Id = GameId(modId, L2Fixture::kPlacedLootRef);
+    loot.CellId = GameId(modId, L2Fixture::kCell);
+    loot.IsOpenLoot = true;
+    auto& plant = request.Objects.emplace_back();
+    plant.Id = GameId(modId, kHarvestRef);
+    plant.CellId = GameId(modId, L2Fixture::kCell);
+    plant.IsHarvestable = true;
     aBot.Send(request);
 
     static_cast<void>(Pump(aBots, [&] { return response.has_value(); }, std::chrono::seconds(10)));
@@ -285,6 +300,10 @@ int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string
                 failures += Check(object.IsDoorStateKnown && object.IsDoorOpen, "the late joiner sees the door open");
             else if (object.Id.BaseId == L2Fixture::kLeverRef)
                 failures += Check(object.ActivationCount == 1, "the late joiner sees one lever activation");
+            else if (object.Id.BaseId == L2Fixture::kPlacedLootRef)
+                failures += Check(object.IsLootTaken, "the late joiner sees the placed loot taken");
+            else if (object.Id.BaseId == kHarvestRef)
+                failures += Check(object.IsHarvested, "the late joiner sees the plant harvested");
         }
     }
 
@@ -417,9 +436,13 @@ int RunAfterRestart(Bots& aBots, const std::string& acExpectationFile)
 
     const ObjectData* pDoor = FindObject(*response, L2Fixture::kDoorRef);
     failures += Check(pDoor && pDoor->IsDoorStateKnown && pDoor->IsDoorOpen, "the door stays open across a restart");
+    const ObjectData* pLoot = FindObject(*response, L2Fixture::kPlacedLootRef);
+    failures += Check(pLoot && pLoot->IsLootTaken, "the placed loot stays taken across a restart");
+    const ObjectData* pPlant = FindObject(*response, kHarvestRef);
+    failures += Check(pPlant && pPlant->IsHarvested, "the plant stays harvested across a restart");
 
     if (failures == 0)
-        spdlog::info("PASS step 4 after restart: the chest holds {} and the door is open", expected);
+        spdlog::info("PASS step 4 after restart: the chest holds {}, the door is open, the loot taken and the plant harvested", expected);
     return failures;
 }
 
@@ -853,5 +876,64 @@ int RunOwnershipHandoff(Bots& aBots)
     if (failures == 0)
         spdlog::info("PASS ownership: proximity handoff after {:.1f}s (epoch {} to {}), stall handoff back (epoch {}), stale epoch refused",
             proximitySeconds, epoch, secondEpoch, thirdEpoch);
+    return failures;
+}
+
+int RunHarvestAndLoot(Bots& aBots)
+{
+    Bot& first = *aBots[0];
+    Bot& second = *aBots[1];
+    const uint32_t modId = first.GetFixtureModId();
+    const GameId cell(modId, L2Fixture::kCell);
+
+    int harvestedSeen = 0;
+    int takenSeen = 0;
+    second.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() == kNotifyObjectHarvested)
+        {
+            const auto& notify = static_cast<const NotifyObjectHarvested&>(acMessage);
+            if (notify.Id.BaseId == kHarvestRef && notify.IsHarvested)
+                ++harvestedSeen;
+        }
+    };
+    first.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() == kNotifyWorldItemTaken)
+        {
+            const auto& notify = static_cast<const NotifyWorldItemTaken&>(acMessage);
+            if (notify.Id.BaseId == L2Fixture::kPlacedLootRef && notify.IsTaken)
+                ++takenSeen;
+        }
+    };
+
+    // The first bot harvests the plant twice: only the first harvest counts.
+    ActivateRequest harvest{};
+    harvest.Id = GameId(modId, kHarvestRef);
+    harvest.CellId = cell;
+    harvest.ActivatorId = first.GetServerId();
+    first.Send(harvest);
+    first.Send(harvest);
+
+    // The second bot takes the placed loot twice: only the first take counts.
+    TakeWorldItemRequest take{};
+    take.Id = GameId(modId, L2Fixture::kPlacedLootRef);
+    take.CellId = cell;
+    take.ActivatorId = second.GetServerId();
+    second.Send(take);
+    second.Send(take);
+
+    static_cast<void>(Pump(aBots, [&] { return harvestedSeen > 0 && takenSeen > 0; }, std::chrono::seconds(5)));
+    // Give a second, wrongly accepted harvest or take time to show up too.
+    static_cast<void>(Pump(aBots, [] { return false; }, std::chrono::milliseconds(300)));
+    first.OnMessage = nullptr;
+    second.OnMessage = nullptr;
+
+    int failures = 0;
+    failures += Check(harvestedSeen == 1, "the peer is told of the harvest exactly once");
+    failures += Check(takenSeen == 1, "the peer is told of the loot take exactly once");
+
+    if (failures == 0)
+        spdlog::info("PASS harvest and loot: each relayed once, the repeat was refused");
     return failures;
 }
