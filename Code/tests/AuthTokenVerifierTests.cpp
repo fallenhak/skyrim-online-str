@@ -52,7 +52,7 @@ std::string Claims(const std::int64_t aIssuedAt, const std::int64_t aExpiresAt)
 TEST(AuthTokenVerifierTests, AcceptsSignedDiscordIdentityAndDecodesJsonEscapes)
 {
     const auto now = Now();
-    const auto token = MakeToken(Claims(now, now + 12 * 60 * 60));
+    const auto token = MakeToken(Claims(now, now + 7 * 24 * 60 * 60));
     Auth::SessionClaims claims{};
     std::string errorKey;
 
@@ -98,7 +98,7 @@ TEST(AuthTokenVerifierTests, RejectsExpiredOrOverlongSessions)
     std::string errorKey;
     EXPECT_FALSE(Auth::VerifySessionToken(MakeToken(Claims(now - 7200, now - 1)), kTestSecret, claims, errorKey));
     EXPECT_EQ(errorKey, "auth.token_expired");
-    EXPECT_FALSE(Auth::VerifySessionToken(MakeToken(Claims(now, now + 12 * 60 * 60 + 1)), kTestSecret, claims, errorKey));
+    EXPECT_FALSE(Auth::VerifySessionToken(MakeToken(Claims(now, now + 7 * 24 * 60 * 60 + 1)), kTestSecret, claims, errorKey));
     EXPECT_EQ(errorKey, "auth.token_expired");
 }
 

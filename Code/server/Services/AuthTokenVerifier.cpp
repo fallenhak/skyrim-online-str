@@ -14,6 +14,9 @@
 
 namespace
 {
+// Must match TOKEN_TTL_SECONDS in Tools/AuthService/auth_service.py.
+constexpr std::int64_t kMaxTokenLifetimeSeconds = 7 * 24 * 60 * 60;
+
 bool DecodeBase64Url(const std::string_view acEncoded, std::string& aDecoded)
 {
     aDecoded.clear();
@@ -322,8 +325,8 @@ bool Auth::VerifySessionToken(const std::string_view acToken, const std::string_
 
     const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     if (issuedAt->second < 0 || expiresAt->second <= now || issuedAt->second > now + 60 ||
-        issuedAt->second > std::numeric_limits<std::int64_t>::max() - 12 * 60 * 60 ||
-        expiresAt->second <= issuedAt->second || expiresAt->second > issuedAt->second + 12 * 60 * 60)
+        issuedAt->second > std::numeric_limits<std::int64_t>::max() - kMaxTokenLifetimeSeconds ||
+        expiresAt->second <= issuedAt->second || expiresAt->second > issuedAt->second + kMaxTokenLifetimeSeconds)
     {
         aErrorKey = "auth.token_expired";
         return false;

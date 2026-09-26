@@ -20,7 +20,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Mapping
 
 
-TOKEN_TTL_SECONDS = 12 * 60 * 60
+TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60
+# A refreshed token keeps the original Discord login time; past this age the player logs in again.
+MAX_SESSION_AGE_SECONDS = 30 * 24 * 60 * 60
 OAUTH_STATE_TTL_SECONDS = 10 * 60
 DISCORD_AUTHORIZE_URL = "https://discord.com/oauth2/authorize"
 DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
@@ -74,7 +76,8 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
-def create_session_token(config: AuthConfig, discord_id: str, name: str, avatar_url: str, now: int | None = None) -> str:
+def create_session_token(config: AuthConfig, discord_id: str, name: str, avatar_url: str, now: int | None = None,
+                         auth_time: int | None = None) -> str:
     if not discord_id.isascii() or not discord_id.isdigit() or not (1 <= len(discord_id) <= 20):
         raise ValueError("Discord returned an invalid user ID")
     timestamp = int(time.time()) if now is None else int(now)
@@ -87,11 +90,51 @@ def create_session_token(config: AuthConfig, discord_id: str, name: str, avatar_
         "avatar": avatar_url[:512],
         "iat": timestamp,
         "exp": timestamp + TOKEN_TTL_SECONDS,
+        "auth_time": timestamp if auth_time is None else int(auth_time),
     }
     payload = _b64url(json.dumps(claims, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
     signing_input = header + "." + payload
     signature = hmac.new(config.hmac_secret, signing_input.encode("ascii"), hashlib.sha256).digest()
     return signing_input + "." + _b64url(signature)
+
+
+def _b64url_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def verify_session_token(config: AuthConfig, token: str, now: int | None = None) -> dict:
+    """Return the claims of a token this service signed, still valid and within the session age limit."""
+    timestamp = int(time.time()) if now is None else int(now)
+    parts = token.split(".")
+    if len(token) > 8192 or len(parts) != 3:
+        raise ValueError("malformed token")
+    try:
+        expected = hmac.new(config.hmac_secret, (parts[0] + "." + parts[1]).encode("ascii"), hashlib.sha256).digest()
+        signature = _b64url_decode(parts[2])
+        header = json.loads(_b64url_decode(parts[0]))
+        claims = json.loads(_b64url_decode(parts[1]))
+    except (ValueError, UnicodeError):
+        raise ValueError("malformed token")
+    if not hmac.compare_digest(signature, expected) or header != {"alg": "HS256", "typ": "JWT"}:
+        raise ValueError("invalid signature")
+    if not isinstance(claims, dict) or claims.get("iss") != "sos-auth":
+        raise ValueError("invalid issuer")
+    subject, expires = claims.get("sub"), claims.get("exp")
+    auth_time = claims.get("auth_time", claims.get("iat"))
+    if not isinstance(subject, str) or not subject.startswith("discord:") or not isinstance(expires, int) or not isinstance(auth_time, int):
+        raise ValueError("invalid claims")
+    if expires <= timestamp:
+        raise ValueError("token expired")
+    if timestamp - auth_time > MAX_SESSION_AGE_SECONDS:
+        raise ValueError("session too old")
+    return claims
+
+
+def refresh_session_token(config: AuthConfig, token: str, now: int | None = None) -> str:
+    claims = verify_session_token(config, token, now)
+    auth_time = claims.get("auth_time", claims.get("iat"))
+    return create_session_token(config, claims["sub"][len("discord:"):], str(claims.get("name", "")),
+                                str(claims.get("avatar", "")), now=now, auth_time=auth_time)
 
 
 def _loopback_redirect(value: str) -> bool:
@@ -181,6 +224,26 @@ class AuthHandler(BaseHTTPRequestHandler):
             self._callback(urllib.parse.parse_qs(route.query, strict_parsing=False))
             return
         self._json(404, {"error": "not_found"})
+
+    def do_POST(self) -> None:
+        route = urllib.parse.urlsplit(self.path)
+        if route.path != "/auth/refresh":
+            self._json(404, {"error": "not_found"})
+            return
+        config = self.server.config
+        if config is None:
+            self._json(503, {"error": "auth_service_not_configured"})
+            return
+        authorization = self.headers.get("Authorization", "")
+        if not authorization.startswith("Bearer "):
+            self._json(401, {"error": "missing_token"})
+            return
+        try:
+            token = refresh_session_token(config, authorization[len("Bearer "):].strip())
+        except (ValueError, KeyError):
+            self._json(401, {"error": "invalid_token"})
+            return
+        self._json(200, {"token": token})
 
     def _start(self, query: dict[str, list[str]]) -> None:
         config = self.server.config
