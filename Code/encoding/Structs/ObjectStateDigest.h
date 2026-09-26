@@ -28,6 +28,8 @@ struct ObjectStateDigest
         kEnableParent = 1 << 4,
         // Flora picked in place: the game keeps the reference enabled and shows its harvested model.
         kHarvested = 1 << 5,
+        // A dead actor, not a world object: Id is its reference and Items its contents.
+        kCorpse = 1 << 6,
     };
 
     bool operator==(const ObjectStateDigest& acRhs) const noexcept;

@@ -26,6 +26,7 @@
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
 #include <Messages/ObjectStateReport.h>
+#include <Messages/NotifyCorpseContents.h>
 
 #include <algorithm>
 #include <chrono>
@@ -875,6 +876,12 @@ void ObjectService::OnObjectStateReport(const PacketEvent<ObjectStateReport>& ac
     for (auto entity : view)
         entitiesById.emplace(view.get<FormIdComponent>(entity).Id, entity);
 
+    auto characterView = m_world.view<FormIdComponent, CharacterComponent, InventoryComponent>();
+    std::unordered_map<GameId, entt::entity> charactersById;
+    for (auto entity : characterView)
+        charactersById.emplace(characterView.get<FormIdComponent>(entity).Id, entity);
+    std::size_t correctedCorpses = 0;
+
     std::size_t mismatched = 0;
     // A confirmed difference gets the server's state back, in the same message and apply path as the
     // cell snapshot. A notification the client could not apply is recovered this way.
@@ -882,6 +889,12 @@ void ObjectService::OnObjectStateReport(const PacketEvent<ObjectStateReport>& ac
 
     for (const ObjectStateDigest& digest : packet.Objects)
     {
+        if (digest.Has(ObjectStateDigest::kCorpse))
+        {
+            correctedCorpses += CheckCorpseDigest(*acMessage.pPlayer, digest, charactersById) ? 1 : 0;
+            continue;
+        }
+
         entt::entity entity = entt::null;
         const auto [first, last] = entitiesById.equal_range(digest.Id);
         for (auto it = first; it != last; ++it)
@@ -944,8 +957,42 @@ void ObjectService::OnObjectStateReport(const PacketEvent<ObjectStateReport>& ac
     if (!corrections.Objects.empty())
         acMessage.pPlayer->Send(corrections);
 
-    spdlog::debug("[Desync] report from player {:X}: {} object(s), {} differing, {} corrected", cPlayerId, packet.Objects.size(), mismatched,
-        corrections.Objects.size());
+    spdlog::debug("[Desync] report from player {:X}: {} object(s), {} differing, {} corrected, {} corpse(s) corrected", cPlayerId, packet.Objects.size(),
+        mismatched, corrections.Objects.size(), correctedCorpses);
+}
+
+bool ObjectService::CheckCorpseDigest(Player& aPlayer, const ObjectStateDigest& acDigest, const std::unordered_map<GameId, entt::entity>& acCharactersById) noexcept
+{
+    const auto it = acCharactersById.find(acDigest.Id);
+    if (it == acCharactersById.end())
+        return false;
+
+    const auto entity = it->second;
+    const auto& character = m_world.get<CharacterComponent>(entity);
+    // Only a looted corpse's contents are server-owned. Before the first accepted take the owner's
+    // broadcasts still seed them (items the engine adds at death), so they cannot be corrected yet.
+    const auto* pCorpse = m_world.try_get<CorpseRetentionComponent>(entity);
+    if (!character.IsDead() || character.IsPlayer() || !pCorpse || !pCorpse->OwnerSeedClosed || pCorpse->RemovalQueued)
+        return false;
+
+    const auto& inventory = m_world.get<InventoryComponent>(entity).Content;
+    const auto serverItems = ObjectStateDigest::Canonicalize(inventory);
+    const std::string signature = serverItems == acDigest.Items ? std::string{}
+                                                                : DesyncPolicy::FormatItems(serverItems) + " | " + DesyncPolicy::FormatItems(acDigest.Items);
+    const auto event = m_desyncTracker.Observe({aPlayer.GetId(), acDigest.Id, DesyncPolicy::Field::kInventory}, signature);
+    if (event == DesyncPolicy::Tracker::Event::kResolved)
+        spdlog::info("[Desync] player {:X} corpse {:X}:{:X} contents: resolved", aPlayer.GetId(), acDigest.Id.ModId, acDigest.Id.BaseId);
+    if (event != DesyncPolicy::Tracker::Event::kNew && event != DesyncPolicy::Tracker::Event::kRetry)
+        return false;
+
+    spdlog::warn("[Desync] player {:X} corpse {:X}:{:X} (actor {:X}) contents: server {} client {}; correcting", aPlayer.GetId(), acDigest.Id.ModId,
+        acDigest.Id.BaseId, World::ToInteger(entity), DesyncPolicy::FormatItems(serverItems), DesyncPolicy::FormatItems(acDigest.Items));
+
+    NotifyCorpseContents correction{};
+    correction.ServerId = World::ToInteger(entity);
+    correction.Contents = inventory;
+    aPlayer.Send(correction);
+    return true;
 }
 
 void ObjectService::OnPlayerLeave(const PlayerLeaveEvent& acEvent) noexcept

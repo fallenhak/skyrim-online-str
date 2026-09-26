@@ -27,10 +27,14 @@
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
 #include <Messages/NotifyObjectHarvested.h>
+#include <Messages/NotifyCorpseContents.h>
 #include <Messages/TakeWorldItemRequest.h>
 #include <Messages/NotifyWorldItemTaken.h>
 
 #include <PlayerCharacter.h>
+#include <Actor.h>
+#include <Components.h>
+#include <Interface/UI.h>
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>
 #include <Forms/BGSEncounterZone.h>
@@ -59,6 +63,7 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Trans
     m_scriptAnimationNotifyConnection = aDispatcher.sink<NotifyScriptAnimation>().connect<&ObjectService::OnNotifyScriptAnimation>(this);
     m_objectHarvestedConnection = aDispatcher.sink<NotifyObjectHarvested>().connect<&ObjectService::OnObjectHarvestedNotify>(this);
     m_worldItemTakenConnection = aDispatcher.sink<NotifyWorldItemTaken>().connect<&ObjectService::OnWorldItemTakenNotify>(this);
+    m_corpseContentsConnection = aDispatcher.sink<NotifyCorpseContents>().connect<&ObjectService::OnCorpseContents>(this);
 
     EventDispatcherManager::Get()->activateEvent.RegisterSink(this);
 }
@@ -508,7 +513,7 @@ void ObjectService::SendObjectStateReport() noexcept
     GameId worldSpaceId{};
     TESObjectCELL* pCell = nullptr;
     size_t cellCount = 0;
-    if (!CollectSyncedObjects(objects, worldSpaceId, pCell, cellCount) || objects.empty())
+    if (!CollectSyncedObjects(objects, worldSpaceId, pCell, cellCount))
         return;
 
     ObjectStateReport report{};
@@ -549,6 +554,31 @@ void ObjectService::SendObjectStateReport() noexcept
 
         report.Objects.push_back(std::move(digest));
     }
+
+    // Corpses the server knows: their contents are server-owned, so a take relayed while this client
+    // could not apply it is corrected like a world object.
+    auto actorView = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
+    for (const auto entity : actorView)
+    {
+        if (!m_world.any_of<LocalComponent, RemoteComponent>(entity) || m_world.all_of<PlayerComponent>(entity))
+            continue;
+
+        auto* pActor = Cast<Actor>(TESForm::GetById(actorView.get<FormIdComponent>(entity).Id));
+        if (!pActor || !pActor->IsDead() || pActor->IsTemporary() || pActor == PlayerCharacter::Get() || pActor->GetExtension()->IsPlayer())
+            continue;
+
+        ObjectStateDigest digest{};
+        if (!m_world.GetModSystem().GetServerModId(pActor->formID, digest.Id))
+            continue;
+        if (TESObjectCELL* pActorCell = pActor->GetParentCellEx())
+            m_world.GetModSystem().GetServerModId(pActorCell->formID, digest.CellId);
+        digest.StateFlags = ObjectStateDigest::kCorpse | ObjectStateDigest::kHasInventory;
+        digest.Items = ObjectStateDigest::Canonicalize(pActor->GetActorInventory());
+        report.Objects.push_back(std::move(digest));
+    }
+
+    if (report.Objects.empty())
+        return;
 
     m_transport.Send(report);
 }
@@ -900,6 +930,24 @@ void ObjectService::OnWorldItemTakenNotify(const NotifyWorldItemTaken& acMessage
         ApplyWorldItemTaken(pObject);
     else
         RestoreWorldItem(pObject);
+}
+
+void ObjectService::OnCorpseContents(const NotifyCorpseContents& acMessage) noexcept
+{
+    Actor* pActor = Utils::GetByServerId<Actor>(acMessage.ServerId);
+    if (!pActor || !pActor->IsDead())
+        return;
+
+    // Never swap the contents under an open loot menu; the next report corrects it after it closes.
+    static BSFixedString s_containerMenu("ContainerMenu");
+    if (const auto* pUi = UI::Get(); pUi && pUi->GetMenuOpen(s_containerMenu))
+    {
+        spdlog::info("[CorpseSync] contents correction for actor {:X} deferred: a loot menu is open", acMessage.ServerId);
+        return;
+    }
+
+    spdlog::info("[CorpseSync] corpse actor {:X} form {:X} set to the server's {} item(s)", acMessage.ServerId, pActor->formID, acMessage.Contents.Entries.size());
+    pActor->SetActorInventory(acMessage.Contents);
 }
 
 void ObjectService::OnLockChange(const LockChangeEvent& acEvent) noexcept

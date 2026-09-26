@@ -5,9 +5,11 @@
 #include <Services/DesyncPolicy.h>
 #include <Structs/ObjectData.h>
 
+#include <unordered_map>
 #include <vector>
 
 struct World;
+struct Player;
 struct ObjectComponent;
 struct PlayerLeaveCellEvent;
 struct PlayerLeaveEvent;
@@ -48,6 +50,8 @@ private:
     void PersistState(entt::entity aEntity) noexcept;
     // The server's full state of one registered object, as sent in a cell snapshot or a correction.
     ObjectData BuildObjectData(entt::entity aEntity) const noexcept;
+    // Compares a reported corpse with the server's contents and sends them back when they differ.
+    bool CheckCorpseDigest(Player& aPlayer, const ObjectStateDigest& acDigest, const std::unordered_map<GameId, entt::entity>& acCharactersById) noexcept;
     [[nodiscard]] const Persistence::WorldObjectState* FindPersistedState(const GameId& acId, const GameId& acCellId) const noexcept;
     [[nodiscard]] const Persistence::ContainerContentsState* FindPersistedContainer(const GameId& acId, const GameId& acCellId) const noexcept;
 

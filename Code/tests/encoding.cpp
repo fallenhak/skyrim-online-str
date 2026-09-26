@@ -809,6 +809,30 @@ TEST_CASE("NotifyContainerTransferResult round-trips", "[encoding.container_tran
     REQUIRE(*received == sent);
 }
 
+TEST_CASE("NotifyCorpseContents round-trips", "[encoding.container_transfer]")
+{
+    NotifyCorpseContents sent;
+    sent.ServerId = 0x1C;
+    Inventory::Entry axe{};
+    axe.BaseId = GameId{0, 0x1CB64};
+    axe.Count = 1;
+    sent.Contents.AddOrRemoveEntry(axe);
+    Inventory::Entry gold{};
+    gold.BaseId = GameId{0, 0xF};
+    gold.Count = 23;
+    sent.Contents.AddOrRemoveEntry(gold);
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<NotifyCorpseContents>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(*received == sent);
+}
+
 // Lists sized like real cells: a 1-byte count once wrapped 308 objects in Bleak Falls Barrow to 52.
 namespace
 {

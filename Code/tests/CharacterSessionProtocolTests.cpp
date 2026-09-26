@@ -543,7 +543,8 @@ TEST_CASE("Character session protocol messages round trip", "[encoding.character
         REQUIRE(static_cast<unsigned>(kNotifyWorldItemTaken) == static_cast<unsigned>(kNotifyObjectHarvested) + 1);
         REQUIRE(static_cast<unsigned>(kNotifyFurnitureUseDenied) == static_cast<unsigned>(kNotifyWorldItemTaken) + 1);
         REQUIRE(static_cast<unsigned>(kNotifyContainerTransferResult) == static_cast<unsigned>(kNotifyFurnitureUseDenied) + 1);
-        REQUIRE(static_cast<unsigned>(kServerOpcodeMax) == static_cast<unsigned>(kNotifyContainerTransferResult) + 1);
+        REQUIRE(static_cast<unsigned>(kNotifyCorpseContents) == static_cast<unsigned>(kNotifyContainerTransferResult) + 1);
+        REQUIRE(static_cast<unsigned>(kServerOpcodeMax) == static_cast<unsigned>(kNotifyCorpseContents) + 1);
         REQUIRE(static_cast<unsigned>(kTakeWorldItemRequest) == static_cast<unsigned>(kUpdateCharacterAppearanceRequest) + 1);
         REQUIRE(static_cast<unsigned>(kRequestContainerTransfer) == static_cast<unsigned>(kTakeWorldItemRequest) + 1);
         REQUIRE(static_cast<unsigned>(kUpdatePlayerAppearanceRequest) == static_cast<unsigned>(kRequestContainerTransfer) + 1);

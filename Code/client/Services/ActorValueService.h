@@ -3,6 +3,8 @@
 #include <Events/EventDispatcher.h>
 #include <Games/Events.h>
 
+#include <unordered_map>
+
 struct World;
 
 struct ConnectedEvent;
@@ -40,6 +42,11 @@ public:
     TP_NOCOPYMOVE(ActorValueService);
 
 private:
+    // A receiver's ragdoll further than this from the owner's settled corpse is rebuilt (game units, ~0.5 m).
+    static constexpr float kCorpseRebuildDistance = 32.f;
+    // Long enough for the disable to unload the 3D before the reference is enabled again.
+    static constexpr double kCorpseRebuildDelaySeconds = 0.3;
+
     enum ValueType : uint8_t
     {
         kValue,
@@ -90,7 +97,11 @@ private:
     /**
      * @brief Receives death state changes and applies them locally.
      */
-    void OnDeathStateChange(const NotifyDeathStateChange& acEvent) const noexcept;
+    void OnDeathStateChange(const NotifyDeathStateChange& acEvent) noexcept;
+    /**
+     * @brief Re-enables corpses unloaded to be rebuilt at the owner's settled position.
+     */
+    void RunCorpseRebuilds(double aDelta) noexcept;
 
     /**
      * @brief Checks and broadcasts new actor values.
@@ -127,4 +138,7 @@ private:
 
     //! @brief Server ids and collected health changes.
     Map<uint32_t, PendingHealthChange> m_smallHealthChanges;
+
+    //! @brief Corpses disabled for a rebuild: form id and seconds until they are enabled again.
+    std::unordered_map<uint32_t, double> m_corpseRebuilds;
 };

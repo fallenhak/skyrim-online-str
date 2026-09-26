@@ -135,5 +135,6 @@ enum ServerOpcode : unsigned char
     kNotifyWorldItemTaken,
     kNotifyFurnitureUseDenied,
     kNotifyContainerTransferResult,
+    kNotifyCorpseContents,
     kServerOpcodeMax
 };
