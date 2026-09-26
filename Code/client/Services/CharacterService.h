@@ -33,6 +33,7 @@ struct MountEvent;
 struct NotifyMount;
 struct InitPackageEvent;
 struct NotifyNewPackage;
+struct NotifyActorInventory;
 struct NotifyRespawn;
 struct BeastFormChangeEvent;
 struct DialogueEvent;
@@ -89,6 +90,8 @@ struct CharacterService
     void OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept;
     void OnNotifySubtitle(const NotifySubtitle& acMessage) noexcept;
     void OnNotifyActorTeleport(const NotifyActorTeleport& acMessage) noexcept;
+    void OnActorInventory(const NotifyActorInventory& acMessage) noexcept;
+    void SendActorInventory(Actor* apActor) const noexcept;
     void OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept;
 
     void ProcessNewEntity(entt::entity aEntity) const noexcept;
@@ -172,5 +175,6 @@ private:
     entt::scoped_connection m_subtitleSyncConnection;
     entt::scoped_connection m_actorTeleportConnection;
     entt::scoped_connection m_authorityChangedConnection;
+    entt::scoped_connection m_actorInventoryConnection;
     mutable bool m_worldSyncStarted{};
 };

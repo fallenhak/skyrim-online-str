@@ -50,6 +50,8 @@
 #include <Messages/NotifyFactionsChanges.h>
 #include <Messages/NotifyRemoveCharacter.h>
 #include <Messages/RequestOwnershipTransfer.h>
+#include <Messages/RequestActorInventory.h>
+#include <Messages/NotifyActorInventory.h>
 #include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/RequestOwnershipClaim.h>
 #include <Messages/MountRequest.h>
@@ -113,6 +115,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
     m_actorTeleportConnection = m_dispatcher.sink<NotifyActorTeleport>().connect<&CharacterService::OnNotifyActorTeleport>(this);
 
     m_authorityChangedConnection = aDispatcher.sink<AuthorityChangedEvent>().connect<&CharacterService::OnAuthorityChangedEvent>(this);
+    m_actorInventoryConnection = aDispatcher.sink<NotifyActorInventory>().connect<&CharacterService::OnActorInventory>(this);
 }
 
 void CharacterService::DeleteRemoteEntityComponents(entt::entity aEntity) const noexcept
@@ -1888,6 +1891,49 @@ ActorData CharacterService::BuildActorData(Actor* apActor) const noexcept
     return actorData;
 }
 
+void CharacterService::SendActorInventory(Actor* apActor) const noexcept
+{
+    auto view = m_world.view<FormIdComponent, LocalComponent>();
+    const auto it = std::find_if(view.begin(), view.end(), [view, formId = apActor->formID](const auto aEntity) { return view.get<FormIdComponent>(aEntity).Id == formId; });
+    if (it == view.end())
+        return;
+
+    const auto& localComponent = view.get<LocalComponent>(*it);
+    RequestActorInventory request{};
+    request.ServerId = localComponent.Id;
+    request.OwnershipEpoch = localComponent.OwnershipEpoch;
+    request.Contents = apActor->GetActorInventory();
+    if (m_transport.Send(request))
+        spdlog::info("Sent rebuilt inventory of actor {:X} (server id {:X}): {} item(s)", apActor->formID, localComponent.Id, request.Contents.Entries.size());
+}
+
+void CharacterService::OnActorInventory(const NotifyActorInventory& acMessage) noexcept
+{
+    auto view = m_world.view<FormIdComponent, RemoteComponent>();
+    const auto it = std::find_if(view.begin(), view.end(), [view, &acMessage](const auto aEntity)
+    {
+        const auto& remote = view.get<RemoteComponent>(aEntity);
+        return remote.Id == acMessage.ServerId && remote.OwnershipEpoch == acMessage.OwnershipEpoch;
+    });
+    if (it == view.end())
+        return;
+
+    const uint32_t cFormId = view.get<FormIdComponent>(*it).Id;
+    // Still rebuilding here: the rebuild reapplies this instead of the snapshot it captured.
+    if (const auto conformIt = m_conformInventories.find(cFormId); conformIt != m_conformInventories.end())
+    {
+        m_conformInventories.insert_or_assign(cFormId, acMessage.Contents);
+        return;
+    }
+
+    Actor* pActor = Cast<Actor>(TESForm::GetById(cFormId));
+    if (!pActor || pActor->IsDead())
+        return;
+
+    spdlog::info("Applying owner's inventory for remote actor {:X}: {} item(s)", cFormId, acMessage.Contents.Entries.size());
+    pActor->SetActorInventory(acMessage.Contents);
+}
+
 void CharacterService::ApplyLeveledNpcPick(Actor* apActor, const GameId& acPickId) const noexcept
 {
     if (acPickId == GameId{})
@@ -1989,6 +2035,11 @@ void CharacterService::ProcessLeveledConforms() noexcept
             {
                 spdlog::info("Completed leveled NPC reconciliation for actor {:X}, base: {:X}, pick: {:X}", it->first, pActor->baseForm->formID, cPickFormId);
                 stage = ReconciliationStage::None;
+
+                // The rebuilt actor rolled the inventory of the server's pick. The server still holds the
+                // discoverer's roll for its own pick, so the owner records the real one for everyone.
+                if (!pActor->GetExtension()->IsRemote())
+                    SendActorInventory(pActor);
                 if (const auto inventoryIt = m_conformInventories.find(it->first); inventoryIt != m_conformInventories.end())
                 {
                     if (pActor->GetExtension()->IsRemote())

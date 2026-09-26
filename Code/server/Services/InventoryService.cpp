@@ -11,6 +11,8 @@
 #include <Messages/NotifyObjectInventoryChanges.h>
 #include <Messages/RequestInventoryChanges.h>
 #include <Messages/NotifyInventoryChanges.h>
+#include <Messages/RequestActorInventory.h>
+#include <Messages/NotifyActorInventory.h>
 #include <Messages/RequestEquipmentChanges.h>
 #include <Messages/NotifyEquipmentChanges.h>
 #include <Messages/DrawWeaponRequest.h>
@@ -32,6 +34,7 @@ InventoryService::InventoryService(World& aWorld, entt::dispatcher& aDispatcher)
     m_equipmentChangeConnection = aDispatcher.sink<PacketEvent<RequestEquipmentChanges>>().connect<&InventoryService::OnEquipmentChanges>(this);
     m_drawWeaponConnection = aDispatcher.sink<PacketEvent<DrawWeaponRequest>>().connect<&InventoryService::OnWeaponDrawnRequest>(this);
     m_containerTransferConnection = aDispatcher.sink<PacketEvent<RequestContainerTransfer>>().connect<&InventoryService::OnContainerTransfer>(this);
+    m_actorInventoryConnection = aDispatcher.sink<PacketEvent<RequestActorInventory>>().connect<&InventoryService::OnActorInventory>(this);
 }
 
 void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChanges>& acMessage) noexcept
@@ -129,6 +132,43 @@ void InventoryService::OnInventoryChanges(const PacketEvent<RequestInventoryChan
 
     const entt::entity cOrigin = static_cast<entt::entity>(message.ServerId);
     if (!GameServer::Get()->SendToPlayersInRange(notify, cOrigin, acMessage.GetSender()))
+        spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
+}
+
+void InventoryService::OnActorInventory(const PacketEvent<RequestActorInventory>& acMessage) noexcept
+{
+    const auto& message = acMessage.Packet;
+    const auto entity = static_cast<entt::entity>(message.ServerId);
+    auto* pInventory = m_world.valid(entity) ? m_world.try_get<InventoryComponent>(entity) : nullptr;
+    const auto* pOwner = pInventory ? m_world.try_get<OwnerComponent>(entity) : nullptr;
+    const auto* pCharacter = pInventory ? m_world.try_get<CharacterComponent>(entity) : nullptr;
+    // Only the current simulating owner of a living NPC describes it; a corpse's contents are recorded
+    // with its settled position, a player's through its own session.
+    if (!pOwner || !pCharacter || pCharacter->IsPlayer() || pCharacter->IsDead() || !pOwner->IsCurrentOwner(acMessage.pPlayer, message.OwnershipEpoch))
+    {
+        DropLog::Info("actor inventory: not the current owner of a living NPC", "player {:X}, actor {:X}, epoch {}", acMessage.pPlayer->GetId(),
+            message.ServerId, message.OwnershipEpoch);
+        return;
+    }
+
+    for (const auto& entry : message.Contents.Entries)
+    {
+        if (!InventoryInteractionPolicy::HasValidItemPayload(entry))
+        {
+            DropLog::Info("actor inventory: malformed item", "player {:X}, actor {:X}", acMessage.pPlayer->GetId(), message.ServerId);
+            return;
+        }
+    }
+
+    pInventory->Content = message.Contents;
+    spdlog::info("[Inventory] actor {:X} inventory recorded from its owner {:X}: {} item(s)", message.ServerId, acMessage.pPlayer->GetId(),
+        message.Contents.Entries.size());
+
+    NotifyActorInventory notify{};
+    notify.ServerId = message.ServerId;
+    notify.OwnershipEpoch = message.OwnershipEpoch;
+    notify.Contents = message.Contents;
+    if (!GameServer::Get()->SendToPlayersInRange(notify, entity, acMessage.GetSender()))
         spdlog::error("{}: SendToPlayersInRange failed", __FUNCTION__);
 }
 

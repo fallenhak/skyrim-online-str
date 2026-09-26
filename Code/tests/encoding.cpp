@@ -815,6 +815,42 @@ TEST_CASE("NotifyContainerTransferResult round-trips", "[encoding.container_tran
     REQUIRE(*received == sent);
 }
 
+TEST_CASE("Actor inventory snapshots round-trip", "[encoding.container_transfer]")
+{
+    Inventory::Entry sword{};
+    sword.BaseId = GameId{0, 0x1CB64};
+    sword.Count = 1;
+    sword.ExtraWorn = true;
+
+    RequestActorInventory request;
+    request.ServerId = 0x380B8;
+    request.OwnershipEpoch = 2;
+    request.Contents.AddOrRemoveEntry(sword);
+
+    Buffer clientBuffer(1000);
+    Buffer::Writer clientWriter(&clientBuffer);
+    request.Serialize(clientWriter);
+    Buffer::Reader clientReader(&clientBuffer);
+    const ClientMessageFactory clientFactory;
+    auto decodedRequest = CastUnique<RequestActorInventory>(clientFactory.Extract(clientReader));
+    REQUIRE(decodedRequest);
+    REQUIRE(*decodedRequest == request);
+
+    NotifyActorInventory notify;
+    notify.ServerId = request.ServerId;
+    notify.OwnershipEpoch = request.OwnershipEpoch;
+    notify.Contents = request.Contents;
+
+    Buffer serverBuffer(1000);
+    Buffer::Writer serverWriter(&serverBuffer);
+    notify.Serialize(serverWriter);
+    Buffer::Reader serverReader(&serverBuffer);
+    const ServerMessageFactory serverFactory;
+    auto decodedNotify = CastUnique<NotifyActorInventory>(serverFactory.Extract(serverReader));
+    REQUIRE(decodedNotify);
+    REQUIRE(*decodedNotify == notify);
+}
+
 TEST_CASE("NotifyCorpseContents round-trips", "[encoding.container_transfer]")
 {
     NotifyCorpseContents sent;

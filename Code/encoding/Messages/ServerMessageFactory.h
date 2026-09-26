@@ -72,6 +72,7 @@
 #include <Messages/NotifyFurnitureUseDenied.h>
 #include <Messages/NotifyContainerTransferResult.h>
 #include <Messages/NotifyCorpseContents.h>
+#include <Messages/NotifyActorInventory.h>
 
 using TiltedPhoques::UniquePtr;
 
@@ -87,7 +88,7 @@ struct ServerMessageFactory
             NotifyProjectileLaunch, NotifyInterruptCast, NotifyAddTarget, NotifyScriptAnimation, NotifyDrawWeapon, NotifyMount, NotifyNewPackage, NotifyRespawn, NotifySyncExperience, NotifyEquipmentChanges, NotifyChatMessageBroadcast, TeleportCommandResponse, NotifyPlayerRespawn, NotifyDialogue,
             NotifySubtitle, NotifyPlayerDialogue, NotifyActorTeleport, NotifyPlayerLeft, NotifyPlayerJoined, NotifyDialogue, NotifySubtitle, NotifyPlayerDialogue, NotifyPlayerLevel, NotifyPlayerCellChanged, NotifyTeleport, NotifyPlayerHealthUpdate, NotifySettingsChange,
             NotifyWeatherChange, NotifySetWaypoint, NotifyRemoveWaypoint, NotifySetTimeResult, NotifyRemoveSpell, NotifyCharacterList, NotifyCharacterSelectionResult, NotifyCharacterLoadSnapshot,
-            NotifyCharacterReadyResult, NotifyCharacterEnteredWorld, NotifyProgressionAward, NotifyCharacterAssignmentRejected, NotifyCharacterSlots, NotifyCharacterCreateResult, NotifyObjectHarvested, NotifyWorldItemTaken, NotifyFurnitureUseDenied, NotifyContainerTransferResult, NotifyCorpseContents>;
+            NotifyCharacterReadyResult, NotifyCharacterEnteredWorld, NotifyProgressionAward, NotifyCharacterAssignmentRejected, NotifyCharacterSlots, NotifyCharacterCreateResult, NotifyObjectHarvested, NotifyWorldItemTaken, NotifyFurnitureUseDenied, NotifyContainerTransferResult, NotifyCorpseContents, NotifyActorInventory>;
 
         return s_visitor(std::forward<T>(func));
     }
