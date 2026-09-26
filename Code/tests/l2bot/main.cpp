@@ -16,15 +16,18 @@
 
 // L2 bot (#91): scripted clients against a real server, no game.
 //   L2Bot prepare <server dir>       write Data/ (fixture + loadorder.txt) and config/STServer.ini
-//   L2Bot connect <host:port>        two bots connect, authenticate and enter the fixture cell
+//   L2Bot connect <host:port>        two bots connect, enter the fixture cell and run the scenario
+//   L2Bot after-restart <host:port>  one bot comes back after a server restart and checks persistence
 // The server and the bots share SOS_AUTH_HMAC_SECRET; the bots sign their own session tokens.
 namespace
 {
 constexpr auto kTimeout = std::chrono::seconds(30);
+// What the restarted server must still have; written by connect, read by after-restart.
+constexpr const char* kExpectationFile = "l2bot-expect.txt";
 
 int Usage()
 {
-    spdlog::error("usage: L2Bot prepare <server dir> | L2Bot connect <host:port>");
+    spdlog::error("usage: L2Bot prepare <server dir> | L2Bot connect <host:port> | L2Bot after-restart <host:port>");
     return 2;
 }
 
@@ -130,12 +133,36 @@ int Connect(const std::string& acEndpoint)
         spdlog::info("PASS step 1: both bots are in the fixture cell");
         failures += RunAssignObjects(bots);
         if (failures == 0)
+            failures += RunContainerTake(bots, kExpectationFile);
+        if (failures == 0)
             failures += RunActivations(bots, acEndpoint, pSecret);
     }
 
     for (auto& pBot : bots)
         pBot->Shutdown();
 
+    if (failures == 0)
+        spdlog::info("PASS");
+    return failures == 0 ? 0 : 1;
+}
+int AfterRestart(const std::string& acEndpoint)
+{
+    const char* const pSecret = std::getenv("SOS_AUTH_HMAC_SECRET");
+    if (!pSecret || !*pSecret)
+    {
+        spdlog::error("SOS_AUTH_HMAC_SECRET is not set");
+        return 2;
+    }
+
+    // Same identity as before the restart: the bot selects its existing character.
+    Bots bots;
+    bots.push_back(std::make_unique<Bot>(Bot::Config{"Alfa", 910000000000000001ull, pSecret, L2Fixture::kCell}));
+    int failures = EnterWorld(bots, acEndpoint) ? 0 : 1;
+    if (failures == 0)
+        failures += RunAfterRestart(bots, kExpectationFile);
+
+    for (auto& pBot : bots)
+        pBot->Shutdown();
     if (failures == 0)
         spdlog::info("PASS");
     return failures == 0 ? 0 : 1;
@@ -152,5 +179,7 @@ int main(int argc, char** argv)
         return Prepare(argv[2]);
     if (command == "connect")
         return Connect(argv[2]);
+    if (command == "after-restart")
+        return AfterRestart(argv[2]);
     return Usage();
 }

@@ -6,9 +6,13 @@
 #include <Messages/ActivateRequest.h>
 #include <Messages/AssignObjectsResponse.h>
 #include <Messages/NotifyActivate.h>
+#include <Messages/NotifyContainerTransferResult.h>
+#include <Messages/NotifyInventoryChanges.h>
+#include <Messages/RequestContainerTransfer.h>
 
 #include <spdlog/spdlog.h>
 
+#include <fstream>
 #include <map>
 #include <optional>
 #include <set>
@@ -162,7 +166,7 @@ bool EnterWorld(Bots& aBots, const std::string& acEndpoint)
 
 namespace
 {
-std::optional<AssignObjectsResponse> AssignDoorAndLever(Bots& aBots, Bot& aBot)
+std::optional<AssignObjectsResponse> AssignFixtureObjects(Bots& aBots, Bot& aBot)
 {
     std::optional<AssignObjectsResponse> response;
     aBot.OnMessage = [&](const ServerMessage& acMessage)
@@ -181,6 +185,10 @@ std::optional<AssignObjectsResponse> AssignDoorAndLever(Bots& aBots, Bot& aBot)
     lever.Id = GameId(modId, L2Fixture::kLeverRef);
     lever.CellId = GameId(modId, L2Fixture::kCell);
     lever.IsActivator = true;
+    auto& chest = request.Objects.emplace_back();
+    chest.Id = GameId(modId, L2Fixture::kChestRef);
+    chest.CellId = GameId(modId, L2Fixture::kCell);
+    chest.IsContainer = true;
     aBot.Send(request);
 
     static_cast<void>(Pump(aBots, [&] { return response.has_value(); }, std::chrono::seconds(10)));
@@ -229,7 +237,7 @@ int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string
     if (!EnterWorld(aBots, acEndpoint))
         return failures + 1;
 
-    const auto response = AssignDoorAndLever(aBots, *aBots.back());
+    const auto response = AssignFixtureObjects(aBots, *aBots.back());
     failures += Check(response.has_value(), "the late joiner gets the door and the lever");
     if (response)
     {
@@ -244,5 +252,120 @@ int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string
 
     if (failures == 0)
         spdlog::info("PASS steps 3 and 8: door and lever relayed to the peer; the late joiner sees the door open and one lever pull");
+    return failures;
+}
+
+namespace
+{
+const ObjectData* FindObject(const AssignObjectsResponse& acResponse, const uint32_t aBaseId)
+{
+    for (const auto& object : acResponse.Objects)
+        if (object.Id.BaseId == aBaseId)
+            return &object;
+    return nullptr;
+}
+
+int32_t CountOf(const Inventory& acInventory, const GameId& acItem)
+{
+    int32_t count = 0;
+    for (const auto& entry : acInventory.Entries)
+        if (entry.BaseId == acItem)
+            count += entry.Count;
+    return count;
+}
+} // namespace
+
+int RunContainerTake(Bots& aBots, const std::string& acExpectationFile)
+{
+    constexpr int32_t kTaken = 3;
+    Bot& taker = *aBots[0];
+    Bot& peer = *aBots[1];
+
+    const auto before = AssignFixtureObjects(aBots, taker);
+    const ObjectData* pChest = before ? FindObject(*before, L2Fixture::kChestRef) : nullptr;
+    if (!pChest || pChest->CurrentInventory.Entries.empty())
+    {
+        spdlog::error("CHECK failed: the taker sees the chest with contents");
+        return 1;
+    }
+    const GameId item = pChest->CurrentInventory.Entries.front().BaseId;
+    const int32_t countBefore = CountOf(pChest->CurrentInventory, item);
+    const uint32_t chestServerId = pChest->ServerId;
+
+    std::optional<uint8_t> result;
+    taker.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() == kNotifyContainerTransferResult)
+            result = static_cast<const NotifyContainerTransferResult&>(acMessage).Result;
+    };
+    std::optional<int32_t> peerDelta;
+    peer.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() != kNotifyInventoryChanges)
+            return;
+        const auto& change = static_cast<const NotifyInventoryChanges&>(acMessage);
+        if (change.ServerId == chestServerId)
+            peerDelta = change.Item.Count;
+    };
+
+    RequestContainerTransfer take{};
+    take.RequestId = 1;
+    take.ContainerId = chestServerId;
+    take.TargetKind = 0; // object
+    take.Direction = 0;  // take
+    take.ExpectedContainerCount = countBefore;
+    take.Item.BaseId = item;
+    take.Item.Count = kTaken;
+    taker.Send(take);
+
+    static_cast<void>(Pump(aBots, [&] { return result.has_value() && peerDelta.has_value(); }, std::chrono::seconds(5)));
+    taker.OnMessage = nullptr;
+    peer.OnMessage = nullptr;
+
+    int failures = 0;
+    failures += Check(result.has_value() && *result == 0, "the take is accepted");
+    failures += Check(peerDelta.has_value() && *peerDelta == -kTaken, "the peer is told the chest lost the taken count");
+
+    // What another player now sees in the chest.
+    const auto after = AssignFixtureObjects(aBots, peer);
+    const ObjectData* pAfter = after ? FindObject(*after, L2Fixture::kChestRef) : nullptr;
+    failures += Check(pAfter && CountOf(pAfter->CurrentInventory, item) == countBefore - kTaken, "the chest holds the rest for the peer");
+
+    std::ofstream expectation(acExpectationFile, std::ios::trunc);
+    expectation << item.ModId << ' ' << item.BaseId << ' ' << (countBefore - kTaken) << '\n';
+    failures += Check(static_cast<bool>(expectation), "the expectation file is written");
+
+    if (failures == 0)
+        spdlog::info("PASS step 4: took {} of {:X} from the chest ({} left), the peer was told", kTaken, item.BaseId, countBefore - kTaken);
+    return failures;
+}
+
+int RunAfterRestart(Bots& aBots, const std::string& acExpectationFile)
+{
+    uint32_t modId = 0, baseId = 0;
+    int32_t expected = 0;
+    std::ifstream expectation(acExpectationFile);
+    if (!(expectation >> modId >> baseId >> expected))
+    {
+        spdlog::error("CHECK failed: the expectation file {} is readable", acExpectationFile);
+        return 1;
+    }
+
+    const auto response = AssignFixtureObjects(aBots, *aBots[0]);
+    int failures = Check(response.has_value(), "the restarted server answers the assignment");
+    if (!response)
+        return failures;
+
+    const ObjectData* pChest = FindObject(*response, L2Fixture::kChestRef);
+    const int32_t count = pChest ? CountOf(pChest->CurrentInventory, GameId(modId, baseId)) : -1;
+    if (count != expected)
+        spdlog::error("chest holds {} of {:X} after the restart, expected {}", count, baseId, expected);
+    failures += Check(count == expected, "the chest keeps the take across a restart");
+
+    const ObjectData* pDoor = FindObject(*response, L2Fixture::kDoorRef);
+    failures += Check(pDoor && pDoor->IsDoorStateKnown && pDoor->IsDoorOpen, "the door stays open across a restart");
+
+    if (failures == 0)
+        spdlog::info("PASS step 4 after restart: the chest holds {} and the door is open", expected);
     return failures;
 }
