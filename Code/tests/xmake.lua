@@ -73,3 +73,22 @@ target("ActorPopulationTests")
         "zlib",
         "glm",
         "spdlog")
+
+target("L2Bot")
+    set_kind("binary")
+    set_group("Tests")
+    set_pcxxheader("../encoding/EncodingPch.h")
+    add_includedirs(".", "../encoding")
+    add_files("l2bot/*.cpp", "fixture/L2Fixture.cpp")
+    add_deps("SkyrimEncoding", "TiltedConnect", "CommonLib")
+    add_defines("STEAMNETWORKINGSOCKETS_STATIC_LINK")
+    add_packages(
+        "tiltedcore",
+        "hopscotch-map",
+        "cryptopp",
+        "gamenetworkingsockets",
+        "snappy",
+        "libuv",
+        "mimalloc",
+        "spdlog",
+        "glm")
