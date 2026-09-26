@@ -10,6 +10,8 @@
 #include <Messages/NotifyCharacterAssignmentRejected.h>
 #include <Messages/NotifyActivate.h>
 #include <Messages/NotifyActorValueChanges.h>
+#include <Messages/NotifyProjectileLaunch.h>
+#include <Messages/ProjectileLaunchRequest.h>
 #include <Messages/NotifyDeathStateChange.h>
 #include <Messages/NotifyRespawn.h>
 #include <Messages/PlayerRespawnRequest.h>
@@ -523,5 +525,61 @@ int RunDeathAndRespawn(Bots& aBots)
 
     if (failures == 0)
         spdlog::info("PASS step 6: {} died and respawned; {} saw it dead, then alive at full vitals (epoch {})", victim.GetName(), peer.GetName(), epoch);
+    return failures;
+}
+
+int RunArrow(Bots& aBots)
+{
+    Bot& shooter = *aBots[0];
+    Bot& peer = *aBots[1];
+    const uint32_t modId = shooter.GetFixtureModId();
+
+    std::vector<NotifyProjectileLaunch> relayed;
+    peer.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() == kNotifyProjectileLaunch)
+            relayed.push_back(static_cast<const NotifyProjectileLaunch&>(acMessage));
+    };
+
+    ProjectileLaunchRequest arrow{};
+    arrow.ShooterID = shooter.GetServerId();
+    arrow.OwnershipEpoch = shooter.GetOwnershipEpoch();
+    arrow.OriginX = 10.f;
+    arrow.OriginY = 20.f;
+    arrow.OriginZ = 30.f;
+    // Stand-in ids; the server relays them without looking them up.
+    arrow.ProjectileBaseID = GameId(modId, L2Fixture::kDummyItem);
+    arrow.WeaponID = GameId(modId, L2Fixture::kDummyItem);
+    arrow.AmmoID = GameId(modId, L2Fixture::kDummyItem);
+    arrow.ParentCellID = GameId(modId, L2Fixture::kCell);
+    // A bow shot has no spell; the engine leaves its casting source outside the spell slots.
+    arrow.CastingSource = -1;
+    arrow.Power = 1.f;
+    arrow.Scale = 1.f;
+
+    // Out of range for a spell: must be dropped. Sent first so a relay of it would arrive first.
+    ProjectileLaunchRequest badSpell = arrow;
+    badSpell.SpellID = GameId(modId, L2Fixture::kDummyItem);
+    badSpell.CastingSource = 7;
+    shooter.Send(badSpell);
+    shooter.Send(arrow);
+
+    static_cast<void>(Pump(aBots, [&] { return !relayed.empty(); }, std::chrono::seconds(5)));
+    // Give a wrongly relayed spell time to show up too.
+    static_cast<void>(Pump(aBots, [] { return false; }, std::chrono::milliseconds(200)));
+    peer.OnMessage = nullptr;
+
+    int failures = 0;
+    failures += Check(relayed.size() == 1, "exactly one projectile is relayed (the arrow, not the bad spell)");
+    if (!relayed.empty())
+    {
+        const auto& notify = relayed.front();
+        failures += Check(notify.ShooterID == arrow.ShooterID && notify.OwnershipEpoch == arrow.OwnershipEpoch, "the relay names the shooter and epoch");
+        failures += Check(notify.SpellID == GameId{} && notify.CastingSource == -1, "the relay is the arrow with its casting source");
+        failures += Check(notify.AmmoID == arrow.AmmoID && notify.OriginZ == arrow.OriginZ && notify.Power == arrow.Power, "the arrow's fields are relayed");
+    }
+
+    if (failures == 0)
+        spdlog::info("PASS step 7: the arrow was relayed to {}, the malformed spell was dropped", peer.GetName());
     return failures;
 }

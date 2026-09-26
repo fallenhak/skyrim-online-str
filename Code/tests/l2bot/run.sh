@@ -61,7 +61,13 @@ if ! grep -q "encounter zones: 1 zone(s)" server.log; then
   echo "FAIL: the server did not load the fixture plugin"
   RESULT=1
 fi
-if grep -E "\[Drop\]|\[Desync\]|Couldn't parse" server.log; then
+# Step 7 sends one malformed spell on purpose; that drop must happen, and nothing else may.
+EXPECTED_DROP="\[Drop\] projectile launch: invalid parameters"
+if [ "$(grep -cE "$EXPECTED_DROP" server.log)" != 1 ]; then
+  echo "FAIL: the malformed spell of step 7 was not dropped exactly once"
+  RESULT=1
+fi
+if grep -E "\[Drop\]|\[Desync\]|Couldn't parse" server.log | grep -vE "$EXPECTED_DROP"; then
   echo "FAIL: unexpected drop/desync/parse lines in the server log"
   RESULT=1
 fi

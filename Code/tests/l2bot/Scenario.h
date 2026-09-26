@@ -28,4 +28,7 @@ using Bots = std::vector<std::unique_ptr<Bot>>;
 [[nodiscard]] int RunLeveledActor(Bots& aBots);
 // Step 6: a bot dies and respawns; the peer sees it dead, then respawned alive at full vitals.
 [[nodiscard]] int RunDeathAndRespawn(Bots& aBots);
+// Step 7: a bow shot, whose casting source is not a spell slot, is accepted and relayed;
+// a spell with an out-of-range casting source is not.
+[[nodiscard]] int RunArrow(Bots& aBots);
 [[nodiscard]] int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string& acSecret);
