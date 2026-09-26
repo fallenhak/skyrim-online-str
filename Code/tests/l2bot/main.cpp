@@ -1,4 +1,5 @@
 #include "Bot.h"
+#include "Scenario.h"
 
 #include <fixture/L2Fixture.h>
 
@@ -124,11 +125,17 @@ int Connect(const std::string& acEndpoint)
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
+    if (failures == 0)
+    {
+        spdlog::info("PASS step 1: both bots are in the fixture cell");
+        failures += RunAssignObjects(bots);
+    }
+
     for (auto& pBot : bots)
         pBot->Shutdown();
 
     if (failures == 0)
-        spdlog::info("PASS: both bots are in the fixture cell");
+        spdlog::info("PASS");
     return failures == 0 ? 0 : 1;
 }
 } // namespace
