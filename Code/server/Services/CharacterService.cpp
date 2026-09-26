@@ -53,9 +53,12 @@
 #include <Services/CorpseRetentionPolicy.h>
 #include <Services/PresentationAuthorityPolicy.h>
 #include <Services/LeveledActorPicker.h>
+#include <Services/OwnershipHandoffPolicy.h>
 #include <Setting.h>
 
+#include <chrono>
 #include <cmath>
+#include <glm/geometric.hpp>
 
 namespace
 {
@@ -288,6 +291,11 @@ void CharacterService::OnUpdate(const UpdateEvent& acEvent) noexcept
         }
 
         ExpireRetainedCorpses();
+        if (m_tick != m_lastHandoffTick)
+        {
+            m_lastHandoffTick = m_tick;
+            RunOwnershipHandoffs();
+        }
     }
 
     ProcessFactionsChanges();
@@ -512,6 +520,9 @@ void CharacterService::OnAssignCharacterRequest(const PacketEvent<AssignCharacte
             // The assignment response establishes a remote component before the grant arrives.
             if (transferToLeader)
                 TransferOwnership(acMessage.pPlayer, *itor, OwnershipTransferReason::LeaderAssignment);
+            // Frozen without an owner since its last player left: the player loading it simulates it again.
+            else if (!ownerComponent.GetOwner() && !characterComponent.IsDead() && !characterComponent.IsPlayer())
+                TransferOwnership(acMessage.pPlayer, *itor, OwnershipTransferReason::LeaderAssignment);
 
             // Canonical actors created by older code paths may not have the
             // trusted projection yet. Hydrate it once, but never overwrite an
@@ -661,6 +672,20 @@ void CharacterService::OnOwnershipClaimRequest(const PacketEvent<RequestOwnershi
     const auto& message = acMessage.Packet;
     const entt::entity cEntity = static_cast<entt::entity>(message.ServerId);
 
+    if (message.ForActivation)
+    {
+        if (!CanClaimForActivation(acMessage.pPlayer, cEntity, message.ExpectedOwnershipEpoch))
+        {
+            DropLog::Info("ownership claim for activation: refused", "player {:X}, actor {:X}, expected epoch {}", acMessage.pPlayer->GetId(),
+                message.ServerId, message.ExpectedOwnershipEpoch);
+            return;
+        }
+
+        spdlog::info("Actor {:X} claimed by player {:X}: a local script activated it for that player", message.ServerId, acMessage.pPlayer->GetId());
+        TransferOwnership(acMessage.pPlayer, cEntity, OwnershipTransferReason::Activation);
+        return;
+    }
+
     if (!CanClaimOwnership(acMessage.pPlayer, cEntity, message.ExpectedOwnershipEpoch, OwnershipTransferReason::LeaderClaim))
     {
         DropLog::Info("ownership claim: refused", "player {:X}, actor {:X}, expected epoch {}", acMessage.pPlayer->GetId(), message.ServerId,
@@ -716,6 +741,8 @@ void CharacterService::OnReferencesMoveRequest(const PacketEvent<ClientReference
             spdlog::debug("Rejected malformed movement update from player {:X} for actor {:X}", acMessage.pPlayer->GetId(), entry.first);
             continue;
         }
+
+        ownerComponent.LastOwnerUpdateSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 
         auto& movementComponent = view.get<MovementComponent>(*itor);
         auto& cellIdComponent = view.get<CellIdComponent>(*itor);
@@ -1396,9 +1423,30 @@ const char* CharacterService::GetOwnershipTransferReasonName(const OwnershipTran
         return "owner relinquished control";
     case OwnershipTransferReason::OwnerUnavailable:
         return "owner became unavailable";
+    case OwnershipTransferReason::Proximity:
+        return "a closer player";
+    case OwnershipTransferReason::OwnerStalled:
+        return "owner stopped updating";
+    case OwnershipTransferReason::Activation:
+        return "activation by a local script";
     }
 
     return "unknown reason";
+}
+
+bool CharacterService::CanClaimForActivation(Player* apPlayer, const entt::entity aEntity, const uint32_t aExpectedOwnershipEpoch) const noexcept
+{
+    const auto view = m_world.view<OwnerComponent, CharacterComponent, CellIdComponent, FormIdComponent>();
+    const auto it = view.find(aEntity);
+    if (it == view.end())
+        return false;
+
+    const auto& ownerComponent = view.get<OwnerComponent>(*it);
+    const auto& characterComponent = view.get<CharacterComponent>(*it);
+    // Ambushes wake sleeping actors; a fight in progress keeps its simulating owner.
+    return aExpectedOwnershipEpoch != 0 && ownerComponent.OwnershipEpoch == aExpectedOwnershipEpoch && ownerComponent.GetOwner() != apPlayer &&
+           !characterComponent.IsPlayer() && !characterComponent.IsMount() && !characterComponent.IsPlayerSummon() && !characterComponent.IsDead() &&
+           !characterComponent.IsWeaponDrawn() && apPlayer->GetCellComponent().IsInRange(view.get<CellIdComponent>(*it), characterComponent.IsDragon());
 }
 
 bool CharacterService::CanClaimOwnership(Player* apPlayer, const entt::entity aEntity, const uint32_t aExpectedOwnershipEpoch, const OwnershipTransferReason aReason) const noexcept
@@ -1537,8 +1585,156 @@ void CharacterService::TransferToNextOwner(const entt::entity aEntity, const Own
             return;
     }
 
+    // A plugin-placed actor is kept, frozen in its last state, and simulated again by the next player who
+    // loads it. Only temporaries, which no other client can ever load, are removed.
+    if (m_world.all_of<FormIdComponent>(aEntity) && !characterComponent.IsPlayer())
+    {
+        MakeOwnerless(aEntity, aReason);
+        return;
+    }
+
     spdlog::info("Removing actor {:X} after {} because no eligible owner remains", World::ToInteger(aEntity), pReasonName);
     m_world.GetDispatcher().trigger(CharacterRemoveEvent(World::ToInteger(aEntity)));
+}
+
+void CharacterService::MakeOwnerless(const entt::entity aEntity, const OwnershipTransferReason aReason) const noexcept
+{
+    auto* pOwnerComponent = m_world.try_get<OwnerComponent>(aEntity);
+    if (!pOwnerComponent)
+        return;
+
+    Player* const pOldOwner = pOwnerComponent->GetOwner();
+    const auto oldEpoch = pOwnerComponent->OwnershipEpoch;
+    std::uint32_t newEpoch = oldEpoch + 1;
+    if (newEpoch == 0)
+        newEpoch = 1;
+
+    pOwnerComponent->SetOwner(nullptr);
+    pOwnerComponent->OwnershipEpoch = newEpoch;
+    pOwnerComponent->InvalidOwners.clear();
+    pOwnerComponent->TimedCandidate = nullptr;
+
+    // The former owner stops simulating it; everyone else keeps the frozen, remote actor.
+    NotifyOwnershipTransfer notify{};
+    notify.ServerId = World::ToInteger(aEntity);
+    notify.OwnerPlayerId = 0;
+    notify.OwnershipEpoch = newEpoch;
+    notify.CurrentActorData = BuildActorData(aEntity);
+    if (const auto* pCharacter = m_world.try_get<CharacterComponent>(aEntity))
+        notify.LeveledNpcPickId = pCharacter->LeveledNpcPickId.Id;
+    if (!GameServer::Get()->SendToPlayersInRange(notify, aEntity, pOldOwner))
+        spdlog::error("Failed to broadcast ownerless state for actor {:X}", notify.ServerId);
+    if (pOldOwner)
+        pOldOwner->Send(notify);
+
+    spdlog::info("Actor {:X} is ownerless after {} (epoch {} to {}); kept frozen until a player loads it", notify.ServerId,
+        GetOwnershipTransferReasonName(aReason), oldEpoch, newEpoch);
+}
+
+void CharacterService::RunOwnershipHandoffs() noexcept
+{
+    const double cNow = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+
+    auto view = m_world.view<OwnerComponent, CharacterComponent, MovementComponent, CellIdComponent>();
+    Vector<std::pair<entt::entity, std::pair<Player*, OwnershipTransferReason>>> handoffs;
+    for (const auto entity : view)
+    {
+        auto& ownerComponent = view.get<OwnerComponent>(entity);
+        const auto& characterComponent = view.get<CharacterComponent>(entity);
+        Player* const pOwner = ownerComponent.GetOwner();
+        if (characterComponent.IsPlayer() || characterComponent.IsDead() || characterComponent.IsMount() || characterComponent.IsPlayerSummon())
+            continue;
+
+        const auto& actorCell = view.get<CellIdComponent>(entity);
+        const glm::vec3 actorPosition = view.get<MovementComponent>(entity).Position;
+        const auto distanceTo = [&](const Player* apPlayer) -> float
+        {
+            if (!apPlayer->GetCellComponent().IsInRange(actorCell, characterComponent.IsDragon()))
+                return -1.f;
+            const auto character = apPlayer->GetCharacter();
+            const auto* pMovement = character ? m_world.try_get<MovementComponent>(*character) : nullptr;
+            return pMovement ? glm::distance(pMovement->Position, actorPosition) : -1.f;
+        };
+
+        // Frozen without an owner while a player is near: offer it to the nearest one every few seconds.
+        // A client that has not loaded it declines, and the actor stays frozen until the next offer.
+        if (!pOwner)
+        {
+            if (cNow - ownerComponent.TimedCandidateSince < OwnershipHandoffPolicy::kSustainSeconds)
+                continue;
+            ownerComponent.TimedCandidateSince = cNow;
+
+            Player* pNearest = nullptr;
+            float nearestDistance = 0.f;
+            for (Player* pPlayer : m_world.GetPlayerManager())
+            {
+                const float distance = distanceTo(pPlayer);
+                if (distance >= 0.f && (!pNearest || distance < nearestDistance))
+                {
+                    pNearest = pPlayer;
+                    nearestDistance = distance;
+                }
+            }
+            if (pNearest)
+                handoffs.push_back({entity, {pNearest, OwnershipTransferReason::Proximity}});
+            continue;
+        }
+
+        if (ownerComponent.LastOwnerUpdateSeconds == 0.0)
+            ownerComponent.LastOwnerUpdateSeconds = cNow;
+
+        Player* pCandidate = nullptr;
+        float candidateDistance = 0.f;
+        for (Player* pPlayer : m_world.GetPlayerManager())
+        {
+            if (pPlayer == pOwner || std::find(ownerComponent.InvalidOwners.begin(), ownerComponent.InvalidOwners.end(), pPlayer) != ownerComponent.InvalidOwners.end())
+                continue;
+            const float distance = distanceTo(pPlayer);
+            if (distance >= 0.f && (!pCandidate || distance < candidateDistance))
+            {
+                pCandidate = pPlayer;
+                candidateDistance = distance;
+            }
+        }
+
+        OwnershipHandoffPolicy::Input input{};
+        input.HasCandidate = pCandidate != nullptr;
+        input.OwnerDistance = distanceTo(pOwner);
+        input.CandidateDistance = candidateDistance;
+        input.IsSameCandidateAsTimed = pCandidate && pCandidate == ownerComponent.TimedCandidate;
+        input.CandidateTimedSeconds = cNow - ownerComponent.TimedCandidateSince;
+        input.SecondsSinceOwnerUpdate = cNow - ownerComponent.LastOwnerUpdateSeconds;
+        input.IsInCombat = characterComponent.IsWeaponDrawn();
+
+        switch (OwnershipHandoffPolicy::Decide(input))
+        {
+        case OwnershipHandoffPolicy::Decision::kKeep:
+            if (!pCandidate || !OwnershipHandoffPolicy::IsClearlyCloser(input.OwnerDistance, candidateDistance))
+                ownerComponent.TimedCandidate = nullptr;
+            break;
+        case OwnershipHandoffPolicy::Decision::kStartTiming:
+            ownerComponent.TimedCandidate = pCandidate;
+            ownerComponent.TimedCandidateSince = cNow;
+            break;
+        case OwnershipHandoffPolicy::Decision::kHandOffProximity:
+            handoffs.push_back({entity, {pCandidate, OwnershipTransferReason::Proximity}});
+            break;
+        case OwnershipHandoffPolicy::Decision::kHandOffStalled:
+            handoffs.push_back({entity, {pCandidate, OwnershipTransferReason::OwnerStalled}});
+            break;
+        }
+    }
+
+    // Transfers send messages and touch owner components; apply them after the scan.
+    for (const auto& [entity, target] : handoffs)
+    {
+        if (TransferOwnership(target.first, entity, target.second))
+        {
+            auto& ownerComponent = m_world.get<OwnerComponent>(entity);
+            ownerComponent.TimedCandidate = nullptr;
+            ownerComponent.LastOwnerUpdateSeconds = cNow;
+        }
+    }
 }
 
 bool CharacterService::MakeRetainedCorpseOwnerless(const entt::entity aEntity, const OwnershipTransferReason aReason) const noexcept
@@ -1715,6 +1911,12 @@ void CharacterService::ProcessMovementChanges() const noexcept
             movement.Variables = movementComponent.Variables;
 
             update.ActionEvents = animationComponent.Actions;
+            // Actions pile up from several owner updates between two sends; a creature in a fight can pass
+            // the limit, and the whole update used to be dropped (the actor froze for everyone else). The
+            // latest actions describe its current state, so the oldest are dropped instead.
+            if (update.ActionEvents.size() > MovementPayloadLimits::kMaxActionEvents)
+                update.ActionEvents.erase(update.ActionEvents.begin(),
+                    update.ActionEvents.end() - static_cast<std::ptrdiff_t>(MovementPayloadLimits::kMaxActionEvents));
 
             if (!MovementAuthorityPolicy::HasValidPayload(update))
             {

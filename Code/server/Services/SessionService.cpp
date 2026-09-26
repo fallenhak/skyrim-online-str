@@ -77,6 +77,17 @@ bool SessionService::BindIdentity(const ConnectionId_t aConnectionId, const std:
     return true;
 }
 
+std::vector<ConnectionId_t> SessionService::FindOtherConnectionsOfOwner(const ConnectionId_t aConnectionId, const std::string_view acOwnerProfileId) const
+{
+    std::vector<ConnectionId_t> connections;
+    for (const auto& [connectionId, session] : m_sessions)
+    {
+        if (connectionId != aConnectionId && session.OwnerProfileId.has_value() && *session.OwnerProfileId == acOwnerProfileId)
+            connections.push_back(connectionId);
+    }
+    return connections;
+}
+
 bool SessionService::CanProcessGameplay(const ConnectionId_t aConnectionId) const noexcept
 {
     const auto* pSession = Get(aConnectionId);

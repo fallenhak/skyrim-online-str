@@ -4,6 +4,9 @@
 #include <Structs/CharacterAssignmentRejectReason.h>
 #include <Services/PopulationDisableTracker.h>
 
+#include <chrono>
+#include <unordered_map>
+
 struct ActorAddedEvent;
 struct ActorRemovedEvent;
 struct UpdateEvent;
@@ -33,6 +36,8 @@ struct MountEvent;
 struct NotifyMount;
 struct InitPackageEvent;
 struct NotifyNewPackage;
+struct NotifyActorInventory;
+struct ActivateEvent;
 struct NotifyRespawn;
 struct BeastFormChangeEvent;
 struct DialogueEvent;
@@ -89,6 +94,9 @@ struct CharacterService
     void OnSubtitleEvent(const SubtitleEvent& acEvent) noexcept;
     void OnNotifySubtitle(const NotifySubtitle& acMessage) noexcept;
     void OnNotifyActorTeleport(const NotifyActorTeleport& acMessage) noexcept;
+    void OnActorInventory(const NotifyActorInventory& acMessage) noexcept;
+    void OnActivate(const ActivateEvent& acEvent) noexcept;
+    void SendActorInventory(Actor* apActor) const noexcept;
     void OnAuthorityChangedEvent(const AuthorityChangedEvent& acEvent) noexcept;
 
     void ProcessNewEntity(entt::entity aEntity) const noexcept;
@@ -172,5 +180,9 @@ private:
     entt::scoped_connection m_subtitleSyncConnection;
     entt::scoped_connection m_actorTeleportConnection;
     entt::scoped_connection m_authorityChangedConnection;
+    entt::scoped_connection m_actorInventoryConnection;
+    entt::scoped_connection m_activateConnection;
+    // Remote actors a local script activated for the local player: form id and when the claim was sent.
+    std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> m_pendingActivationClaims{};
     mutable bool m_worldSyncStarted{};
 };

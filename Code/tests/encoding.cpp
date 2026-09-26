@@ -75,6 +75,10 @@ TEST_CASE("Death state packets carry settled corpse positions", "[encoding.death
     request.OwnershipEpoch = 3;
     request.IsDead = true;
     request.IsSettledPosition = true;
+    Inventory::Entry pelt{};
+    pelt.BaseId = GameId{0, 0x3AD8E};
+    pelt.Count = 1;
+    request.CorpseContents.AddOrRemoveEntry(pelt);
 
     Buffer clientBuffer(1000);
     Buffer::Writer clientWriter(&clientBuffer);
@@ -94,6 +98,8 @@ TEST_CASE("Death state packets carry settled corpse positions", "[encoding.death
     notification.Position.x = -1234.f;
     notification.Position.y = 5678.f;
     notification.Position.z = 901.f;
+    notification.HasCorpseContents = true;
+    notification.CorpseContents.AddOrRemoveEntry(pelt);
 
     Buffer serverBuffer(1000);
     Buffer::Writer serverWriter(&serverBuffer);
@@ -113,6 +119,8 @@ TEST_CASE("AssignObjectsResponse preserves provisional object state", "[encoding
     object.ServerId = 42;
     object.Id = GameId{1, 0x200};
     object.IsStateUntrusted = true;
+    object.IsOpenLoot = true;
+    object.LeveledItemId = GameId{0, 0x3EADE};
     sent.Objects.push_back(object);
 
     Buffer buffer(1000);
@@ -805,6 +813,66 @@ TEST_CASE("NotifyContainerTransferResult round-trips", "[encoding.container_tran
     Buffer::Reader reader(&buffer);
     const ServerMessageFactory factory;
     auto received = CastUnique<NotifyContainerTransferResult>(factory.Extract(reader));
+    REQUIRE(received);
+    REQUIRE(*received == sent);
+}
+
+TEST_CASE("Actor inventory snapshots round-trip", "[encoding.container_transfer]")
+{
+    Inventory::Entry sword{};
+    sword.BaseId = GameId{0, 0x1CB64};
+    sword.Count = 1;
+    sword.ExtraWorn = true;
+
+    RequestActorInventory request;
+    request.ServerId = 0x380B8;
+    request.OwnershipEpoch = 2;
+    request.Contents.AddOrRemoveEntry(sword);
+
+    Buffer clientBuffer(1000);
+    Buffer::Writer clientWriter(&clientBuffer);
+    request.Serialize(clientWriter);
+    Buffer::Reader clientReader(&clientBuffer);
+    const ClientMessageFactory clientFactory;
+    auto decodedRequest = CastUnique<RequestActorInventory>(clientFactory.Extract(clientReader));
+    REQUIRE(decodedRequest);
+    REQUIRE(*decodedRequest == request);
+
+    NotifyActorInventory notify;
+    notify.ServerId = request.ServerId;
+    notify.OwnershipEpoch = request.OwnershipEpoch;
+    notify.Contents = request.Contents;
+
+    Buffer serverBuffer(1000);
+    Buffer::Writer serverWriter(&serverBuffer);
+    notify.Serialize(serverWriter);
+    Buffer::Reader serverReader(&serverBuffer);
+    const ServerMessageFactory serverFactory;
+    auto decodedNotify = CastUnique<NotifyActorInventory>(serverFactory.Extract(serverReader));
+    REQUIRE(decodedNotify);
+    REQUIRE(*decodedNotify == notify);
+}
+
+TEST_CASE("NotifyCorpseContents round-trips", "[encoding.container_transfer]")
+{
+    NotifyCorpseContents sent;
+    sent.ServerId = 0x1C;
+    Inventory::Entry axe{};
+    axe.BaseId = GameId{0, 0x1CB64};
+    axe.Count = 1;
+    sent.Contents.AddOrRemoveEntry(axe);
+    Inventory::Entry gold{};
+    gold.BaseId = GameId{0, 0xF};
+    gold.Count = 23;
+    sent.Contents.AddOrRemoveEntry(gold);
+
+    Buffer buffer(1000);
+    Buffer::Writer writer(&buffer);
+    sent.Serialize(writer);
+
+    Buffer::Reader reader(&buffer);
+    const ServerMessageFactory factory;
+    auto received = CastUnique<NotifyCorpseContents>(factory.Extract(reader));
     REQUIRE(received);
     REQUIRE(*received == sent);
 }

@@ -6,6 +6,7 @@
 #include <Events/ConnectionErrorEvent.h>
 #include <Events/DisconnectedEvent.h>
 #include <Events/LoadingStageEvent.h>
+#include <Events/CharacterWorldSyncStartedEvent.h>
 #include <Events/UpdateEvent.h>
 
 #include <Games/References.h>
@@ -38,6 +39,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <chrono>
 #include <iterator>
 #include <wincrypt.h>
 
@@ -55,6 +57,7 @@ TransportService::TransportService(World& aWorld, entt::dispatcher& aDispatcher)
     m_settingsChangeConnection = m_dispatcher.sink<NotifySettingsChange>().connect<&TransportService::HandleNotifySettingsChange>(this);
     m_connectedConnection = m_dispatcher.sink<ConnectedEvent>().connect<&TransportService::HandleConnected>(this);
     m_disconnectedConnection = m_dispatcher.sink<DisconnectedEvent>().connect<&TransportService::HandleDisconnected>(this);
+    m_worldSyncStartedConnection = m_dispatcher.sink<CharacterWorldSyncStartedEvent>().connect<&TransportService::HandleWorldSyncStarted>(this);
 
     m_connected = false;
 
@@ -190,6 +193,13 @@ void TransportService::StartLauncherSession() noexcept
 }
 
 void TransportService::RetryLauncherSession() noexcept
+{
+    m_reconnect.OnManualRetry(Now());
+    m_reconnectFailureShown = false;
+    ConnectLauncherSession();
+}
+
+void TransportService::ConnectLauncherSession() noexcept
 {
     if (!m_launcherConfigPresent)
     {
@@ -386,6 +396,25 @@ void TransportService::OnDisconnected(EDisconnectReason aReason)
 
     spdlog::warn("Disconnected from server {}", aReason);
 
+    // kAborted is our own Close() (quit, manual reconnect); every other reason is the network or the
+    // server going away. Decided before DisconnectedEvent, which leaves the in-world session state.
+    const bool cWasResuming = m_reconnect.IsResuming();
+    if (aReason != kAborted)
+    {
+        const bool cWasInWorld = m_world.GetCharacterSessionService().IsGameplayActive();
+        const bool cCanReconnect = m_launcherConfigPresent && m_launcherConfigErrorKey.empty() && !m_launcherAuthToken.empty();
+        m_reconnect.OnDisconnected(cWasInWorld, cCanReconnect, Now());
+    }
+
+    if (m_reconnect.IsResuming() && !cWasResuming)
+    {
+        spdlog::warn("[Reconnect] connection lost in the world; the world is frozen and the client reconnects on its own");
+        m_reconnectFailureShown = false;
+        // The entry screen covers the frozen world and takes the input until the world is entered again.
+        m_world.GetOverlayService().SetEntryActive(true);
+        m_world.GetDispatcher().trigger(LoadingStageEvent{LoadingStage::kReconnecting, 0.f});
+    }
+
     m_dispatcher.trigger(DisconnectedEvent());
 }
 
@@ -395,7 +424,32 @@ void TransportService::OnUpdate()
 
 void TransportService::HandleUpdate(const UpdateEvent& acEvent) noexcept
 {
+    const double cNow = Now();
+    if (m_reconnect.TakeAttempt(cNow))
+    {
+        spdlog::info("[Reconnect] attempt {} of {}", m_reconnect.GetAttempts(), ReconnectPolicy::kMaxAttempts);
+        ConnectLauncherSession();
+    }
+    else if (m_reconnect.HasGivenUp() && !m_reconnectFailureShown)
+    {
+        m_reconnectFailureShown = true;
+        spdlog::error("[Reconnect] gave up after {} attempts; waiting for a manual retry", m_reconnect.GetAttempts());
+        m_world.GetOverlayService().EmitAuthState("failed", "", "", "COMPONENT.ENTRY.ERROR.CONNECTION");
+    }
+
     Update();
+}
+
+void TransportService::HandleWorldSyncStarted(const CharacterWorldSyncStartedEvent&) noexcept
+{
+    if (m_reconnect.IsResuming())
+        spdlog::info("[Reconnect] back in the world after {} attempt(s)", m_reconnect.GetAttempts());
+    m_reconnect.OnWorldEntered();
+}
+
+double TransportService::Now() noexcept
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 void TransportService::HandleConnected(const ConnectedEvent& acEvent) noexcept
@@ -416,6 +470,7 @@ void TransportService::HandleAuthenticationResponse(const AuthenticationResponse
     {
         m_connected = true;
         m_launcherAuthenticated = m_launcherConfigPresent && !m_launcherAuthToken.empty();
+        m_reconnect.OnConnected(Now());
 
         if (m_launcherAuthenticated)
         {

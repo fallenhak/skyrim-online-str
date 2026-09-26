@@ -2,6 +2,7 @@
 
 #include <Services/ActorValueService.h>
 #include <World.h>
+#include <Interface/UI.h>
 #include <Forms/ActorValueInfo.h>
 #include <Games/References.h>
 #include <Components.h>
@@ -99,9 +100,33 @@ void ActorValueService::OnActorRemoved(const ActorRemovedEvent& acEvent) noexcep
 
 void ActorValueService::OnUpdate(const UpdateEvent& acEvent) noexcept
 {
+    RunCorpseRebuilds(acEvent.Delta);
     RunSmallHealthUpdates();
     RunDeathStateUpdates();
     RunActorValuesUpdates();
+}
+
+void ActorValueService::RunCorpseRebuilds(const double aDelta) noexcept
+{
+    for (auto it = m_corpseRebuilds.begin(); it != m_corpseRebuilds.end();)
+    {
+        it->second -= aDelta;
+        if (it->second > 0.0)
+        {
+            ++it;
+            continue;
+        }
+
+        // Enabling the reference loads its 3D and rediscovers the actor; the assignment that follows
+        // places the corpse at the server's position before it settles.
+        if (Actor* pActor = Cast<Actor>(TESForm::GetById(it->first)); pActor && pActor->IsDisabled() && !pActor->IsDeleted())
+        {
+            pActor->Enable();
+            spdlog::info("[CorpseSync] corpse form {:X} enabled again at ({:.0f}, {:.0f}, {:.0f})", it->first, pActor->position.x, pActor->position.y,
+                pActor->position.z);
+        }
+        it = m_corpseRebuilds.erase(it);
+    }
 }
 
 void ActorValueService::BroadcastActorValues() noexcept
@@ -326,6 +351,7 @@ void ActorValueService::RunDeathStateUpdates() noexcept
             requestChange.OwnershipEpoch = localComponent.OwnershipEpoch;
             requestChange.IsDead = true;
             requestChange.IsSettledPosition = true;
+            requestChange.CorpseContents = pActor->GetActorInventory();
 
             if (m_transport.Send(requestChange))
             {
@@ -487,7 +513,7 @@ void ActorValueService::OnActorMaxValueChanges(const NotifyActorMaxValueChanges&
     }
 }
 
-void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessage) const noexcept
+void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessage) noexcept
 {
     auto view = m_world.view<FormIdComponent, RemoteComponent>();
 
@@ -520,10 +546,28 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
         settledPosition.x = acMessage.Position.x;
         settledPosition.y = acMessage.Position.y;
         settledPosition.z = acMessage.Position.z;
+        const float cDx = pActor->position.x - settledPosition.x;
+        const float cDy = pActor->position.y - settledPosition.y;
+        const float cDz = pActor->position.z - settledPosition.z;
+        const float cDrift = std::sqrt(cDx * cDx + cDy * cDy + cDz * cDz);
         pActor->ForcePosition(settledPosition);
+
         // ForcePosition moves the reference and its 3D root, not the ragdoll bodies: the corpse looked right
-        // but crosshair activation (E) still hit the bodies where the local ragdoll had settled. Warp them.
-        pActor->Update3DPosition(true);
+        // but activation (E) still hit the bodies where this client's own ragdoll had fallen. A corpse whose
+        // 3D is loaded fresh lies where the server says (corpses already dead on arrival were never off),
+        // so a drifted corpse is unloaded and loaded again at the settled position.
+        static BSFixedString s_containerMenu("ContainerMenu");
+        const auto* pUi = UI::Get();
+        const bool cLootMenuOpen = pUi && pUi->GetMenuOpen(s_containerMenu);
+        if (cDrift > kCorpseRebuildDistance && !cLootMenuOpen && !pActor->IsTemporary() && !pActor->IsDisabled() &&
+            m_corpseRebuilds.find(pActor->formID) == m_corpseRebuilds.end())
+        {
+            pActor->Disable(false);
+            m_corpseRebuilds[pActor->formID] = kCorpseRebuildDelaySeconds;
+            spdlog::info("[CorpseSync] rebuilding corpse actor {:X} form {:X}: local ragdoll was {:.0f} units off", acMessage.Id, pActor->formID, cDrift);
+        }
+        else
+            pActor->Update3DPosition(true);
         if (auto* const pInterpolation = m_world.try_get<InterpolationComponent>(*it))
         {
             pInterpolation->Position = acMessage.Position;
@@ -539,5 +583,16 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
         spdlog::info(
             "[CorpseSync] applied settled position actor {:X} form {:X} at ({:.0f}, {:.0f}, {:.0f})",
             acMessage.Id, pActor->formID, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
+
+        // This client's Kill() rolled its own death items; the corpse holds the recorded contents instead.
+        // Never under an open loot menu: the desync report corrects it once the menu is closed.
+        if (acMessage.HasCorpseContents && cLootMenuOpen)
+            spdlog::info("[CorpseSync] corpse actor {:X} contents left to the desync report: a loot menu is open", acMessage.Id);
+        else if (acMessage.HasCorpseContents)
+        {
+            pActor->SetActorInventory(acMessage.CorpseContents);
+            spdlog::info("[CorpseSync] corpse actor {:X} form {:X} contents set to the recorded {} item(s)", acMessage.Id, pActor->formID,
+                acMessage.CorpseContents.Entries.size());
+        }
     }
 }

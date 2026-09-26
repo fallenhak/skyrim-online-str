@@ -63,6 +63,7 @@ enum ClientOpcode : unsigned char
     kRequestContainerTransfer,
     kUpdatePlayerAppearanceRequest,
     kObjectStateReport,
+    kRequestActorInventory,
     kClientOpcodeMax
 };
 
@@ -135,5 +136,7 @@ enum ServerOpcode : unsigned char
     kNotifyWorldItemTaken,
     kNotifyFurnitureUseDenied,
     kNotifyContainerTransferResult,
+    kNotifyCorpseContents,
+    kNotifyActorInventory,
     kServerOpcodeMax
 };

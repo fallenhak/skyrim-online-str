@@ -6,6 +6,8 @@ void RequestDeathStateChange::SerializeRaw(TiltedPhoques::Buffer::Writer& aWrite
     Serialization::WriteVarInt(aWriter, OwnershipEpoch);
     Serialization::WriteBool(aWriter, IsDead);
     Serialization::WriteBool(aWriter, IsSettledPosition);
+    if (IsSettledPosition)
+        CorpseContents.Serialize(aWriter);
 }
 
 void RequestDeathStateChange::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept
@@ -16,4 +18,6 @@ void RequestDeathStateChange::DeserializeRaw(TiltedPhoques::Buffer::Reader& aRea
     OwnershipEpoch = Serialization::ReadVarInt(aReader) & 0xFFFFFFFF;
     IsDead = Serialization::ReadBool(aReader);
     IsSettledPosition = Serialization::ReadBool(aReader);
+    if (IsSettledPosition)
+        CorpseContents.Deserialize(aReader);
 }

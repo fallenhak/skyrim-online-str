@@ -11,6 +11,7 @@ struct RequestEquipmentChanges;
 struct DrawWeaponRequest;
 struct PlayerLeaveCellEvent;
 struct RequestContainerTransfer;
+struct RequestActorInventory;
 
 /**
  * @brief Relays inventory/equipment changes and updates the server side state.
@@ -28,6 +29,7 @@ public:
      * @brief Relays equipment changes to other clients and updates server side equipment.
      */
     void OnEquipmentChanges(const PacketEvent<RequestEquipmentChanges>& acMessage) noexcept;
+    void OnActorInventory(const PacketEvent<RequestActorInventory>& acMessage) noexcept;
     /**
      * @brief Relays weapon draw changes to other clients and updates server side weapon draw state.
      */
@@ -45,4 +47,5 @@ private:
     entt::scoped_connection m_equipmentChangeConnection;
     entt::scoped_connection m_drawWeaponConnection;
     entt::scoped_connection m_containerTransferConnection;
+    entt::scoped_connection m_actorInventoryConnection;
 };

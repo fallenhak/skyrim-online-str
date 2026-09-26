@@ -22,6 +22,7 @@ void REFR::ParseChunks(REFR& aSourceRecord, Map<uint8_t, uint32_t>& aParentToFor
                 m_lockKey = Chunks::ReadFormId(aReader, aParentToFormIdPrefix);
                 break;
             case ChunkId::XEZN_ID: m_encounterZone = Chunks::ReadFormId(aReader, aParentToFormIdPrefix); break;
+            case ChunkId::XLIB_ID: m_leveledItemBase = Chunks::ReadFormId(aReader, aParentToFormIdPrefix); break;
             }
         });
 }

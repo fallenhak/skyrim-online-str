@@ -65,6 +65,7 @@
 #include <Messages/RequestContainerTransfer.h>
 #include <Messages/UpdatePlayerAppearanceRequest.h>
 #include <Messages/ObjectStateReport.h>
+#include <Messages/RequestActorInventory.h>
 
 using TiltedPhoques::UniquePtr;
 
@@ -80,7 +81,7 @@ struct ClientMessageFactory
             RequestOwnershipTransfer, RequestOwnershipClaim, RequestObjectInventoryChanges, SpellCastRequest, ProjectileLaunchRequest, InterruptCastRequest, AddTargetRequest, ScriptAnimationRequest, DrawWeaponRequest, MountRequest, NewPackageRequest, RequestRespawn, SyncExperienceRequest,
             RequestEquipmentChanges, SendChatMessageRequest, TeleportCommandRequest, PlayerRespawnRequest, DialogueRequest, SubtitleRequest, PlayerDialogueRequest, PlayerLevelRequest, TeleportRequest, RequestPlayerHealthUpdate, RequestWeatherChange, RequestCurrentWeather, RequestSetWaypoint,
             RequestRemoveWaypoint, RemoveSpellRequest, SetTimeCommandRequest, RequestCharacterList, SelectCharacterRequest, CharacterReadyRequest,
-            CombatHitObservationRequest, CreateCharacterRequest, UpdateCharacterAppearanceRequest, TakeWorldItemRequest, RequestContainerTransfer, UpdatePlayerAppearanceRequest, ObjectStateReport>;
+            CombatHitObservationRequest, CreateCharacterRequest, UpdateCharacterAppearanceRequest, TakeWorldItemRequest, RequestContainerTransfer, UpdatePlayerAppearanceRequest, ObjectStateReport, RequestActorInventory>;
 
         return s_visitor(std::forward<T>(func));
     }

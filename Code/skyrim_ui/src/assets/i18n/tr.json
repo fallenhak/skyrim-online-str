@@ -175,7 +175,8 @@
         "applyingCharacter": "Karakterin hazırlanıyor",
         "raceMenu": "Görünüş ekranı açılıyor",
         "enteringWorld": "Dünyaya adım atılıyor",
-        "done": "Hazır"
+        "done": "Hazır",
+        "reconnecting": "Bağlantı koptu, yeniden bağlanılıyor"
       },
       "ERROR": {
         "CONNECTION": "Sunucuya ulaşılamadı. İnternet bağlantını kontrol edip tekrar dene.",

@@ -12,6 +12,7 @@
 #include <Events/DisconnectedEvent.h>
 #include <Events/UpdateEvent.h>
 #include <Events/CellChangeEvent.h>
+#include <Events/CharacterWorldSyncStartedEvent.h>
 #include <Events/ActivateEvent.h>
 #include <Events/LockChangeEvent.h>
 #include <Events/ScriptAnimationEvent.h>
@@ -26,10 +27,15 @@
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
 #include <Messages/NotifyObjectHarvested.h>
+#include <Messages/NotifyCorpseContents.h>
 #include <Messages/TakeWorldItemRequest.h>
 #include <Messages/NotifyWorldItemTaken.h>
 
 #include <PlayerCharacter.h>
+#include <Actor.h>
+#include <Components.h>
+#include <Interface/UI.h>
+#include <Forms/TESBoundObject.h>
 #include <Forms/TESObjectCELL.h>
 #include <Forms/TESWorldSpace.h>
 #include <Forms/BGSEncounterZone.h>
@@ -38,6 +44,7 @@
 
 #include <inttypes.h>
 
+#include <algorithm>
 #include <limits>
 #include <unordered_map>
 
@@ -47,6 +54,7 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Trans
 {
     m_disconnectedConnection = aDispatcher.sink<DisconnectedEvent>().connect<&ObjectService::OnDisconnected>(this);
     m_cellChangeConnection = aDispatcher.sink<CellChangeEvent>().connect<&ObjectService::OnCellChange>(this);
+    m_worldSyncStartedConnection = aDispatcher.sink<CharacterWorldSyncStartedEvent>().connect<&ObjectService::OnWorldSyncStarted>(this);
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&ObjectService::OnUpdate>(this);
     m_onActivateConnection = aDispatcher.sink<ActivateEvent>().connect<&ObjectService::OnActivate>(this);
     m_activateConnection = aDispatcher.sink<NotifyActivate>().connect<&ObjectService::OnActivateNotify>(this);
@@ -57,6 +65,7 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Trans
     m_scriptAnimationNotifyConnection = aDispatcher.sink<NotifyScriptAnimation>().connect<&ObjectService::OnNotifyScriptAnimation>(this);
     m_objectHarvestedConnection = aDispatcher.sink<NotifyObjectHarvested>().connect<&ObjectService::OnObjectHarvestedNotify>(this);
     m_worldItemTakenConnection = aDispatcher.sink<NotifyWorldItemTaken>().connect<&ObjectService::OnWorldItemTakenNotify>(this);
+    m_corpseContentsConnection = aDispatcher.sink<NotifyCorpseContents>().connect<&ObjectService::OnCorpseContents>(this);
 
     EventDispatcherManager::Get()->activateEvent.RegisterSink(this);
 }
@@ -229,6 +238,67 @@ void ProcessRotationReplays(const double aDelta) noexcept
     }
 }
 
+// A plant is picked in place: the game keeps the reference and shows its harvested model (only the flowers
+// or the cap go). Placed ingredients are items and disappear. A model reads the harvested flag (or a swapped
+// base) when it loads, so a reference changed from here is reloaded: hidden now, shown again once its old 3D
+// is gone.
+bool IsPickedInPlace(const TESObjectREFR* apObject) noexcept
+{
+    return apObject && apObject->baseForm && apObject->baseForm->formType != FormType::Ingredient;
+}
+
+struct PendingModelRefresh
+{
+    uint32_t FormId{};
+    double WaitSeconds{};
+};
+Vector<PendingModelRefresh> s_pendingModelRefreshes;
+constexpr double kModelRefreshDelaySeconds = 0.1;
+
+void RefreshModel(TESObjectREFR* apObject) noexcept
+{
+    if (apObject->IsDisabled())
+        return;
+    apObject->Disable(false);
+    s_pendingModelRefreshes.push_back({apObject->formID, kModelRefreshDelaySeconds});
+}
+
+void ProcessModelRefreshes(const double aDelta) noexcept
+{
+    for (auto it = s_pendingModelRefreshes.begin(); it != s_pendingModelRefreshes.end();)
+    {
+        it->WaitSeconds -= aDelta;
+        if (it->WaitSeconds > 0.0)
+        {
+            ++it;
+            continue;
+        }
+
+        // Taken meanwhile: stays hidden, the taken state owns it now.
+        TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(it->FormId));
+        if (pObject && pObject->IsDisabled() && s_worldItemDisabledRefs.find(it->FormId) == s_worldItemDisabledRefs.end())
+            pObject->Enable();
+        it = s_pendingModelRefreshes.erase(it);
+    }
+}
+
+void ApplyServerLeveledItem(TESObjectREFR* apObject, const GameId& acItemId) noexcept
+{
+    if (!apObject || !acItemId)
+        return;
+
+    auto* pItem = Cast<TESBoundObject>(TESForm::GetById(World::Get().GetModSystem().GetGameId(acItemId)));
+    if (!pItem || apObject->baseForm == pItem)
+        return;
+
+    spdlog::info("World item {:X} set to the server's leveled pick {:X} (was {:X})", apObject->formID, pItem->formID,
+        apObject->baseForm ? apObject->baseForm->formID : 0);
+    apObject->SetObjectReference(pItem);
+
+    // A hidden (taken) item needs no new model now; a visible one is reloaded with the new base.
+    RefreshModel(apObject);
+}
+
 void TrackLocalWorldItemTaken(const uint32_t aFormId) noexcept
 {
     s_worldItemDisabledRefs.insert(aFormId);
@@ -245,8 +315,21 @@ void ApplyHarvested(TESObjectREFR* apObject) noexcept
     if (apObject->IsDisabled())
         return;
 
+    if (IsPickedInPlace(apObject))
+    {
+        if ((apObject->flags & TESForm::HARVESTED) != 0)
+            return;
+
+        spdlog::info("Plant {:X} harvested remotely, showing it picked", apObject->formID);
+        apObject->flags |= TESForm::HARVESTED;
+        RefreshModel(apObject);
+        s_harvestDisabledRefs.insert(apObject->formID);
+        return;
+    }
+
     spdlog::info("Object {:X} harvested remotely, disabling", apObject->formID);
-    apObject->Disable();
+    // No fade: the item is already in someone else's hands.
+    apObject->Disable(false);
     s_harvestDisabledRefs.insert(apObject->formID);
 }
 
@@ -255,6 +338,15 @@ void RestoreHarvested(TESObjectREFR* apObject) noexcept
 {
     if (!apObject || !s_harvestDisabledRefs.erase(apObject->formID))
         return;
+
+    // Picked here or by someone else: the plant grows back in place.
+    if (IsPickedInPlace(apObject) && (apObject->flags & TESForm::HARVESTED) != 0)
+    {
+        spdlog::info("Plant {:X} no longer harvested, showing it grown", apObject->formID);
+        apObject->flags &= ~TESForm::HARVESTED;
+        RefreshModel(apObject);
+        return;
+    }
 
     if (apObject->IsDisabled())
     {
@@ -322,13 +414,25 @@ void ObjectService::OnDisconnected(const DisconnectedEvent&) noexcept
 
 void ObjectService::OnCellChange(const CellChangeEvent&) noexcept
 {
+    // Kept while the session is still entering the world; sent once gameplay is active.
     if (m_transport.IsConnected())
         m_assignObjectsPending = true;
+}
+
+// The spawn cell and a reconnect raise no cell change, so without this the server
+// never learned those objects and every client-side state there stayed unsynced.
+void ObjectService::OnWorldSyncStarted(const CharacterWorldSyncStartedEvent&) noexcept
+{
+    m_assignObjectsPending = true;
 }
 
 void ObjectService::OnUpdate(const UpdateEvent& acEvent) noexcept
 {
     ProcessRotationReplays(acEvent.Delta);
+    ProcessModelRefreshes(acEvent.Delta);
+
+    if (!m_world.GetCharacterSessionService().IsGameplayActive())
+        return;
 
     if (m_assignObjectsPending)
     {
@@ -484,8 +588,8 @@ void ObjectService::SendAssignObjectsRequest() noexcept
     m_transport.Send(request);
 }
 
-// Desync detector (world-state plan, phase 0): report what this client shows for
-// every synced reference; the server compares with its record and logs. Nothing is applied.
+// Desync detector: report what this client shows for every synced reference. The server
+// compares it with its record and, for a confirmed difference, sends its state back.
 void ObjectService::SendObjectStateReport() noexcept
 {
     if (!m_transport.IsConnected())
@@ -495,7 +599,7 @@ void ObjectService::SendObjectStateReport() noexcept
     GameId worldSpaceId{};
     TESObjectCELL* pCell = nullptr;
     size_t cellCount = 0;
-    if (!CollectSyncedObjects(objects, worldSpaceId, pCell, cellCount) || objects.empty())
+    if (!CollectSyncedObjects(objects, worldSpaceId, pCell, cellCount))
         return;
 
     ObjectStateReport report{};
@@ -511,6 +615,8 @@ void ObjectService::SendObjectStateReport() noexcept
             digest.StateFlags |= ObjectStateDigest::kDisabled;
         if (ExtraDataList* pExtraData = pObject->GetExtraDataList(); pExtraData && pExtraData->Contains(ExtraDataType::EnableStateParent))
             digest.StateFlags |= ObjectStateDigest::kEnableParent;
+        if (synced.IsHarvestType && (pObject->flags & TESForm::HARVESTED) != 0)
+            digest.StateFlags |= ObjectStateDigest::kHarvested;
 
         if (Lock* pLock = pObject->GetLock())
         {
@@ -534,6 +640,31 @@ void ObjectService::SendObjectStateReport() noexcept
 
         report.Objects.push_back(std::move(digest));
     }
+
+    // Corpses the server knows: their contents are server-owned, so a take relayed while this client
+    // could not apply it is corrected like a world object.
+    auto actorView = m_world.view<FormIdComponent>(entt::exclude<ObjectComponent>);
+    for (const auto entity : actorView)
+    {
+        if (!m_world.any_of<LocalComponent, RemoteComponent>(entity) || m_world.all_of<PlayerComponent>(entity))
+            continue;
+
+        auto* pActor = Cast<Actor>(TESForm::GetById(actorView.get<FormIdComponent>(entity).Id));
+        if (!pActor || !pActor->IsDead() || pActor->IsTemporary() || pActor == PlayerCharacter::Get() || pActor->GetExtension()->IsPlayer())
+            continue;
+
+        ObjectStateDigest digest{};
+        if (!m_world.GetModSystem().GetServerModId(pActor->formID, digest.Id))
+            continue;
+        if (TESObjectCELL* pActorCell = pActor->GetParentCellEx())
+            m_world.GetModSystem().GetServerModId(pActorCell->formID, digest.CellId);
+        digest.StateFlags = ObjectStateDigest::kCorpse | ObjectStateDigest::kHasInventory;
+        digest.Items = ObjectStateDigest::Canonicalize(pActor->GetActorInventory());
+        report.Objects.push_back(std::move(digest));
+    }
+
+    if (report.Objects.empty())
+        return;
 
     m_transport.Send(report);
 }
@@ -562,6 +693,9 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
             ApplyWorldItemTaken(pObject);
         else if (objectData.IsOpenLoot)
             RestoreWorldItem(pObject);
+
+        if (objectData.IsOpenLoot)
+            ApplyServerLeveledItem(pObject, objectData.LeveledItemId);
 
         // Late join / re-entry: match the door to the server's open state.
         if (objectData.IsDoor && objectData.IsDoorStateKnown && IsSyncedDoor(pObject))
@@ -635,7 +769,18 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
 
             pLock->lockLevel = objectData.CurrentLockData.LockLevel;
             pLock->SetLock(objectData.CurrentLockData.IsLocked);
+            // The lock change this raises is the server's own state; never send it back.
+            s_sentLockStates[pObject->formID] = {objectData.CurrentLockData.IsLocked, static_cast<uint8_t>(objectData.CurrentLockData.LockLevel)};
             pObject->LockChange();
+        }
+
+        // A correction can arrive while this player has a chest open; the next report applies it after.
+        static BSFixedString s_containerMenu("ContainerMenu");
+        const auto* pUi = UI::Get();
+        if (pObject->baseForm->formType == FormType::Container && pUi && pUi->GetMenuOpen(s_containerMenu))
+        {
+            spdlog::info("Container {:X} contents left to the next report: a container menu is open", pObject->formID);
+            continue;
         }
 
         if (pObject->baseForm->formType == FormType::Container)
@@ -744,6 +889,12 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
             return;
         }
     }
+
+    // Picking up a world item goes through TakeWorldItemRequest; the server has nothing to do with its
+    // activation, and a stale item repeatedly activated here was a stream of rejected requests. Actors
+    // (talking, looting a corpse) are never world objects either.
+    if (ObjectSyncPolicy::IsOpenLootObject(acEvent.pObject) || Cast<Actor>(acEvent.pObject))
+        return;
 
     ActivateRequest request;
 
@@ -882,9 +1033,33 @@ void ObjectService::OnWorldItemTakenNotify(const NotifyWorldItemTaken& acMessage
         RestoreWorldItem(pObject);
 }
 
+void ObjectService::OnCorpseContents(const NotifyCorpseContents& acMessage) noexcept
+{
+    Actor* pActor = Utils::GetByServerId<Actor>(acMessage.ServerId);
+    if (!pActor || !pActor->IsDead())
+        return;
+
+    // Never swap the contents under an open loot menu; the next report corrects it after it closes.
+    static BSFixedString s_containerMenu("ContainerMenu");
+    if (const auto* pUi = UI::Get(); pUi && pUi->GetMenuOpen(s_containerMenu))
+    {
+        spdlog::info("[CorpseSync] contents correction for actor {:X} deferred: a loot menu is open", acMessage.ServerId);
+        return;
+    }
+
+    spdlog::info("[CorpseSync] corpse actor {:X} form {:X} set to the server's {} item(s)", acMessage.ServerId, pActor->formID, acMessage.Contents.Entries.size());
+    pActor->SetActorInventory(acMessage.Contents);
+}
+
 void ObjectService::OnLockChange(const LockChangeEvent& acEvent) noexcept
 {
     if (!m_transport.IsConnected())
+        return;
+
+    // Only objects the server registered for this client have a lock it keeps; any other lock change
+    // (load doors, unsynced cells, the cell before its registration) was a rejected request.
+    const auto objectView = m_world.view<FormIdComponent, ObjectComponent>();
+    if (std::none_of(objectView.begin(), objectView.end(), [objectView, formId = acEvent.FormId](const auto aEntity) { return objectView.get<FormIdComponent>(aEntity).Id == formId; }))
         return;
 
     LockChangeRequest request;
@@ -961,6 +1136,7 @@ void ObjectService::OnLockChangeNotify(const NotifyLockChange& acMessage) noexce
 
     pLock->lockLevel = acMessage.LockLevel;
     pLock->SetLock(acMessage.IsLocked);
+    s_sentLockStates[pObject->formID] = {acMessage.IsLocked, static_cast<uint8_t>(acMessage.LockLevel)};
     pObject->LockChange();
 }
 

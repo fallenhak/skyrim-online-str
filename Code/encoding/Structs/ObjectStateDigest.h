@@ -5,9 +5,8 @@
 #include <Structs/GameId.h>
 #include <Structs/Inventory.h>
 
-// Desync detector (world-state plan, phase 0): a client's view of one synced
-// reference, compared by the server with its own record. Report only; nothing
-// is corrected from it.
+// Desync detector: a client's view of one synced reference, compared by the
+// server with its own record. A confirmed difference is corrected by the server.
 struct ObjectStateDigest
 {
     struct ItemCount
@@ -27,6 +26,10 @@ struct ObjectStateDigest
         // Enabled or disabled through an enable parent (quest or event state), not by
         // taking or harvesting it; the taken/harvested comparison does not apply.
         kEnableParent = 1 << 4,
+        // Flora picked in place: the game keeps the reference enabled and shows its harvested model.
+        kHarvested = 1 << 5,
+        // A dead actor, not a world object: Id is its reference and Items its contents.
+        kCorpse = 1 << 6,
     };
 
     bool operator==(const ObjectStateDigest& acRhs) const noexcept;

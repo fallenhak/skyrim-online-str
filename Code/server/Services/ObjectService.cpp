@@ -26,6 +26,7 @@
 #include <Messages/ScriptAnimationRequest.h>
 #include <Messages/NotifyScriptAnimation.h>
 #include <Messages/ObjectStateReport.h>
+#include <Messages/NotifyCorpseContents.h>
 
 #include <algorithm>
 #include <chrono>
@@ -463,29 +464,7 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
         if (const auto* pPersistedState = FindPersistedState(object.Id, object.CellId))
             ApplyPersistedState(objectComponent, *pPersistedState);
 
-        ObjectData objectData;
-        objectData.Id = view.get<FormIdComponent>(entity).Id;
-        objectData.ServerId = World::ToInteger(entity);
-        objectData.IsStateUntrusted = !objectComponent.HasTrustedState;
-        objectData.IsHarvestable = objectComponent.IsHarvestable;
-        objectData.IsHarvestItem = objectComponent.IsHarvestItem;
-        objectData.IsHarvested = objectComponent.IsHarvested;
-        objectData.IsOpenLoot = objectComponent.IsOpenLoot;
-        objectData.IsLootTaken = objectComponent.IsLootTaken;
-        objectData.IsFurniture = objectComponent.IsFurniture;
-        objectData.IsDoor = objectComponent.IsDoor;
-        objectData.IsDoorStateKnown = objectComponent.Door.IsKnown;
-        objectData.IsDoorOpen = objectComponent.Door.IsOpen;
-        objectData.IsActivator = objectComponent.IsActivator;
-        objectData.ActivationCount = objectComponent.Activator.ActivationCount;
-        objectData.IsContainer = objectComponent.IsContainer;
-        if (objectComponent.HasTrustedState)
-        {
-            objectData.CurrentLockData = objectComponent.CurrentLockData;
-            objectData.CurrentInventory = view.get<InventoryComponent>(entity).Content;
-        }
-
-        response.Objects.push_back(objectData);
+        response.Objects.push_back(BuildObjectData(entity));
     }
 
     // Every skip here is silent to the client, so a stale sender cell once looked like "nothing syncs".
@@ -496,6 +475,41 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
 
     if (!response.Objects.empty())
         acMessage.pPlayer->Send(response);
+}
+
+ObjectData ObjectService::BuildObjectData(const entt::entity aEntity) const noexcept
+{
+    const auto& objectComponent = m_world.get<ObjectComponent>(aEntity);
+
+    ObjectData objectData;
+    objectData.Id = m_world.get<FormIdComponent>(aEntity).Id;
+    objectData.ServerId = World::ToInteger(aEntity);
+    objectData.IsStateUntrusted = !objectComponent.HasTrustedState;
+    objectData.IsHarvestable = objectComponent.IsHarvestable;
+    objectData.IsHarvestItem = objectComponent.IsHarvestItem;
+    objectData.IsHarvested = objectComponent.IsHarvested;
+    objectData.IsOpenLoot = objectComponent.IsOpenLoot;
+    objectData.IsLootTaken = objectComponent.IsLootTaken;
+    objectData.IsFurniture = objectComponent.IsFurniture;
+    objectData.IsDoor = objectComponent.IsDoor;
+    objectData.IsDoorStateKnown = objectComponent.Door.IsKnown;
+    objectData.IsDoorOpen = objectComponent.Door.IsOpen;
+    objectData.IsActivator = objectComponent.IsActivator;
+    objectData.ActivationCount = objectComponent.Activator.ActivationCount;
+    objectData.IsContainer = objectComponent.IsContainer;
+    if (objectComponent.IsOpenLoot)
+    {
+        if (const auto leveledItem = m_world.ctx().at<PluginContainerContents>().ResolvePlacedLeveledItem(objectData.Id, m_world.ctx().at<ModsComponent>()))
+            objectData.LeveledItemId = *leveledItem;
+    }
+    if (objectComponent.HasTrustedState)
+    {
+        objectData.CurrentLockData = objectComponent.CurrentLockData;
+        if (const auto* pInventory = m_world.try_get<InventoryComponent>(aEntity))
+            objectData.CurrentInventory = pInventory->Content;
+    }
+
+    return objectData;
 }
 
 void ObjectService::OnTakeWorldItem(const PacketEvent<TakeWorldItemRequest>& acMessage) noexcept
@@ -682,6 +696,10 @@ void ObjectService::OnActivate(const PacketEvent<ActivateRequest>& acMessage) no
         return;
     }
 
+    // A world item is picked up through TakeWorldItemRequest; its activation carries no state.
+    if (objectComponent.IsOpenLoot)
+        return;
+
     if (!ObjectInteractionPolicy::CanActivate(
             objectComponent.HasTrustedState, activatorExists, ownedBySender,
             packet.CellId, senderCell.Cell, senderCell.WorldSpaceId, senderCell.CenterCoords,
@@ -863,10 +881,25 @@ void ObjectService::OnObjectStateReport(const PacketEvent<ObjectStateReport>& ac
     for (auto entity : view)
         entitiesById.emplace(view.get<FormIdComponent>(entity).Id, entity);
 
+    auto characterView = m_world.view<FormIdComponent, CharacterComponent, InventoryComponent>();
+    std::unordered_map<GameId, entt::entity> charactersById;
+    for (auto entity : characterView)
+        charactersById.emplace(characterView.get<FormIdComponent>(entity).Id, entity);
+    std::size_t correctedCorpses = 0;
+
     std::size_t mismatched = 0;
+    // A confirmed difference gets the server's state back, in the same message and apply path as the
+    // cell snapshot. A notification the client could not apply is recovered this way.
+    AssignObjectsResponse corrections;
 
     for (const ObjectStateDigest& digest : packet.Objects)
     {
+        if (digest.Has(ObjectStateDigest::kCorpse))
+        {
+            correctedCorpses += CheckCorpseDigest(*acMessage.pPlayer, digest, charactersById) ? 1 : 0;
+            continue;
+        }
+
         entt::entity entity = entt::null;
         const auto [first, last] = entitiesById.equal_range(digest.Id);
         for (auto it = first; it != last; ++it)
@@ -899,22 +932,72 @@ void ObjectService::OnObjectStateReport(const PacketEvent<ObjectStateReport>& ac
             server.Items = ObjectStateDigest::Canonicalize(view.get<InventoryComponent>(entity).Content);
 
         const auto mismatches = DesyncPolicy::Compare(server, digest);
+        bool correct = false;
         for (const auto field : {DesyncPolicy::Field::kHarvested, DesyncPolicy::Field::kLootTaken, DesyncPolicy::Field::kLock, DesyncPolicy::Field::kDoor, DesyncPolicy::Field::kInventory})
         {
             const auto found = std::find_if(mismatches.begin(), mismatches.end(), [field](const auto& acMismatch) { return acMismatch.Kind == field; });
             const std::string signature = found == mismatches.end() ? std::string{} : found->Server + " | " + found->Client;
             const auto event = m_desyncTracker.Observe({cPlayerId, digest.Id, field}, signature);
             if (event == DesyncPolicy::Tracker::Event::kNew)
+            {
+                correct = true;
                 spdlog::warn(
-                    "[Desync] player {:X} ref {:X}:{:X} cell {:X}:{:X} {}: server {} client {}", cPlayerId, digest.Id.ModId, digest.Id.BaseId, digest.CellId.ModId,
-                    digest.CellId.BaseId, DesyncPolicy::FieldName(field), found->Server, found->Client);
+                    "[Desync] player {:X} ref {:X}:{:X} cell {:X}:{:X} {}: server {} client {}; correcting", cPlayerId, digest.Id.ModId, digest.Id.BaseId,
+                    digest.CellId.ModId, digest.CellId.BaseId, DesyncPolicy::FieldName(field), found->Server, found->Client);
+            }
+            else if (event == DesyncPolicy::Tracker::Event::kRetry)
+            {
+                correct = true;
+                spdlog::info("[Desync] player {:X} ref {:X}:{:X} {}: still server {} client {}; correcting again", cPlayerId, digest.Id.ModId,
+                    digest.Id.BaseId, DesyncPolicy::FieldName(field), found->Server, found->Client);
+            }
             else if (event == DesyncPolicy::Tracker::Event::kResolved)
                 spdlog::info("[Desync] player {:X} ref {:X}:{:X} {}: resolved", cPlayerId, digest.Id.ModId, digest.Id.BaseId, DesyncPolicy::FieldName(field));
         }
         mismatched += mismatches.empty() ? 0 : 1;
+        if (correct)
+            corrections.Objects.push_back(BuildObjectData(entity));
     }
 
-    spdlog::debug("[Desync] report from player {:X}: {} object(s), {} differing", cPlayerId, packet.Objects.size(), mismatched);
+    if (!corrections.Objects.empty())
+        acMessage.pPlayer->Send(corrections);
+
+    spdlog::debug("[Desync] report from player {:X}: {} object(s), {} differing, {} corrected, {} corpse(s) corrected", cPlayerId, packet.Objects.size(),
+        mismatched, corrections.Objects.size(), correctedCorpses);
+}
+
+bool ObjectService::CheckCorpseDigest(Player& aPlayer, const ObjectStateDigest& acDigest, const std::unordered_map<GameId, entt::entity>& acCharactersById) noexcept
+{
+    const auto it = acCharactersById.find(acDigest.Id);
+    if (it == acCharactersById.end())
+        return false;
+
+    const auto entity = it->second;
+    const auto& character = m_world.get<CharacterComponent>(entity);
+    // Only a looted corpse's contents are server-owned. Before the first accepted take the owner's
+    // broadcasts still seed them (items the engine adds at death), so they cannot be corrected yet.
+    const auto* pCorpse = m_world.try_get<CorpseRetentionComponent>(entity);
+    if (!character.IsDead() || character.IsPlayer() || !pCorpse || !pCorpse->OwnerSeedClosed || pCorpse->RemovalQueued)
+        return false;
+
+    const auto& inventory = m_world.get<InventoryComponent>(entity).Content;
+    const auto serverItems = ObjectStateDigest::Canonicalize(inventory);
+    const std::string signature = serverItems == acDigest.Items ? std::string{}
+                                                                : DesyncPolicy::FormatItems(serverItems) + " | " + DesyncPolicy::FormatItems(acDigest.Items);
+    const auto event = m_desyncTracker.Observe({aPlayer.GetId(), acDigest.Id, DesyncPolicy::Field::kInventory}, signature);
+    if (event == DesyncPolicy::Tracker::Event::kResolved)
+        spdlog::info("[Desync] player {:X} corpse {:X}:{:X} contents: resolved", aPlayer.GetId(), acDigest.Id.ModId, acDigest.Id.BaseId);
+    if (event != DesyncPolicy::Tracker::Event::kNew && event != DesyncPolicy::Tracker::Event::kRetry)
+        return false;
+
+    spdlog::warn("[Desync] player {:X} corpse {:X}:{:X} (actor {:X}) contents: server {} client {}; correcting", aPlayer.GetId(), acDigest.Id.ModId,
+        acDigest.Id.BaseId, World::ToInteger(entity), DesyncPolicy::FormatItems(serverItems), DesyncPolicy::FormatItems(acDigest.Items));
+
+    NotifyCorpseContents correction{};
+    correction.ServerId = World::ToInteger(entity);
+    correction.Contents = inventory;
+    aPlayer.Send(correction);
+    return true;
 }
 
 void ObjectService::OnPlayerLeave(const PlayerLeaveEvent& acEvent) noexcept

@@ -50,8 +50,11 @@
 #include <Messages/NotifyFactionsChanges.h>
 #include <Messages/NotifyRemoveCharacter.h>
 #include <Messages/RequestOwnershipTransfer.h>
+#include <Messages/RequestActorInventory.h>
+#include <Messages/NotifyActorInventory.h>
 #include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/RequestOwnershipClaim.h>
+#include <Events/ActivateEvent.h>
 #include <Messages/MountRequest.h>
 #include <Messages/NotifyMount.h>
 #include <Messages/NewPackageRequest.h>
@@ -113,6 +116,8 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
     m_actorTeleportConnection = m_dispatcher.sink<NotifyActorTeleport>().connect<&CharacterService::OnNotifyActorTeleport>(this);
 
     m_authorityChangedConnection = aDispatcher.sink<AuthorityChangedEvent>().connect<&CharacterService::OnAuthorityChangedEvent>(this);
+    m_actorInventoryConnection = aDispatcher.sink<NotifyActorInventory>().connect<&CharacterService::OnActorInventory>(this);
+    m_activateConnection = aDispatcher.sink<ActivateEvent>().connect<&CharacterService::OnActivate>(this);
 }
 
 void CharacterService::DeleteRemoteEntityComponents(entt::entity aEntity) const noexcept
@@ -335,6 +340,10 @@ void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const
 void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEvent) const noexcept
 {
     m_worldSyncStarted = false;
+    // An unexpected drop freezes the world until the reconnect: every NPC stays (or becomes) remote,
+    // so no local AI moves, fights or dies where the server cannot see it. Reassignment after the
+    // reconnect decides who simulates each one. A deliberate disconnect hands the world back locally.
+    const bool cFreezeWorld = m_transport.IsResumingSession();
     const auto disabledForms = m_populationDisableTracker.DrainOwnedDisables();
     auto remoteView = m_world.view<FormIdComponent, RemoteComponent>();
     for (auto entity : remoteView)
@@ -350,8 +359,24 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
             LogActorDelete("disconnect (remote player)", pActor);
             pActor->Delete();
         }
-        else
+        else if (!cFreezeWorld)
             pActor->GetExtension()->SetRemote(false);
+    }
+
+    if (cFreezeWorld)
+    {
+        std::size_t frozen = 0;
+        auto localView = m_world.view<FormIdComponent, LocalComponent>();
+        for (auto entity : localView)
+        {
+            auto* pActor = Cast<Actor>(TESForm::GetById(localView.get<FormIdComponent>(entity).Id));
+            if (!pActor || pActor == PlayerCharacter::Get())
+                continue;
+
+            pActor->GetExtension()->SetRemote(true);
+            ++frozen;
+        }
+        spdlog::info("[Reconnect] froze {} locally simulated actor(s) until the world is entered again", frozen);
     }
 
     m_world.clear<WaitingForAssignmentComponent, LocalComponent, RemoteComponent, PopulationSuppressedComponent>();
@@ -933,6 +958,18 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
         // LocalComponent is installed only after canonical reconciliation is complete.
         pActor->GetExtension()->SetRemote(false);
         spdlog::info("Gained ownership of actor {:X} at epoch {}", acMessage.ServerId, acMessage.OwnershipEpoch);
+
+        // Claimed because a local script activated it while it was remote: run that activation now.
+        if (const auto pending = m_pendingActivationClaims.find(pActor->formID); pending != m_pendingActivationClaims.end())
+        {
+            const bool cFresh = std::chrono::steady_clock::now() - pending->second < 5s;
+            m_pendingActivationClaims.erase(pending);
+            if (cFresh && !pActor->IsDead())
+            {
+                spdlog::info("Replaying the local activation of actor {:X} now that it is owned here", pActor->formID);
+                pActor->Activate(PlayerCharacter::Get(), 0, nullptr, 1, 0);
+            }
+        }
         return;
     }
 
@@ -1868,6 +1905,80 @@ ActorData CharacterService::BuildActorData(Actor* apActor) const noexcept
     return actorData;
 }
 
+void CharacterService::SendActorInventory(Actor* apActor) const noexcept
+{
+    auto view = m_world.view<FormIdComponent, LocalComponent>();
+    const auto it = std::find_if(view.begin(), view.end(), [view, formId = apActor->formID](const auto aEntity) { return view.get<FormIdComponent>(aEntity).Id == formId; });
+    if (it == view.end())
+        return;
+
+    const auto& localComponent = view.get<LocalComponent>(*it);
+    RequestActorInventory request{};
+    request.ServerId = localComponent.Id;
+    request.OwnershipEpoch = localComponent.OwnershipEpoch;
+    request.Contents = apActor->GetActorInventory();
+    if (m_transport.Send(request))
+        spdlog::info("Sent rebuilt inventory of actor {:X} (server id {:X}): {} item(s)", apActor->formID, localComponent.Id, request.Contents.Entries.size());
+}
+
+// Ambush triggers (a restless draugr in its coffin) run on the client of the player who entered them and
+// activate the sleeping actor there. On any other client the actor is remote and nothing happens, and on the
+// owner's client the trigger never fires for a remote player. The player who set it off takes the actor over
+// and the activation is replayed on its client once the grant arrives.
+void CharacterService::OnActivate(const ActivateEvent& acEvent) noexcept
+{
+    auto* pTarget = Cast<Actor>(acEvent.pObject);
+    if (!pTarget || acEvent.pActivator != PlayerCharacter::Get() || pTarget->IsDead() || pTarget->GetExtension()->IsPlayer())
+        return;
+
+    auto view = m_world.view<FormIdComponent, RemoteComponent>();
+    const auto it = std::find_if(view.begin(), view.end(), [view, formId = pTarget->formID](const auto aEntity) { return view.get<FormIdComponent>(aEntity).Id == formId; });
+    if (it == view.end())
+        return;
+
+    const auto& remote = view.get<RemoteComponent>(*it);
+    const auto cNow = std::chrono::steady_clock::now();
+    if (const auto pending = m_pendingActivationClaims.find(pTarget->formID); pending != m_pendingActivationClaims.end() && cNow - pending->second < 5s)
+        return;
+
+    RequestOwnershipClaim request{};
+    request.ServerId = remote.Id;
+    request.ExpectedOwnershipEpoch = remote.OwnershipEpoch;
+    request.ForActivation = true;
+    if (m_transport.Send(request))
+    {
+        m_pendingActivationClaims[pTarget->formID] = cNow;
+        spdlog::info("Remote actor {:X} (server id {:X}) activated by a local script; claiming it to replay the activation", pTarget->formID, remote.Id);
+    }
+}
+
+void CharacterService::OnActorInventory(const NotifyActorInventory& acMessage) noexcept
+{
+    auto view = m_world.view<FormIdComponent, RemoteComponent>();
+    const auto it = std::find_if(view.begin(), view.end(), [view, &acMessage](const auto aEntity)
+    {
+        const auto& remote = view.get<RemoteComponent>(aEntity);
+        return remote.Id == acMessage.ServerId && remote.OwnershipEpoch == acMessage.OwnershipEpoch;
+    });
+    if (it == view.end())
+        return;
+
+    const uint32_t cFormId = view.get<FormIdComponent>(*it).Id;
+    // Still rebuilding here: the rebuild reapplies this instead of the snapshot it captured.
+    if (const auto conformIt = m_conformInventories.find(cFormId); conformIt != m_conformInventories.end())
+    {
+        m_conformInventories.insert_or_assign(cFormId, acMessage.Contents);
+        return;
+    }
+
+    Actor* pActor = Cast<Actor>(TESForm::GetById(cFormId));
+    if (!pActor || pActor->IsDead())
+        return;
+
+    spdlog::info("Applying owner's inventory for remote actor {:X}: {} item(s)", cFormId, acMessage.Contents.Entries.size());
+    pActor->SetActorInventory(acMessage.Contents);
+}
+
 void CharacterService::ApplyLeveledNpcPick(Actor* apActor, const GameId& acPickId) const noexcept
 {
     if (acPickId == GameId{})
@@ -1969,6 +2080,11 @@ void CharacterService::ProcessLeveledConforms() noexcept
             {
                 spdlog::info("Completed leveled NPC reconciliation for actor {:X}, base: {:X}, pick: {:X}", it->first, pActor->baseForm->formID, cPickFormId);
                 stage = ReconciliationStage::None;
+
+                // The rebuilt actor rolled the inventory of the server's pick. The server still holds the
+                // discoverer's roll for its own pick, so the owner records the real one for everyone.
+                if (!pActor->GetExtension()->IsRemote())
+                    SendActorInventory(pActor);
                 if (const auto inventoryIt = m_conformInventories.find(it->first); inventoryIt != m_conformInventories.end())
                 {
                     if (pActor->GetExtension()->IsRemote())

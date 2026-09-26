@@ -8,9 +8,9 @@
 #include <unordered_map>
 #include <vector>
 
-// Desync detector (world-state plan, phase 0). Compares a client's digest with
-// the server's record of the same reference. Only fields the server owns are
-// compared; the result is logged, never applied.
+// Desync detector. Compares a client's digest with the server's record of the
+// same reference. Only fields the server owns are compared. A confirmed
+// difference is logged and the server's state is sent back to that client.
 struct DesyncPolicy final
 {
     enum class Field : uint8_t
@@ -83,8 +83,10 @@ struct DesyncPolicy final
         // Quest or event state hides these; the server tracks only takes and harvests.
         const bool cCompareTaken = !acClient.Has(ObjectStateDigest::kEnableParent);
 
-        if (cCompareTaken && acServer.IsHarvestable && acServer.IsHarvested != cClientDisabled)
-            result.push_back({Field::kHarvested, acServer.IsHarvested ? "yes" : "no", cClientDisabled ? "yes" : "no"});
+        // A picked plant stays enabled on the harvesting client and only carries the harvested flag.
+        const bool cClientHarvested = cClientDisabled || acClient.Has(ObjectStateDigest::kHarvested);
+        if (cCompareTaken && acServer.IsHarvestable && acServer.IsHarvested != cClientHarvested)
+            result.push_back({Field::kHarvested, acServer.IsHarvested ? "yes" : "no", cClientHarvested ? "yes" : "no"});
 
         if (cCompareTaken && acServer.IsOpenLoot && acServer.IsLootTaken != cClientDisabled)
             result.push_back({Field::kLootTaken, acServer.IsLootTaken ? "yes" : "no", cClientDisabled ? "yes" : "no"});
@@ -117,11 +119,16 @@ struct DesyncPolicy final
     {
     public:
         static constexpr uint32_t kConfirmReports = 2;
+        // A correction the client could not apply (reference not loaded, script state) is sent
+        // again after this many further reports while the difference lasts.
+        static constexpr uint32_t kRetryReports = 6;
 
         enum class Event : uint8_t
         {
             kNone,
             kNew,
+            // Still different after a correction; correct again.
+            kRetry,
             kResolved,
         };
 
@@ -172,6 +179,8 @@ struct DesyncPolicy final
                 entry.IsLogged = true;
                 return Event::kNew;
             }
+            if (entry.IsLogged && (entry.Seen - kConfirmReports) % kRetryReports == 0)
+                return Event::kRetry;
             return Event::kNone;
         }
 

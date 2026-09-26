@@ -12,7 +12,9 @@ enum class LoadingStage : std::uint8_t
     kApplyingCharacter,
     kRaceMenu,
     kEnteringWorld,
-    kDone
+    kDone,
+    // Connection lost in the world: frozen behind the entry screen while reconnecting.
+    kReconnecting
 };
 
 struct LoadingStageEvent final

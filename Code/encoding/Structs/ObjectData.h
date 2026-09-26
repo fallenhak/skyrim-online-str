@@ -42,4 +42,7 @@ struct ObjectData
     uint32_t ActivationCount{};
     // A container: contents are server-owned and change only through RequestContainerTransfer.
     bool IsContainer{};
+    // A plugin-placed leveled item: the item the server picked for it. Each client's engine otherwise
+    // rolls the list itself (one saw a health potion where another saw stamina).
+    GameId LeveledItemId{};
 };

@@ -29,4 +29,10 @@ struct OwnerComponent
     Player* pOwner;
     uint32_t OwnershipEpoch;
     TiltedPhoques::Vector<const Player*> InvalidOwners{};
+
+    // Proximity handoff bookkeeping (OwnershipHandoffPolicy), in steady-clock seconds.
+    // Zero means "not seen yet" and is set on the next check, never read as a stall.
+    double LastOwnerUpdateSeconds{};
+    const Player* TimedCandidate{};
+    double TimedCandidateSince{};
 };

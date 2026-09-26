@@ -634,6 +634,7 @@ void OverlayService::OnLoadingStage(const LoadingStageEvent& acEvent) noexcept
     case LoadingStage::kRaceMenu: stage = "raceMenu"; break;
     case LoadingStage::kEnteringWorld: stage = "enteringWorld"; break;
     case LoadingStage::kDone: stage = "done"; break;
+    case LoadingStage::kReconnecting: stage = "reconnecting"; break;
     }
 
     auto pArguments = CefListValue::Create();

@@ -24,6 +24,8 @@ struct AssignObjectsResponse;
 struct NotifyScriptAnimation;
 struct NotifyObjectHarvested;
 struct NotifyWorldItemTaken;
+struct NotifyCorpseContents;
+struct CharacterWorldSyncStartedEvent;
 
 /**
  * @brief Handles objects in the environment.
@@ -36,6 +38,7 @@ public:
 private:
     void OnDisconnected(const DisconnectedEvent&) noexcept;
     void OnCellChange(const CellChangeEvent&) noexcept;
+    void OnWorldSyncStarted(const CharacterWorldSyncStartedEvent&) noexcept;
     void OnUpdate(const UpdateEvent&) noexcept;
     void SendAssignObjectsRequest() noexcept;
     void SendObjectStateReport() noexcept;
@@ -48,6 +51,7 @@ private:
     void OnNotifyScriptAnimation(const NotifyScriptAnimation&) noexcept;
     void OnObjectHarvestedNotify(const NotifyObjectHarvested&) noexcept;
     void OnWorldItemTakenNotify(const NotifyWorldItemTaken&) noexcept;
+    void OnCorpseContents(const NotifyCorpseContents&) noexcept;
 
     BSTEventResult OnEvent(const TESActivateEvent*, const EventDispatcher<TESActivateEvent>*) override;
 
@@ -66,8 +70,9 @@ private:
 
     World& m_world;
     TransportService& m_transport;
-    // Set on a cell change, sent on the next update: PlayerService reports the new cell in the same
-    // CellChangeEvent dispatch but is connected after us, and the server range-checks against it.
+    // Set on a cell change and at world entry (first join and every reconnect), sent on the next
+    // in-world update: PlayerService reports the cell in the same dispatch but is connected after us,
+    // and the server range-checks against it. The response is the server's full state of the cells.
     bool m_assignObjectsPending{false};
     // Desync detector report period, in seconds.
     static constexpr double kStateReportInterval = 5.0;
@@ -75,6 +80,7 @@ private:
 
     entt::scoped_connection m_disconnectedConnection;
     entt::scoped_connection m_cellChangeConnection;
+    entt::scoped_connection m_worldSyncStartedConnection;
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_onActivateConnection;
     entt::scoped_connection m_activateConnection;
@@ -85,6 +91,7 @@ private:
     entt::scoped_connection m_scriptAnimationNotifyConnection;
     entt::scoped_connection m_objectHarvestedConnection;
     entt::scoped_connection m_worldItemTakenConnection;
+    entt::scoped_connection m_corpseContentsConnection;
 };
 
 void TrackLocalWorldItemTaken(std::uint32_t aFormId) noexcept;

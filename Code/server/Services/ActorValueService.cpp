@@ -20,7 +20,9 @@
 #include <Messages/NotifyDeathStateChange.h>
 #include <Services/ActorValueMutationPolicy.h>
 #include <Services/CorpseRetentionPolicy.h>
+#include <Services/InventoryInteractionPolicy.h>
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -290,6 +292,27 @@ void ActorValueService::OnDeathStateChange(const PacketEvent<RequestDeathStateCh
         }
     }
 
+    // The owner's settled corpse, with what the engine added at death, becomes the corpse's record. From
+    // here on a retained corpse's contents change only through container transfers.
+    bool recordedCorpseContents = false;
+    if (message.IsSettledPosition && message.IsDead)
+    {
+        auto* const pCorpse = m_world.try_get<CorpseRetentionComponent>(entity);
+        auto* const pInventory = m_world.try_get<InventoryComponent>(entity);
+        const bool cValidPayload = std::all_of(message.CorpseContents.Entries.begin(), message.CorpseContents.Entries.end(),
+            [](const auto& acEntry) { return InventoryInteractionPolicy::HasValidItemPayload(acEntry); });
+        if (pInventory && cValidPayload && (!pCorpse || !pCorpse->OwnerSeedClosed))
+        {
+            pInventory->Content = message.CorpseContents;
+            if (pCorpse)
+                pCorpse->OwnerSeedClosed = true;
+            recordedCorpseContents = true;
+            spdlog::info("[CorpseSync] recorded corpse actor {:X} contents from its owner: {} item(s)", message.Id, message.CorpseContents.Entries.size());
+        }
+        else if (!cValidPayload)
+            spdlog::warn("[CorpseSync] corpse actor {:X}: owner's contents rejected as malformed", message.Id);
+    }
+
     const auto* const pMovement = message.IsSettledPosition ? m_world.try_get<MovementComponent>(entity) : nullptr;
     if (message.IsSettledPosition && !pMovement)
         spdlog::warn("[CorpseSync] cannot relay settled position for actor {:X}: movement state is unavailable", message.Id);
@@ -301,6 +324,14 @@ void ActorValueService::OnDeathStateChange(const PacketEvent<RequestDeathStateCh
     notify.IsSettledPosition = pMovement != nullptr;
     if (pMovement)
         notify.Position = pMovement->Position;
+    if (pMovement && message.IsDead)
+    {
+        if (const auto* pInventory = m_world.try_get<InventoryComponent>(entity); pInventory && (recordedCorpseContents || m_world.all_of<CorpseRetentionComponent>(entity)))
+        {
+            notify.HasCorpseContents = true;
+            notify.CorpseContents = pInventory->Content;
+        }
+    }
 
     if (message.IsDead && pMovement)
     {

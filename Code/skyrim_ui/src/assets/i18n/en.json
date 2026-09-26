@@ -195,7 +195,8 @@
         "applyingCharacter": "Preparing your character",
         "raceMenu": "Opening appearance menu",
         "enteringWorld": "Entering the world",
-        "done": "Ready"
+        "done": "Ready",
+        "reconnecting": "Connection lost, reconnecting"
       },
       "ERROR": {
         "CONNECTION": "Could not reach the server. Check your connection and try again.",
