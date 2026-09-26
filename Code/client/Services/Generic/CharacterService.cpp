@@ -54,6 +54,7 @@
 #include <Messages/NotifyActorInventory.h>
 #include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/RequestOwnershipClaim.h>
+#include <Events/ActivateEvent.h>
 #include <Messages/MountRequest.h>
 #include <Messages/NotifyMount.h>
 #include <Messages/NewPackageRequest.h>
@@ -116,6 +117,7 @@ CharacterService::CharacterService(World& aWorld, entt::dispatcher& aDispatcher,
 
     m_authorityChangedConnection = aDispatcher.sink<AuthorityChangedEvent>().connect<&CharacterService::OnAuthorityChangedEvent>(this);
     m_actorInventoryConnection = aDispatcher.sink<NotifyActorInventory>().connect<&CharacterService::OnActorInventory>(this);
+    m_activateConnection = aDispatcher.sink<ActivateEvent>().connect<&CharacterService::OnActivate>(this);
 }
 
 void CharacterService::DeleteRemoteEntityComponents(entt::entity aEntity) const noexcept
@@ -956,6 +958,18 @@ void CharacterService::OnOwnershipTransfer(const NotifyOwnershipTransfer& acMess
         // LocalComponent is installed only after canonical reconciliation is complete.
         pActor->GetExtension()->SetRemote(false);
         spdlog::info("Gained ownership of actor {:X} at epoch {}", acMessage.ServerId, acMessage.OwnershipEpoch);
+
+        // Claimed because a local script activated it while it was remote: run that activation now.
+        if (const auto pending = m_pendingActivationClaims.find(pActor->formID); pending != m_pendingActivationClaims.end())
+        {
+            const bool cFresh = std::chrono::steady_clock::now() - pending->second < 5s;
+            m_pendingActivationClaims.erase(pending);
+            if (cFresh && !pActor->IsDead())
+            {
+                spdlog::info("Replaying the local activation of actor {:X} now that it is owned here", pActor->formID);
+                pActor->Activate(PlayerCharacter::Get(), 0, nullptr, 1, 0);
+            }
+        }
         return;
     }
 
@@ -1905,6 +1919,37 @@ void CharacterService::SendActorInventory(Actor* apActor) const noexcept
     request.Contents = apActor->GetActorInventory();
     if (m_transport.Send(request))
         spdlog::info("Sent rebuilt inventory of actor {:X} (server id {:X}): {} item(s)", apActor->formID, localComponent.Id, request.Contents.Entries.size());
+}
+
+// Ambush triggers (a restless draugr in its coffin) run on the client of the player who entered them and
+// activate the sleeping actor there. On any other client the actor is remote and nothing happens, and on the
+// owner's client the trigger never fires for a remote player. The player who set it off takes the actor over
+// and the activation is replayed on its client once the grant arrives.
+void CharacterService::OnActivate(const ActivateEvent& acEvent) noexcept
+{
+    auto* pTarget = Cast<Actor>(acEvent.pObject);
+    if (!pTarget || acEvent.pActivator != PlayerCharacter::Get() || pTarget->IsDead() || pTarget->GetExtension()->IsPlayer())
+        return;
+
+    auto view = m_world.view<FormIdComponent, RemoteComponent>();
+    const auto it = std::find_if(view.begin(), view.end(), [view, formId = pTarget->formID](const auto aEntity) { return view.get<FormIdComponent>(aEntity).Id == formId; });
+    if (it == view.end())
+        return;
+
+    const auto& remote = view.get<RemoteComponent>(*it);
+    const auto cNow = std::chrono::steady_clock::now();
+    if (const auto pending = m_pendingActivationClaims.find(pTarget->formID); pending != m_pendingActivationClaims.end() && cNow - pending->second < 5s)
+        return;
+
+    RequestOwnershipClaim request{};
+    request.ServerId = remote.Id;
+    request.ExpectedOwnershipEpoch = remote.OwnershipEpoch;
+    request.ForActivation = true;
+    if (m_transport.Send(request))
+    {
+        m_pendingActivationClaims[pTarget->formID] = cNow;
+        spdlog::info("Remote actor {:X} (server id {:X}) activated by a local script; claiming it to replay the activation", pTarget->formID, remote.Id);
+    }
 }
 
 void CharacterService::OnActorInventory(const NotifyActorInventory& acMessage) noexcept

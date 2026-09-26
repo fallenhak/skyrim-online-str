@@ -52,12 +52,20 @@ protected:
         LeaderClaim,
         Mount,
         Relinquish,
-        OwnerUnavailable
+        OwnerUnavailable,
+        Proximity,
+        OwnerStalled,
+        Activation
     };
 
     void OnUpdate(const UpdateEvent& acEvent) noexcept;
     void OnAcceptedCanonicalCreatureDeath(const AcceptedCanonicalCreatureDeathEvent& acEvent) noexcept;
     void ExpireRetainedCorpses() noexcept;
+    // Once a second: the nearest player simulates each NPC (OwnershipHandoffPolicy).
+    void RunOwnershipHandoffs() noexcept;
+    bool CanClaimForActivation(Player* apPlayer, entt::entity aEntity, uint32_t aExpectedOwnershipEpoch) const noexcept;
+    // No player can simulate the actor: it stays on the server, frozen, until one loads it again.
+    void MakeOwnerless(entt::entity aEntity, OwnershipTransferReason aReason) const noexcept;
     void OnCharacterExteriorCellChange(const CharacterExteriorCellChangeEvent& acEvent) const noexcept;
     void OnCharacterInteriorCellChange(const CharacterInteriorCellChangeEvent& acEvent) const noexcept;
     void OnAssignCharacterRequest(const PacketEvent<AssignCharacterRequest>& acMessage) const noexcept;
@@ -91,6 +99,7 @@ private:
     World& m_world;
     const std::uint32_t m_creatureCorpseLifetimeSeconds;
     std::uint64_t m_tick{};
+    std::uint64_t m_lastHandoffTick{};
     double m_tickAccumulator{};
 
     entt::scoped_connection m_updateConnection;
