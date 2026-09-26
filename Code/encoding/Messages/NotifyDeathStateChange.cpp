@@ -7,7 +7,12 @@ void NotifyDeathStateChange::SerializeRaw(TiltedPhoques::Buffer::Writer& aWriter
     Serialization::WriteBool(aWriter, IsDead);
     Serialization::WriteBool(aWriter, IsSettledPosition);
     if (IsSettledPosition)
+    {
         Position.Serialize(aWriter);
+        Serialization::WriteBool(aWriter, HasCorpseContents);
+        if (HasCorpseContents)
+            CorpseContents.Serialize(aWriter);
+    }
 }
 
 void NotifyDeathStateChange::DeserializeRaw(TiltedPhoques::Buffer::Reader& aReader) noexcept
@@ -19,5 +24,10 @@ void NotifyDeathStateChange::DeserializeRaw(TiltedPhoques::Buffer::Reader& aRead
     IsDead = Serialization::ReadBool(aReader);
     IsSettledPosition = Serialization::ReadBool(aReader);
     if (IsSettledPosition)
+    {
         Position.Deserialize(aReader);
+        HasCorpseContents = Serialization::ReadBool(aReader);
+        if (HasCorpseContents)
+            CorpseContents.Deserialize(aReader);
+    }
 }

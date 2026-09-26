@@ -75,6 +75,10 @@ TEST_CASE("Death state packets carry settled corpse positions", "[encoding.death
     request.OwnershipEpoch = 3;
     request.IsDead = true;
     request.IsSettledPosition = true;
+    Inventory::Entry pelt{};
+    pelt.BaseId = GameId{0, 0x3AD8E};
+    pelt.Count = 1;
+    request.CorpseContents.AddOrRemoveEntry(pelt);
 
     Buffer clientBuffer(1000);
     Buffer::Writer clientWriter(&clientBuffer);
@@ -94,6 +98,8 @@ TEST_CASE("Death state packets carry settled corpse positions", "[encoding.death
     notification.Position.x = -1234.f;
     notification.Position.y = 5678.f;
     notification.Position.z = 901.f;
+    notification.HasCorpseContents = true;
+    notification.CorpseContents.AddOrRemoveEntry(pelt);
 
     Buffer serverBuffer(1000);
     Buffer::Writer serverWriter(&serverBuffer);

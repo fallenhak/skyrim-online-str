@@ -2,6 +2,7 @@
 
 #include <Services/ActorValueService.h>
 #include <World.h>
+#include <Interface/UI.h>
 #include <Forms/ActorValueInfo.h>
 #include <Games/References.h>
 #include <Components.h>
@@ -350,6 +351,7 @@ void ActorValueService::RunDeathStateUpdates() noexcept
             requestChange.OwnershipEpoch = localComponent.OwnershipEpoch;
             requestChange.IsDead = true;
             requestChange.IsSettledPosition = true;
+            requestChange.CorpseContents = pActor->GetActorInventory();
 
             if (m_transport.Send(requestChange))
             {
@@ -577,5 +579,18 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
         spdlog::info(
             "[CorpseSync] applied settled position actor {:X} form {:X} at ({:.0f}, {:.0f}, {:.0f})",
             acMessage.Id, pActor->formID, acMessage.Position.x, acMessage.Position.y, acMessage.Position.z);
+
+        // This client's Kill() rolled its own death items; the corpse holds the recorded contents instead.
+        // Never under an open loot menu: the desync report corrects it once the menu is closed.
+        static BSFixedString s_containerMenu("ContainerMenu");
+        const auto* pUi = UI::Get();
+        if (acMessage.HasCorpseContents && pUi && pUi->GetMenuOpen(s_containerMenu))
+            spdlog::info("[CorpseSync] corpse actor {:X} contents left to the desync report: a loot menu is open", acMessage.Id);
+        else if (acMessage.HasCorpseContents)
+        {
+            pActor->SetActorInventory(acMessage.CorpseContents);
+            spdlog::info("[CorpseSync] corpse actor {:X} form {:X} contents set to the recorded {} item(s)", acMessage.Id, pActor->formID,
+                acMessage.CorpseContents.Entries.size());
+        }
     }
 }
