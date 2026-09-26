@@ -1,6 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
 #include <Games/References.h>
+#include <Services/SyncedWorldForms.h>
 #include <Games/Overrides.h>
 
 #include <World.h>
@@ -1065,7 +1066,8 @@ bool TP_MAKE_THISCALL(HookActivate, TESObjectREFR, TESObjectREFR* apActivator, u
 
     // Diagnostic for levers that never reach the activation relay (6th test: Bleak Falls
     // lever 0:6A9E2 left no line on any side). Logged before every filter.
-    if (apActivator && apActivator == PlayerCharacter::Get() && apThis->baseForm && apThis->baseForm->formType == FormType::Activator)
+    if (apActivator && apActivator == PlayerCharacter::Get() && apThis->baseForm &&
+        (apThis->baseForm->formType == FormType::Activator || SyncedWorldForms::IsLeverFurniture(apThis->baseForm->formID)))
         spdlog::info("[World] player activate hook: activator {:X} (base {:X}, default processing {})", apThis->formID, apThis->baseForm->formID, static_cast<int>(aDefaultProcessing));
 
     if (pActivator && apThis->baseForm && PuzzlePillarPolicy::IsPuzzlePillar(apThis->baseForm->formID))

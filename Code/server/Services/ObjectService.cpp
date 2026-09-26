@@ -452,6 +452,10 @@ void ObjectService::OnAssignObjectsRequest(const PacketEvent<AssignObjectsReques
                 }
                 objectComponent.IsContainer = true;
                 objectComponent.HasTrustedState = true;
+                // Trusted lock data is sent to every client, so it has to start as the plugin placed it;
+                // a default "unlocked" opened every locked chest for the next player.
+                if (const auto lock = m_world.ctx().at<PluginContainerContents>().InitialLock(object.Id, m_world.ctx().at<ModsComponent>()))
+                    objectComponent.CurrentLockData = *lock;
             }
         }
 

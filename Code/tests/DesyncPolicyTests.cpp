@@ -25,6 +25,19 @@ TEST_CASE("Desync compare ignores fields the server does not own", "[desync]")
     REQUIRE(DesyncPolicy::Compare(server, MakeDigest(ObjectStateDigest::kLocked | ObjectStateDigest::kDoorOpen | ObjectStateDigest::kDisabled, 25)).empty());
 }
 
+TEST_CASE("Desync compare skips taken and harvested for enable-parent references", "[desync]")
+{
+    DesyncPolicy::ServerView loot{};
+    loot.IsOpenLoot = true;
+    // A basket hidden by its enable parent is not taken.
+    REQUIRE(DesyncPolicy::Compare(loot, MakeDigest(ObjectStateDigest::kDisabled | ObjectStateDigest::kEnableParent)).empty());
+
+    DesyncPolicy::ServerView flora{};
+    flora.IsHarvestable = true;
+    flora.IsHarvested = true;
+    REQUIRE(DesyncPolicy::Compare(flora, MakeDigest(ObjectStateDigest::kEnableParent)).empty());
+}
+
 TEST_CASE("Desync compare reports taken, harvested, door and lock differences", "[desync]")
 {
     DesyncPolicy::ServerView loot{};

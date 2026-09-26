@@ -24,6 +24,9 @@ struct ObjectStateDigest
         kLocked = 1 << 1,
         kDoorOpen = 1 << 2,
         kHasInventory = 1 << 3,
+        // Enabled or disabled through an enable parent (quest or event state), not by
+        // taking or harvesting it; the taken/harvested comparison does not apply.
+        kEnableParent = 1 << 4,
     };
 
     bool operator==(const ObjectStateDigest& acRhs) const noexcept;
