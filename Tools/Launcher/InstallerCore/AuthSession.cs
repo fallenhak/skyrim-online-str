@@ -58,6 +58,35 @@ public static class AuthTokenClaims
     }
 }
 
+/// <summary>Trades a still-valid session token for a fresh one so regular players never see the login expire.</summary>
+public static class AuthSessionRefresh
+{
+    /// <summary>Returns the refreshed session, or null when the service refused or was unreachable (the old session stays).</summary>
+    public static async Task<AuthSession?> TryRefreshAsync(HttpClient http, string authBaseUrl, AuthSessionStore store,
+        AuthSession session, CancellationToken cancellationToken = default)
+    {
+        if (!Uri.TryCreate(authBaseUrl, UriKind.Absolute, out var authBase) || authBase.Scheme != Uri.UriSchemeHttps)
+            return null;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(authBase, "/auth/refresh"));
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", session.Token);
+            using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) return null;
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
+            var refreshed = AuthTokenClaims.Read(document.RootElement.GetProperty("token").GetString() ?? "");
+            if (refreshed.ExpiresAt <= session.ExpiresAt) return null;
+            store.Save(refreshed);
+            return refreshed;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or
+                                       InvalidDataException or KeyNotFoundException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+}
+
 /// <summary>Persists the OAuth bearer token protected with Windows CurrentUser DPAPI.</summary>
 public sealed class AuthSessionStore
 {
