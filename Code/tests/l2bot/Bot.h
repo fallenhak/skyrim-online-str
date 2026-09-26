@@ -60,6 +60,8 @@ public:
 
 private:
     void Fail(std::string aReason) noexcept;
+    // The server takes a character's cell from its movement updates, not from the cell entry.
+    void SendMovement() noexcept;
     void HandleMessage(const ServerMessage& acMessage) noexcept;
 
     Config m_config;
@@ -68,6 +70,8 @@ private:
     std::uint32_t m_fixtureModId{};
     std::uint64_t m_characterId{};
     std::uint32_t m_serverId{};
+    std::uint32_t m_ownershipEpoch{};
+    std::uint64_t m_movementTick{};
     std::uint32_t m_assignCookie{1};
     bool m_shuttingDown{};
 };

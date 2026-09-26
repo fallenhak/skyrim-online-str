@@ -129,6 +129,8 @@ int Connect(const std::string& acEndpoint)
     {
         spdlog::info("PASS step 1: both bots are in the fixture cell");
         failures += RunAssignObjects(bots);
+        if (failures == 0)
+            failures += RunActivations(bots, acEndpoint, pSecret);
     }
 
     for (auto& pBot : bots)
