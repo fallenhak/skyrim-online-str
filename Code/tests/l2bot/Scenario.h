@@ -19,4 +19,9 @@ using Bots = std::vector<std::unique_ptr<Bot>>;
 // Scenario steps (docs/L2_BOT_DESIGN.md). Each returns the number of failed checks.
 [[nodiscard]] int RunAssignObjects(Bots& aBots);
 // Steps 3 and 8: door and lever activations relay to the peer; a late joiner gets the final state.
+// Step 4: a take from the chest is accepted, the peer is told, and the new contents are persisted.
+// Writes what the restarted server must still have to acExpectationFile.
+[[nodiscard]] int RunContainerTake(Bots& aBots, const std::string& acExpectationFile);
+// Step 4, second half: after a server restart the chest keeps the take and the door stays open.
+[[nodiscard]] int RunAfterRestart(Bots& aBots, const std::string& acExpectationFile);
 [[nodiscard]] int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string& acSecret);
