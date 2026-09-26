@@ -9,6 +9,15 @@ public sealed class LauncherManifest
     public string ManifestVersion { get; set; } = "";
     public string RequiredGameVersion { get; set; } = "";
     public List<ModPackage> Mods { get; set; } = [];
+    public LauncherPackage? Launcher { get; set; }
+}
+
+public sealed class LauncherPackage
+{
+    public string Version { get; set; } = "";
+    public string Url { get; set; } = "";
+    public string Sha256 { get; set; } = "";
+    public long Size { get; set; }
 }
 
 public sealed class ModPackage
@@ -55,6 +64,8 @@ public static partial class ManifestReader
         if (requiredGameVersion != GameVersion.Required)
             throw new InvalidDataException($"Manifest oyun sürümü {requiredGameVersion}; STR kurulumu yalnız Skyrim SE {GameVersion.Required} sürümünü kabul eder.");
         manifest.Mods ??= [];
+        if (manifest.Launcher is not null)
+            ValidateUrlAndHash(manifest.Launcher.Url, manifest.Launcher.Sha256, manifest.Launcher.Size, "launcher");
 
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var mod in manifest.Mods)

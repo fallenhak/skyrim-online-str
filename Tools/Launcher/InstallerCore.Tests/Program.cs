@@ -25,7 +25,9 @@ var tests = new (string Name, Func<Task> Run)[]
     ("Discord token talepleri ve sÃ¼re sonu", AuthTokenClaimsValidation),
     ("Discord oturumu DPAPI ile saklanÄ±r", AuthSessionDpapiRoundTrip),
     ("oyun yapÄ±landÄ±rmasÄ± token'Ä± DPAPI ile korur", NativeAuthConfigurationProtectsToken),
-    ("single-file install copies payload, creates marker and shortcuts", LauncherInstall)
+    ("single-file install copies payload, creates marker and shortcuts", LauncherInstall),
+    ("launcher self-update downloads, verifies and swaps the exe", LauncherSelfUpdate),
+    ("Discord oturumu acilista yenilenir", AuthSessionRefreshReplacesToken)
 };
 
 var failures = new List<string>();
@@ -321,6 +323,27 @@ static Task NativeAuthConfigurationProtectsToken()
     return Task.CompletedTask;
 }
 
+static async Task AuthSessionRefreshReplacesToken()
+{
+    using var temp = new TempDirectory();
+    var store = new AuthSessionStore(Path.Combine(temp.Path, "auth-session.json"));
+    var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    var old = AuthTokenClaims.Read(CreateTestAuthToken("discord:123456789", "Burak", now + 3600));
+    store.Save(old);
+    var fresh = CreateTestAuthToken("discord:123456789", "Burak", now + 7 * 24 * 3600);
+    var handler = new JsonHandler(HttpStatusCode.OK, System.Text.Json.JsonSerializer.Serialize(new { token = fresh }));
+    var refreshed = await AuthSessionRefresh.TryRefreshAsync(new HttpClient(handler), "https://auth.example.test", store, old);
+    Assert.True(refreshed is not null);
+    Assert.Equal("Bearer " + old.Token, handler.Authorization);
+    Assert.Equal("https://auth.example.test/auth/refresh", handler.Uri);
+    Assert.Equal(fresh, store.Load()!.Token);
+
+    var rejected = await AuthSessionRefresh.TryRefreshAsync(new HttpClient(new JsonHandler(HttpStatusCode.Unauthorized, "{}")),
+        "https://auth.example.test", store, refreshed!);
+    Assert.True(rejected is null);
+    Assert.Equal(fresh, store.Load()!.Token);
+}
+
 static string CreateTestAuthToken(string subject, string name, long expires)
 {
     static string Encode(byte[] data) => Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');
@@ -376,6 +399,44 @@ static async Task ErrorReportBundleAndUpload()
     Assert.Equal("Bearer secret-token", capture.Authorization);
     Assert.True(capture.BodyContainsZip);
     await Assert.ThrowsAsync<InvalidOperationException>(() => new ErrorReportService(new HttpClient(new FixedHandler([]))).SendAsync("https://reports.example.test/api", "", report));
+}
+
+static async Task LauncherSelfUpdate()
+{
+    using var temp = new TempDirectory();
+    var exe = Path.Combine(temp.Path, "SkyrimOnlineSTR.exe");
+    File.WriteAllText(exe, "old-launcher");
+    var fresh = Encoding.UTF8.GetBytes("new-launcher");
+    var freshSha = Convert.ToHexString(SHA256.HashData(fresh)).ToLowerInvariant();
+    var package = new LauncherPackage { Version = "new", Url = "https://example.com/l.exe", Sha256 = freshSha, Size = fresh.Length };
+
+    Assert.False(SelfUpdateService.NeedsUpdate(exe, null));
+    Assert.True(SelfUpdateService.NeedsUpdate(exe, package));
+    Assert.True(await new SelfUpdateService(new HttpClient(new FixedHandler(fresh))).TryUpdateAsync(exe, package, CancellationToken.None));
+    Assert.Bytes(fresh, File.ReadAllBytes(exe));
+    Assert.Equal("old-launcher", File.ReadAllText(exe + SelfUpdateService.OldSuffix));
+    Assert.False(SelfUpdateService.NeedsUpdate(exe, package));
+    Assert.False(await new SelfUpdateService(new HttpClient(new FixedHandler(fresh))).TryUpdateAsync(exe, package, CancellationToken.None));
+
+    SelfUpdateService.CleanupPrevious(exe);
+    Assert.False(File.Exists(exe + SelfUpdateService.OldSuffix));
+
+    // A corrupted download must leave the running launcher untouched.
+    File.WriteAllText(exe, "old-launcher");
+    Directory.Delete(Path.Combine(temp.Path, ".launcher-update"), true);
+    await AssertThrowsAsync<InvalidDataException>(() =>
+        new SelfUpdateService(new HttpClient(new FixedHandler(Encoding.UTF8.GetBytes("tampered")))).TryUpdateAsync(exe, package, CancellationToken.None));
+    Assert.Equal("old-launcher", File.ReadAllText(exe));
+
+    var withLauncher = ValidManifest().Replace("\"mods\":", $"\"launcher\": {{ \"version\": \"x\", \"url\": \"https://example.com/l.exe\", \"sha256\": \"{freshSha}\", \"size\": 12 }}, \"mods\":");
+    Assert.Equal(freshSha, ManifestReader.ParseAndValidate(withLauncher).Launcher!.Sha256);
+    Assert.Throws<InvalidDataException>(() => ManifestReader.ParseAndValidate(withLauncher.Replace(freshSha, "bad")));
+}
+
+static async Task AssertThrowsAsync<T>(Func<Task> action) where T : Exception
+{
+    try { await action(); } catch (T) { return; }
+    throw new Exception($"Expected exception {typeof(T).Name}.");
 }
 
 static string ValidManifest() => $$"""
@@ -457,6 +518,18 @@ sealed class RangeHandler(byte[] bytes, int startingOffset) : HttpMessageHandler
         var response = new HttpResponseMessage(HttpStatusCode.PartialContent) { Content = content };
         response.Content.Headers.ContentRange = new ContentRangeHeaderValue(startingOffset, bytes.Length - 1, bytes.Length);
         return Task.FromResult(response);
+    }
+}
+
+sealed class JsonHandler(HttpStatusCode status, string body) : HttpMessageHandler
+{
+    public string? Authorization { get; private set; }
+    public string? Uri { get; private set; }
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Authorization = request.Headers.Authorization?.ToString();
+        Uri = request.RequestUri?.ToString();
+        return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body) });
     }
 }
 

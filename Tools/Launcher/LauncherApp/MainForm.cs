@@ -67,6 +67,7 @@ internal sealed class MainForm : Form
         ForeColor = Color.Gainsboro;
         StartPosition = FormStartPosition.CenterScreen;
         _config = LoadConfig();
+        if (Environment.ProcessPath is { } self) SelfUpdateService.CleanupPrevious(self);
         _stockGame = Path.Combine(AppContext.BaseDirectory, "Stock Game");
         var installKey = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(AppContext.BaseDirectory))).ToLowerInvariant()[..16];
         _stateDirectory = Path.Combine(_localData, "state-" + installKey);
@@ -93,6 +94,7 @@ internal sealed class MainForm : Form
         AppendLog($"Hedef Skyrim SE sürümü: {RequiredGameVersion}; Stock Game kopyası sürüm ve SkyrimSE.exe SHA-256 değeriyle kilitlenir.");
         UpdateAuthUi();
         Shown += async (_, _) => await CheckForUpdateAsync();
+        Shown += async (_, _) => await RefreshAuthSessionAsync();
         FormClosing += (_, e) =>
         {
             if (!_gameRunning) return;
@@ -230,20 +232,44 @@ internal sealed class MainForm : Form
     // The cached manifest marks an install current, so a newer server manifest must demote it back to Kur / Güncelle.
     private async Task CheckForUpdateAsync()
     {
-        if (!_isInstalled || _busy) return;
+        if (_busy) return;
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             using var response = await Http.GetAsync(_config.ManifestUrl, timeout.Token);
             response.EnsureSuccessStatusCode();
             var manifest = ManifestReader.ParseAndValidate(await response.Content.ReadAsStringAsync(timeout.Token));
-            if (_busy || string.Equals(manifest.ManifestVersion, _manifestVersion, StringComparison.Ordinal)) return;
+            if (await TrySelfUpdateAsync(manifest)) return;
+            if (!_isInstalled || _busy || string.Equals(manifest.ManifestVersion, _manifestVersion, StringComparison.Ordinal)) return;
             _isInstalled = false;
             UpdatePrimaryAction();
             SetStatus($"Yeni sürüm var: {manifest.ManifestVersion}. Kur / Güncelle'ye basın.");
             AppendLog($"Sunucuda yeni manifest {manifest.ManifestVersion} (kurulu {_manifestVersion}).");
         }
         catch (Exception ex) { AppendLog("Güncelleme denetlenemedi: " + ex.Message); }
+    }
+
+    // An old launcher never learns about new manifest features, so it replaces itself first and restarts.
+    private async Task<bool> TrySelfUpdateAsync(LauncherManifest manifest)
+    {
+        var executable = Environment.ProcessPath;
+        if (executable is null || manifest.Launcher is null) return false;
+        try
+        {
+            if (!SelfUpdateService.NeedsUpdate(executable, manifest.Launcher)) return false;
+            SetStatus($"Launcher güncelleniyor ({manifest.Launcher.Version})…");
+            AppendLog($"Yeni launcher {manifest.Launcher.Version} indiriliyor.");
+            using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+            if (!await new SelfUpdateService(Http).TryUpdateAsync(executable, manifest.Launcher, timeout.Token)) return false;
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(executable) { UseShellExecute = true });
+            Application.Exit();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Launcher güncellenemedi: " + ex.Message);
+            return false;
+        }
     }
 
     private async Task InstallOrUpdateAsync()
@@ -380,6 +406,21 @@ internal sealed class MainForm : Form
             _findSteamButton.Enabled = true;
             UpdateAuthUi();
         }
+    }
+
+    private async Task RefreshAuthSessionAsync()
+    {
+        if (_authSession is null) return;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var refreshed = await AuthSessionRefresh.TryRefreshAsync(Http, _config.AuthBaseUrl, _authSessionStore, _authSession, timeout.Token);
+        if (refreshed is null)
+        {
+            AppendLog("Discord oturumu yenilenemedi; mevcut oturum süresi dolana kadar geçerli.");
+            return;
+        }
+        _authSession = refreshed;
+        AppendLog("Discord oturumu yenilendi: " + DateTimeOffset.FromUnixTimeSeconds(refreshed.ExpiresAt).LocalDateTime.ToString("g") + " tarihine kadar geçerli.");
+        UpdateAuthUi();
     }
 
     private async Task PlayAsync()
