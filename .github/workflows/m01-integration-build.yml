@@ -68,3 +68,41 @@ jobs:
           xmake run ActorPopulationTests
           xmake run SessionTests
           xmake run PersistenceTests
+
+  l2bot:
+    # Two scripted clients against a real server on a fixture plugin (#91). No game files.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Checkout submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --force --recursive --depth=1
+
+      - name: Cache xmake dependencies
+        uses: actions/cache@v6
+        with:
+          path: ~/.xmake/packages
+          key: tests-ubuntu-24.04-xmake-${{ hashFiles('**/xmake.lua') }}
+          restore-keys: |
+            tests-ubuntu-24.04-xmake-
+            ubuntu-24.04-xmake-
+
+      - name: Setup xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: 3.1.0
+
+      - name: Configure xmake and install dependencies
+        run: xmake config --mode=releasedbg --yes -vD
+
+      - name: Build the server and the bot
+        run: |
+          xmake -y SkyrimServerRunner
+          xmake -y L2Bot
+
+      - name: Run the bots
+        run: bash Code/tests/l2bot/run.sh build/linux/x86_64/releasedbg "$RUNNER_TEMP/l2bot"
