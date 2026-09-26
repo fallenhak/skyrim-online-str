@@ -148,6 +148,8 @@ int Connect(const std::string& acEndpoint)
             failures += RunArrow(bots);
         if (failures == 0)
             failures += RunActivations(bots, acEndpoint, pSecret);
+        if (failures == 0)
+            failures += RunReconnect(bots, acEndpoint, pSecret);
     }
 
     for (auto& pBot : bots)

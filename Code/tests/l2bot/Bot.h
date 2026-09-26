@@ -44,6 +44,8 @@ public:
     bool Send(const ClientMessage& acMessage) const noexcept;
     // Closes the connection without counting the disconnect as a failure.
     void Shutdown() noexcept;
+    // The server is expected to close this connection; the disconnect is not a failure.
+    void ExpectDisconnect() noexcept { m_shuttingDown = true; }
 
     void OnConsume(const void* apData, uint32_t aSize) override;
     void OnConnected() override;

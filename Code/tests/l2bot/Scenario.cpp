@@ -20,6 +20,7 @@
 #include <Messages/RequestDeathStateChange.h>
 #include <Messages/NotifyContainerTransferResult.h>
 #include <Messages/NotifyInventoryChanges.h>
+#include <Messages/NotifyRemoveCharacter.h>
 #include <Messages/NotifyObjectHarvested.h>
 #include <Messages/NotifyWorldItemTaken.h>
 #include <Messages/TakeWorldItemRequest.h>
@@ -935,5 +936,51 @@ int RunHarvestAndLoot(Bots& aBots)
 
     if (failures == 0)
         spdlog::info("PASS harvest and loot: each relayed once, the repeat was refused");
+    return failures;
+}
+
+int RunReconnect(Bots& aBots, const std::string& acEndpoint, const std::string& acSecret)
+{
+    Bot& old = *aBots[0];
+    Bot& peer = *aBots[1];
+    const uint32_t oldServerId = old.GetServerId();
+    const uint64_t characterId = old.GetCharacterId();
+
+    std::set<uint32_t> removed;
+    std::map<uint32_t, CharacterSpawnRequest> spawns;
+    peer.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() == kNotifyRemoveCharacter)
+            removed.insert(static_cast<const NotifyRemoveCharacter&>(acMessage).ServerId);
+        else if (acMessage.GetOpcode() == kCharacterSpawnRequest)
+        {
+            const auto& spawn = static_cast<const CharacterSpawnRequest&>(acMessage);
+            spawns[spawn.ServerId] = spawn;
+        }
+    };
+
+    // The same account connects again before the server noticed the old connection is gone,
+    // as the client's automatic reconnect does. The server must close the old connection.
+    old.ExpectDisconnect();
+    aBots.push_back(std::make_unique<Bot>(Bot::Config{"Alfa", 910000000000000001ull, acSecret, L2Fixture::kCell}));
+    Bot& fresh = *aBots.back();
+    const bool entered = EnterWorld(aBots, acEndpoint);
+
+    int failures = 0;
+    failures += Check(entered, "the reconnecting bot enters the world again");
+    if (!entered)
+        return failures;
+    static_cast<void>(Pump(aBots, [&] { return !old.IsConnected() && spawns.contains(fresh.GetServerId()); }, std::chrono::seconds(5)));
+    peer.OnMessage = nullptr;
+
+    failures += Check(!old.IsConnected(), "the server closes the old connection of the same account");
+    failures += Check(fresh.GetCharacterId() == characterId, "the reconnect selects the same character");
+    failures += Check(removed.contains(oldServerId) || fresh.GetServerId() == oldServerId, "the peer drops the old connection's character");
+    const auto spawn = spawns.find(fresh.GetServerId());
+    failures += Check(spawn != spawns.end() && !spawn->second.IsDead, "the peer spawns the reconnected character alive");
+
+    if (failures == 0)
+        spdlog::info("PASS reconnect: the old connection was closed, character {} came back as {} and {} saw it", characterId, fresh.GetServerId(),
+            peer.GetName());
     return failures;
 }
