@@ -1,6 +1,7 @@
 #include <Services/ObjectService.h>
 #include <Games/ActorExtension.h>
 #include <Services/LocalOnlyActivators.h>
+#include <Services/SyncedWorldForms.h>
 #include <Services/ObjectSyncPolicy.h>
 #include <Services/ActivatorReplayPolicy.h>
 #include <Services/WorldObjectTrackingPolicy.h>
@@ -125,15 +126,17 @@ bool ShouldSyncObject(const TESObjectREFR* apObject, const Set<const TESObjectRE
     }
 }
 
-// Flora and ingredients placed in the plugin (eggs, mushrooms). Dropped items are
-// temporaries with machine-local ids and cannot be matched across clients.
+// Flora and ingredients placed in the plugin (eggs, mushrooms), and trees that yield an
+// ingredient (lavender, mountain flowers). Dropped items are temporaries with
+// machine-local ids and cannot be matched across clients.
 bool IsHarvestableObject(const TESObjectREFR* apObject) noexcept
 {
     if (!apObject || !apObject->baseForm || apObject->IsTemporary())
         return false;
 
     const FormType cType = apObject->baseForm->formType;
-    return cType == FormType::Flora || cType == FormType::Ingredient;
+    return cType == FormType::Flora || cType == FormType::Ingredient ||
+        (cType == FormType::Tree && SyncedWorldForms::IsHarvestableTree(apObject->baseForm->formID));
 }
 
 // Refs this service disabled, so a server reset re-enables only those and
@@ -298,8 +301,15 @@ bool IsSyncedDoor(TESObjectREFR* apObject) noexcept
 // shrines, crafting triggers and critters stay local (LocalOnlyActivators).
 bool IsSyncedActivator(const TESObjectREFR* apObject) noexcept
 {
-    return apObject && apObject->baseForm && !apObject->IsTemporary() && apObject->baseForm->formType == FormType::Activator &&
-        !LocalOnlyActivators::Contains(apObject->baseForm->formID);
+    if (!apObject || !apObject->baseForm || apObject->IsTemporary())
+        return false;
+
+    const FormType cType = apObject->baseForm->formType;
+    // Lever furniture opens gates by script like a lever activator does.
+    if (cType == FormType::Furniture)
+        return SyncedWorldForms::IsLeverFurniture(apObject->baseForm->formID);
+
+    return cType == FormType::Activator && !LocalOnlyActivators::Contains(apObject->baseForm->formID);
 }
 
 void ObjectService::OnDisconnected(const DisconnectedEvent&) noexcept
@@ -374,7 +384,7 @@ bool ObjectService::CollectSyncedObjects(Vector<SyncedObject>& aObjects, GameId&
         cells.push_back(pCell);
     aCellCount = cells.size();
 
-    Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Ingredient, FormType::Furniture, FormType::Activator,
+    Vector<FormType> formTypes = {FormType::Container, FormType::Door, FormType::Flora, FormType::Tree, FormType::Ingredient, FormType::Furniture, FormType::Activator,
                                   FormType::Armor, FormType::Misc, FormType::Weapon, FormType::Ammo, FormType::Key,
                                   FormType::Alchemy, FormType::Scroll, FormType::SoulGem, FormType::Light, FormType::Apparatus, FormType::Book};
     // Door seemed to be at the wrong form id (29, now 32), verify this.
@@ -397,7 +407,8 @@ bool ObjectService::CollectSyncedObjects(Vector<SyncedObject>& aObjects, GameId&
 
         for (TESObjectREFR* pObject : pObjectCell->GetRefsByFormTypes(formTypes))
         {
-            const bool cIsHarvestType = pObject->baseForm->formType == FormType::Flora || pObject->baseForm->formType == FormType::Ingredient;
+            const FormType cType = pObject->baseForm->formType;
+            const bool cIsHarvestType = cType == FormType::Flora || cType == FormType::Ingredient || cType == FormType::Tree;
             if (cIsHarvestType && !IsHarvestableObject(pObject))
                 continue;
 
@@ -495,8 +506,11 @@ void ObjectService::SendObjectStateReport() noexcept
         ObjectStateDigest digest{};
         digest.Id = synced.Id;
         digest.CellId = synced.CellId;
-        if (pObject->IsDisabled())
+        // A picked-up plugin item is marked deleted rather than disabled.
+        if (pObject->IsDisabled() || pObject->IsDeleted())
             digest.StateFlags |= ObjectStateDigest::kDisabled;
+        if (ExtraDataList* pExtraData = pObject->GetExtraDataList(); pExtraData && pExtraData->Contains(ExtraDataType::EnableStateParent))
+            digest.StateFlags |= ObjectStateDigest::kEnableParent;
 
         if (Lock* pLock = pObject->GetLock())
         {

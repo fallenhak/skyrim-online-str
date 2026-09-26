@@ -39,6 +39,25 @@ const LeveledItemResolver::List* PluginContainerContents::FindList(const uint32_
     return &m_listCache.emplace(aFormId, std::move(list)).first->second;
 }
 
+std::optional<LockData> PluginContainerContents::InitialLock(const GameId& acReferenceId, const ModsComponent& acMods) const noexcept
+{
+    if (!m_pRecords)
+        return std::nullopt;
+
+    uint32_t referenceFormId = 0;
+    if (!acMods.ResolveServerFormId(acReferenceId, referenceFormId))
+        return std::nullopt;
+
+    const REFR* pReference = m_pRecords->FindObjectRefById(referenceFormId);
+    if (!pReference)
+        return std::nullopt;
+
+    LockData lock{};
+    lock.IsLocked = pReference->m_isLocked;
+    lock.LockLevel = pReference->m_lockLevel;
+    return lock;
+}
+
 std::optional<PluginContainerContents::Result> PluginContainerContents::Build(const GameId& acReferenceId, const ModsComponent& acMods) noexcept
 {
     if (!m_pRecords)

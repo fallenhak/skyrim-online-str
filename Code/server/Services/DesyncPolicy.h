@@ -80,11 +80,13 @@ struct DesyncPolicy final
     {
         std::vector<Mismatch> result;
         const bool cClientDisabled = acClient.Has(ObjectStateDigest::kDisabled);
+        // Quest or event state hides these; the server tracks only takes and harvests.
+        const bool cCompareTaken = !acClient.Has(ObjectStateDigest::kEnableParent);
 
-        if (acServer.IsHarvestable && acServer.IsHarvested != cClientDisabled)
+        if (cCompareTaken && acServer.IsHarvestable && acServer.IsHarvested != cClientDisabled)
             result.push_back({Field::kHarvested, acServer.IsHarvested ? "yes" : "no", cClientDisabled ? "yes" : "no"});
 
-        if (acServer.IsOpenLoot && acServer.IsLootTaken != cClientDisabled)
+        if (cCompareTaken && acServer.IsOpenLoot && acServer.IsLootTaken != cClientDisabled)
             result.push_back({Field::kLootTaken, acServer.IsLootTaken ? "yes" : "no", cClientDisabled ? "yes" : "no"});
 
         // Lock data is sent to clients only for trusted records; untrusted ones stay client-owned.

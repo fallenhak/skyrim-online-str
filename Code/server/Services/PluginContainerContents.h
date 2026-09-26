@@ -4,6 +4,7 @@
 
 #include <Structs/GameId.h>
 #include <Structs/Inventory.h>
+#include <Structs/LockData.h>
 
 #include <optional>
 #include <unordered_map>
@@ -37,6 +38,10 @@ public:
     // Empty when the reference is not a plugin-placed container or an item's plugin is not
     // registered by any client yet; the caller then keeps the previous behaviour.
     [[nodiscard]] std::optional<Result> Build(const GameId& acReferenceId, const ModsComponent& acMods) noexcept;
+
+    // The reference's starting lock from its XLOC (unlocked without one). Empty when the
+    // reference is not plugin-placed or its plugin is not registered by any client yet.
+    [[nodiscard]] std::optional<LockData> InitialLock(const GameId& acReferenceId, const ModsComponent& acMods) const noexcept;
 
 private:
     [[nodiscard]] const LeveledItemResolver::List* FindList(uint32_t aFormId) noexcept;
