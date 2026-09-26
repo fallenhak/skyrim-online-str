@@ -9,6 +9,7 @@
 #include <Messages/AuthenticationRequest.h>
 #include <Messages/AuthenticationResponse.h>
 #include <Messages/CharacterReadyRequest.h>
+#include <Messages/ClientReferencesMoveRequest.h>
 #include <Messages/CreateCharacterRequest.h>
 #include <Messages/EnterInteriorCellRequest.h>
 #include <Messages/NotifyCharacterCreateResult.h>
@@ -107,6 +108,16 @@ void Bot::Shutdown() noexcept
 {
     m_shuttingDown = true;
     Close();
+}
+
+void Bot::SendMovement() noexcept
+{
+    ClientReferencesMoveRequest request{};
+    request.Tick = ++m_movementTick;
+    auto& update = request.Updates[m_serverId];
+    update.OwnershipEpoch = m_ownershipEpoch;
+    update.UpdatedMovement.CellId = GameId(m_fixtureModId, m_config.CellBaseId);
+    Send(request);
 }
 
 void Bot::Fail(std::string aReason) noexcept
@@ -246,7 +257,10 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
     {
         const auto& response = static_cast<const AssignCharacterResponse&>(acMessage);
         if (response.Cookie == m_assignCookie && m_phase == Phase::kAwaitingAssignment)
+        {
             m_serverId = response.ServerId;
+            m_ownershipEpoch = response.OwnershipEpoch;
+        }
         break;
     }
     case kNotifyCharacterEnteredWorld:
@@ -258,6 +272,7 @@ void Bot::HandleMessage(const ServerMessage& acMessage) noexcept
         EnterInteriorCellRequest request{};
         request.CellId = GameId(m_fixtureModId, m_config.CellBaseId);
         Send(request);
+        SendMovement();
         break;
     }
     default: break;

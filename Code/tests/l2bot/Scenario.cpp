@@ -3,7 +3,9 @@
 #include <fixture/L2Fixture.h>
 
 #include <Messages/AssignObjectsRequest.h>
+#include <Messages/ActivateRequest.h>
 #include <Messages/AssignObjectsResponse.h>
+#include <Messages/NotifyActivate.h>
 
 #include <spdlog/spdlog.h>
 
@@ -125,5 +127,122 @@ int RunAssignObjects(Bots& aBots)
 
     if (failures == 0)
         spdlog::info("PASS step 2: {} objects, same server ids for both bots, plugin state on the chest and the placed loot", kObjectCount);
+    return failures;
+}
+
+bool EnterWorld(Bots& aBots, const std::string& acEndpoint)
+{
+    for (auto& pBot : aBots)
+    {
+        if (pBot->GetPhase() == Bot::Phase::kConnecting && !pBot->IsConnected() && !pBot->Connect(acEndpoint))
+        {
+            spdlog::error("[{}] could not start connecting to {}", pBot->GetName(), acEndpoint);
+            return false;
+        }
+    }
+
+    const bool inWorld = Pump(
+        aBots,
+        [&]
+        {
+            for (const auto& pBot : aBots)
+                if (pBot->GetPhase() != Bot::Phase::kInWorld)
+                    return false;
+            return true;
+        },
+        std::chrono::seconds(30));
+
+    for (const auto& pBot : aBots)
+    {
+        if (pBot->GetPhase() != Bot::Phase::kInWorld)
+            spdlog::error("[{}] did not reach the world, stuck while {}", pBot->GetName(), ToString(pBot->GetPhase()));
+    }
+    return inWorld;
+}
+
+namespace
+{
+std::optional<AssignObjectsResponse> AssignDoorAndLever(Bots& aBots, Bot& aBot)
+{
+    std::optional<AssignObjectsResponse> response;
+    aBot.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() == kAssignObjectsResponse && !response)
+            response = static_cast<const AssignObjectsResponse&>(acMessage);
+    };
+
+    const uint32_t modId = aBot.GetFixtureModId();
+    AssignObjectsRequest request{};
+    auto& door = request.Objects.emplace_back();
+    door.Id = GameId(modId, L2Fixture::kDoorRef);
+    door.CellId = GameId(modId, L2Fixture::kCell);
+    door.IsDoor = true;
+    auto& lever = request.Objects.emplace_back();
+    lever.Id = GameId(modId, L2Fixture::kLeverRef);
+    lever.CellId = GameId(modId, L2Fixture::kCell);
+    lever.IsActivator = true;
+    aBot.Send(request);
+
+    static_cast<void>(Pump(aBots, [&] { return response.has_value(); }, std::chrono::seconds(10)));
+    aBot.OnMessage = nullptr;
+    return response;
+}
+} // namespace
+
+int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string& acSecret)
+{
+    Bot& sender = *aBots[0];
+    Bot& peer = *aBots[1];
+    const uint32_t modId = sender.GetFixtureModId();
+
+    std::set<uint32_t> relayed;
+    peer.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() == kNotifyActivate)
+            relayed.insert(static_cast<const NotifyActivate&>(acMessage).Id.BaseId);
+    };
+
+    ActivateRequest door{};
+    door.Id = GameId(modId, L2Fixture::kDoorRef);
+    door.CellId = GameId(modId, L2Fixture::kCell);
+    door.ActivatorId = sender.GetServerId();
+    door.PreActivationOpenState = 3; // closed: this activation opens it
+    sender.Send(door);
+
+    ActivateRequest lever = door;
+    lever.Id = GameId(modId, L2Fixture::kLeverRef);
+    lever.PreActivationOpenState = 0;
+    sender.Send(lever);
+
+    const bool bothRelayed = Pump(
+        aBots, [&] { return relayed.contains(L2Fixture::kDoorRef) && relayed.contains(L2Fixture::kLeverRef); }, std::chrono::seconds(5));
+    peer.OnMessage = nullptr;
+
+    int failures = 0;
+    failures += Check(relayed.contains(L2Fixture::kDoorRef), "the peer is told the door was activated");
+    failures += Check(relayed.contains(L2Fixture::kLeverRef), "the peer is told the lever was activated");
+    if (!bothRelayed)
+        return failures;
+
+    // A late joiner learns the final state from the server, not from a replay of the activations.
+    aBots.push_back(std::make_unique<Bot>(Bot::Config{"Charlie", 910000000000000003ull, acSecret, L2Fixture::kCell}));
+    if (!EnterWorld(aBots, acEndpoint))
+        return failures + 1;
+
+    const auto response = AssignDoorAndLever(aBots, *aBots.back());
+    failures += Check(response.has_value(), "the late joiner gets the door and the lever");
+    if (response)
+    {
+        for (const auto& object : response->Objects)
+        {
+            if (object.Id.BaseId == L2Fixture::kDoorRef)
+                failures += Check(object.IsDoorStateKnown && object.IsDoorOpen, "the late joiner sees the door open");
+            else if (object.Id.BaseId == L2Fixture::kLeverRef)
+                failures += Check(object.ActivationCount == 1, "the late joiner sees one lever activation");
+        }
+    }
+
+    if (failures == 0)
+        spdlog::info("PASS steps 3 and 8: door and lever relayed to the peer; the late joiner sees the door open and one lever pull");
     return failures;
 }
