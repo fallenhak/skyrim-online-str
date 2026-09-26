@@ -28,6 +28,8 @@ export interface CharacterSlot {
 @Injectable({ providedIn: 'root' })
 export class EntryService {
   public readonly active$ = new BehaviorSubject<boolean>(true);
+  /** Connection lost in the world: the native side reconnects and re-enters on its own. */
+  public readonly reconnecting$ = new BehaviorSubject<boolean>(false);
   public readonly auth$ = new BehaviorSubject<EntryAuth>({
     state: 'connecting',
     displayName: '',
@@ -56,8 +58,15 @@ export class EntryService {
     this.client.authStateChange.subscribe(auth => this.auth$.next(auth));
     this.client.loadingStageChange.subscribe(({ stage, progress }) => {
       this.stage$.next({ stage, progress });
+      if (stage === 'reconnecting') {
+        this.slots$.next(null);
+        this.reconnecting$.next(true);
+        this.active$.next(true);
+        return;
+      }
       // RaceMenu is a native Skyrim menu; the entry overlay must not cover it.
       if (stage === 'done' || stage === 'raceMenu') {
+        this.reconnecting$.next(false);
         this.active$.next(false);
       }
     });

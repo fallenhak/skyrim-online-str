@@ -335,6 +335,10 @@ void CharacterService::OnConnected(const ConnectedEvent& acConnectedEvent) const
 void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEvent) const noexcept
 {
     m_worldSyncStarted = false;
+    // An unexpected drop freezes the world until the reconnect: every NPC stays (or becomes) remote,
+    // so no local AI moves, fights or dies where the server cannot see it. Reassignment after the
+    // reconnect decides who simulates each one. A deliberate disconnect hands the world back locally.
+    const bool cFreezeWorld = m_transport.IsResumingSession();
     const auto disabledForms = m_populationDisableTracker.DrainOwnedDisables();
     auto remoteView = m_world.view<FormIdComponent, RemoteComponent>();
     for (auto entity : remoteView)
@@ -350,8 +354,24 @@ void CharacterService::OnDisconnected(const DisconnectedEvent& acDisconnectedEve
             LogActorDelete("disconnect (remote player)", pActor);
             pActor->Delete();
         }
-        else
+        else if (!cFreezeWorld)
             pActor->GetExtension()->SetRemote(false);
+    }
+
+    if (cFreezeWorld)
+    {
+        std::size_t frozen = 0;
+        auto localView = m_world.view<FormIdComponent, LocalComponent>();
+        for (auto entity : localView)
+        {
+            auto* pActor = Cast<Actor>(TESForm::GetById(localView.get<FormIdComponent>(entity).Id));
+            if (!pActor || pActor == PlayerCharacter::Get())
+                continue;
+
+            pActor->GetExtension()->SetRemote(true);
+            ++frozen;
+        }
+        spdlog::info("[Reconnect] froze {} locally simulated actor(s) until the world is entered again", frozen);
     }
 
     m_world.clear<WaitingForAssignmentComponent, LocalComponent, RemoteComponent, PopulationSuppressedComponent>();

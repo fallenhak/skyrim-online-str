@@ -61,7 +61,7 @@ struct CharacterSessionService final
 private:
     void HandleConnected(const ConnectedEvent& acEvent) noexcept;
     void HandleDisconnected(const DisconnectedEvent& acEvent) noexcept;
-    void HandleCharacterList(const NotifyCharacterList& acMessage) const noexcept;
+    void HandleCharacterList(const NotifyCharacterList& acMessage) noexcept;
     void HandleCharacterSlots(const NotifyCharacterSlots& acMessage) const noexcept;
     void HandleCharacterCreateResult(const NotifyCharacterCreateResult& acMessage) noexcept;
     void HandleCharacterSelectionResult(const NotifyCharacterSelectionResult& acMessage) noexcept;
@@ -76,6 +76,9 @@ private:
     entt::dispatcher& m_dispatcher;
     ClientCharacterSessionState m_state{ClientCharacterSessionState::kDisconnected};
     std::optional<CharacterLoadSnapshot> m_pendingSnapshot;
+    // The character last in the world, selected again on its own after an unexpected disconnect.
+    std::uint64_t m_resumeCharacterId{};
+    bool m_resumeSelectSent{};
     entt::scoped_connection m_connectedConnection;
     entt::scoped_connection m_disconnectedConnection;
     entt::scoped_connection m_characterListConnection;

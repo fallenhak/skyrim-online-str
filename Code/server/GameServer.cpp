@@ -1316,6 +1316,16 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
         else if (hasSignedIdentityToken)
         {
             const std::string ownerProfileId = "discord:" + std::to_string(signedIdentity.DiscordId);
+            // A reconnecting client can arrive before its dropped connection timed out here. Close the
+            // old one first, so its character is saved and its actors handed off before this session
+            // loads the same character.
+            for (const auto oldConnectionId : m_pWorld->GetSessionService().FindOtherConnectionsOfOwner(aConnectionId, ownerProfileId))
+            {
+                spdlog::info("[Reconnect] owner '{}' connected again as {:x}; closing its previous connection {:x}", ownerProfileId.c_str(), aConnectionId,
+                    oldConnectionId);
+                Kick(oldConnectionId);
+            }
+
             if (!m_pWorld->GetSessionService().BindIdentity(aConnectionId, ownerProfileId))
             {
                 spdlog::warn("Unable to bind signed Discord identity for connection {:x}", aConnectionId);

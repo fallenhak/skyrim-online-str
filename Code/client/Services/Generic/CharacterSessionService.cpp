@@ -23,6 +23,8 @@
 #include <Services/TransportService.h>
 #include <PlayerCharacter.h>
 
+#include <algorithm>
+
 CharacterSessionService::CharacterSessionService(TransportService& aTransport, entt::dispatcher& aDispatcher) noexcept
     : m_transport(aTransport)
     , m_dispatcher(aDispatcher)
@@ -60,7 +62,11 @@ bool CharacterSessionService::CreateCharacter(const std::uint32_t aSlotIndex, co
 void CharacterSessionService::HandleConnected(const ConnectedEvent&) noexcept
 {
     m_pendingSnapshot.reset();
+    m_resumeSelectSent = false;
     SetState(ClientCharacterSessionState::kAwaitingCharacterSelection);
+
+    if (m_transport.IsResumingSession() && m_resumeCharacterId != 0)
+        RequestCharacterList();
 }
 
 void CharacterSessionService::HandleDisconnected(const DisconnectedEvent&) noexcept
@@ -84,9 +90,25 @@ bool CharacterSessionService::UpdateCharacterAppearance(const GameId aRace, cons
     return m_transport.Send(request);
 }
 
-void CharacterSessionService::HandleCharacterList(const NotifyCharacterList& acMessage) const noexcept
+void CharacterSessionService::HandleCharacterList(const NotifyCharacterList& acMessage) noexcept
 {
     m_dispatcher.trigger(CharacterListReceivedEvent{acMessage.Characters});
+
+    // Reconnecting: go straight back into the world with the same character, no selection screen.
+    if (!m_transport.IsResumingSession() || m_resumeCharacterId == 0 || m_resumeSelectSent ||
+        m_state != ClientCharacterSessionState::kAwaitingCharacterSelection)
+        return;
+
+    const bool cListed = std::any_of(acMessage.Characters.begin(), acMessage.Characters.end(),
+        [this](const auto& acCharacter) { return acCharacter.CharacterId == m_resumeCharacterId; });
+    if (!cListed)
+    {
+        spdlog::error("[Reconnect] character {} is no longer listed; waiting for a manual selection", m_resumeCharacterId);
+        return;
+    }
+
+    m_resumeSelectSent = SelectCharacter(m_resumeCharacterId);
+    spdlog::info("[Reconnect] selecting character {} again (sent {})", m_resumeCharacterId, m_resumeSelectSent);
 }
 
 void CharacterSessionService::HandleCharacterSlots(const NotifyCharacterSlots& acMessage) const noexcept
@@ -182,6 +204,7 @@ void CharacterSessionService::HandleCharacterEnteredWorld(const NotifyCharacterE
         return;
     }
 
+    m_resumeCharacterId = acMessage.CharacterId;
     SetState(ClientCharacterSessionState::kInWorld);
     m_dispatcher.trigger(CharacterWorldSyncStartedEvent{});
 }

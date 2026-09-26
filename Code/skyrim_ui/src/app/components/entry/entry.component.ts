@@ -267,6 +267,11 @@ export class EntryComponent implements OnInit, OnDestroy {
       this.view = 'failed';
       return;
     }
+    // The native side selects the same character again; no selection screen while reconnecting.
+    if (this.entry.reconnecting$.getValue()) {
+      this.view = 'loading';
+      return;
+    }
     const worldBound = ['creatingCharacter', 'loadingWorld', 'applyingCharacter', 'raceMenu', 'enteringWorld', 'done'];
     if (worldBound.includes(stage) && stage !== 'creatingCharacter') {
       this.view = 'loading';

@@ -61,6 +61,21 @@ TEST(DevelopmentSaveFormId, RejectsMissingOrMismatchedLocalMods)
     EXPECT_EQ(ResolveDevelopmentSaveFormId(0xFE004ABC, userMods, serverModIds), GameId{});
 }
 
+TEST_F(SessionServiceTest, FindsTheOlderConnectionOfAReconnectingOwner)
+{
+    ASSERT_TRUE(sessions.Create(1));
+    ASSERT_TRUE(sessions.Create(2));
+    ASSERT_TRUE(sessions.Create(3));
+    for (const TiltedPhoques::ConnectionId_t id : {1u, 2u, 3u})
+        ASSERT_TRUE(sessions.MarkAuthenticated(id));
+    ASSERT_TRUE(sessions.BindIdentity(1, "discord:1"));
+    ASSERT_TRUE(sessions.BindIdentity(2, "discord:2"));
+
+    EXPECT_EQ(sessions.FindOtherConnectionsOfOwner(3, "discord:1"), std::vector<TiltedPhoques::ConnectionId_t>{1});
+    EXPECT_TRUE(sessions.FindOtherConnectionsOfOwner(1, "discord:1").empty());
+    EXPECT_TRUE(sessions.FindOtherConnectionsOfOwner(3, "discord:9").empty());
+}
+
 TEST_F(SessionServiceTest, StartsWithoutIdentityAndBindsVerifiedOwner)
 {
     constexpr TiltedPhoques::ConnectionId_t connectionId = 101;

@@ -78,6 +78,9 @@ struct SessionService final
     [[nodiscard]] bool Create(ConnectionId_t aConnectionId);
     [[nodiscard]] bool MarkAuthenticated(ConnectionId_t aConnectionId) noexcept;
     [[nodiscard]] bool BindIdentity(ConnectionId_t aConnectionId, std::string_view acOwnerProfileId);
+    // Other live connections already bound to this owner: a client that reconnects before the
+    // server noticed its old connection drop. The newest connection wins.
+    [[nodiscard]] std::vector<ConnectionId_t> FindOtherConnectionsOfOwner(ConnectionId_t aConnectionId, std::string_view acOwnerProfileId) const;
     [[nodiscard]] bool CanProcessGameplay(ConnectionId_t aConnectionId) const noexcept;
     void Remove(ConnectionId_t aConnectionId) noexcept;
 

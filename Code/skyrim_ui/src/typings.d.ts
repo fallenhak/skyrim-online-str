@@ -143,7 +143,8 @@ declare namespace SkyrimTogetherTypes {
     | 'applyingCharacter'
     | 'raceMenu'
     | 'enteringWorld'
-    | 'done';
+    | 'done'
+    | 'reconnecting';
   type LoadingStageCallback = (stage: LoadingStage, progress: number) => void;
 
   /** Numeric CharacterSelectionStatus values from the existing protocol. */
