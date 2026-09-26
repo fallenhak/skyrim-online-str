@@ -4,7 +4,10 @@
 
 #include <Messages/AssignObjectsRequest.h>
 #include <Messages/ActivateRequest.h>
+#include <Messages/AssignCharacterRequest.h>
+#include <Messages/AssignCharacterResponse.h>
 #include <Messages/AssignObjectsResponse.h>
+#include <Messages/NotifyCharacterAssignmentRejected.h>
 #include <Messages/NotifyActivate.h>
 #include <Messages/NotifyContainerTransferResult.h>
 #include <Messages/NotifyInventoryChanges.h>
@@ -367,5 +370,64 @@ int RunAfterRestart(Bots& aBots, const std::string& acExpectationFile)
 
     if (failures == 0)
         spdlog::info("PASS step 4 after restart: the chest holds {} and the door is open", expected);
+    return failures;
+}
+
+int RunLeveledActor(Bots& aBots)
+{
+    // The fixture's leveled list has one entry, so the server's pick is always kBandit. Each bot
+    // claims something else, as a client whose own roll differed would.
+    const uint32_t claims[] = {0x000FFF, 0x000FFE};
+    std::vector<std::optional<AssignCharacterResponse>> responses(aBots.size());
+    bool rejected = false;
+
+    for (size_t i = 0; i < 2; ++i)
+    {
+        Bot& bot = *aBots[i];
+        const uint32_t cookie = 100 + static_cast<uint32_t>(i);
+        bot.OnMessage = [&, i, cookie](const ServerMessage& acMessage)
+        {
+            if (acMessage.GetOpcode() == kAssignCharacterResponse)
+            {
+                const auto& response = static_cast<const AssignCharacterResponse&>(acMessage);
+                if (response.Cookie == cookie)
+                    responses[i] = response;
+            }
+            else if (acMessage.GetOpcode() == kNotifyCharacterAssignmentRejected)
+                rejected = true;
+        };
+
+        const uint32_t modId = bot.GetFixtureModId();
+        AssignCharacterRequest request{};
+        request.Cookie = cookie;
+        request.ReferenceId = GameId(modId, L2Fixture::kBanditRef);
+        request.FormId = GameId(modId, L2Fixture::kBandit);
+        request.LeveledNpcPickId = GameId(modId, claims[i]);
+        request.CellId = GameId(modId, L2Fixture::kCell);
+        bot.Send(request);
+
+        static_cast<void>(Pump(aBots, [&] { return responses[i].has_value() || rejected; }, std::chrono::seconds(5)));
+        bot.OnMessage = nullptr;
+    }
+
+    int failures = 0;
+    failures += Check(!rejected, "the leveled actor assignment is not rejected");
+    failures += Check(responses[0].has_value() && responses[1].has_value(), "both bots get an assignment response");
+    if (failures)
+        return failures;
+
+    const GameId expectedPick(aBots[0]->GetFixtureModId(), L2Fixture::kBandit);
+    for (size_t i = 0; i < 2; ++i)
+    {
+        if (responses[i]->LeveledNpcPickId != expectedPick)
+            spdlog::error("[{}] got pick {:X}:{:X}, expected {:X}:{:X}", aBots[i]->GetName(), responses[i]->LeveledNpcPickId.ModId,
+                responses[i]->LeveledNpcPickId.BaseId, expectedPick.ModId, expectedPick.BaseId);
+        failures += Check(responses[i]->LeveledNpcPickId == expectedPick, "the server's pick overrides the client's claim");
+    }
+    failures += Check(responses[0]->ServerId != 0 && responses[0]->ServerId == responses[1]->ServerId, "both bots get the same actor");
+    failures += Check(responses[0]->Owner && !responses[1]->Owner, "the first bot owns the actor, the second does not");
+
+    if (failures == 0)
+        spdlog::info("PASS step 5: both bots see the server's leveled pick {:X} for actor {}", L2Fixture::kBandit, responses[0]->ServerId);
     return failures;
 }

@@ -24,4 +24,6 @@ using Bots = std::vector<std::unique_ptr<Bot>>;
 [[nodiscard]] int RunContainerTake(Bots& aBots, const std::string& acExpectationFile);
 // Step 4, second half: after a server restart the chest keeps the take and the door stays open.
 [[nodiscard]] int RunAfterRestart(Bots& aBots, const std::string& acExpectationFile);
+// Step 5: the placed leveled actor gets the server's pick for every client, whatever they claim.
+[[nodiscard]] int RunLeveledActor(Bots& aBots);
 [[nodiscard]] int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string& acSecret);

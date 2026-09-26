@@ -22,11 +22,12 @@ inline constexpr uint32_t kDoor = 0x000806;          // DOOR
 inline constexpr uint32_t kLever = 0x000807;         // ACTI
 inline constexpr uint32_t kDummyItem = 0x000808;     // MISC, the base of the placed leveled item
 inline constexpr uint32_t kKey = 0x000809;           // KEYM
+inline constexpr uint32_t kBanditTemplate = 0x00080A; // NPC_ whose TPLT is kBanditList, as Skyrim's leveled actors are
 inline constexpr uint32_t kGold = 0x00000F;          // Gold001's id in Skyrim.esm; only a number here
 
 // The interior cell and its references
 inline constexpr uint32_t kCell = 0x000810;
-inline constexpr uint32_t kBanditRef = 0x000811;      // ACHR of kBanditList
+inline constexpr uint32_t kBanditRef = 0x000811;      // ACHR of kBanditTemplate
 inline constexpr uint32_t kChestRef = 0x000812;       // REFR of kChest, locked (level 25, kKey)
 inline constexpr uint32_t kDoorRef = 0x000813;        // REFR of kDoor
 inline constexpr uint32_t kLeverRef = 0x000814;       // REFR of kLever
