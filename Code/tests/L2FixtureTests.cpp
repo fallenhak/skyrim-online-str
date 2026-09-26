@@ -152,7 +152,11 @@ TEST_F(L2FixtureTest, LeveledActor)
 
     const ACHR* pActor = s_collection->FindActorReferenceById(L2Fixture::kBanditRef);
     ASSERT_NE(pActor, nullptr);
-    EXPECT_EQ(pActor->m_baseObject.m_baseId, L2Fixture::kBanditList);
+    EXPECT_EQ(pActor->m_baseObject.m_baseId, L2Fixture::kBanditTemplate);
+
+    const NPC* pTemplate = s_collection->FindNpcById(L2Fixture::kBanditTemplate);
+    ASSERT_NE(pTemplate, nullptr);
+    EXPECT_EQ(pTemplate->m_templateId, L2Fixture::kBanditList);
     EXPECT_EQ(pActor->m_parentCell, L2Fixture::kCell);
 }
 

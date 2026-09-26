@@ -177,6 +177,13 @@ Bytes Bandit()
     return Record{}.ZString("EDID", "L2FixtureBandit").Field("ACBS", acbs).FormId("RNAM", kRace).Serialize("NPC_", kBandit);
 }
 
+Bytes BanditTemplate()
+{
+    Bytes acbs(24, 0);
+    return Record{}.ZString("EDID", "L2FixtureBanditLeveled").Field("ACBS", acbs).FormId("RNAM", kRace).FormId("TPLT", kBanditList).Serialize(
+        "NPC_", kBanditTemplate);
+}
+
 Bytes BanditList()
 {
     return Record{}
@@ -216,7 +223,7 @@ Bytes Cell()
     Append(lock, uint64_t{}); // unknown
 
     Bytes references;
-    Append(references, Record{}.FormId("NAME", kBanditList).Field("DATA", Position(0.f)).Serialize("ACHR", kBanditRef));
+    Append(references, Record{}.FormId("NAME", kBanditTemplate).Field("DATA", Position(0.f)).Serialize("ACHR", kBanditRef));
     Append(references, Record{}.FormId("NAME", kChest).Field("XLOC", lock).Field("DATA", Position(100.f)).Serialize("REFR", kChestRef));
     Append(references, Record{}.FormId("NAME", kDoor).Field("DATA", Position(200.f)).Serialize("REFR", kDoorRef));
     Append(references, Record{}.FormId("NAME", kLever).Field("DATA", Position(300.f)).Serialize("REFR", kLeverRef));
@@ -240,7 +247,9 @@ std::vector<uint8_t> BuildPlugin()
     Append(plugin, TopGroup("MISC", DummyItem()));
     Append(plugin, TopGroup("KEYM", Key()));
     Append(plugin, TopGroup("CONT", Chest()));
-    Append(plugin, TopGroup("NPC_", Bandit()));
+    Bytes npcs = Bandit();
+    Append(npcs, BanditTemplate());
+    Append(plugin, TopGroup("NPC_", npcs));
     Append(plugin, TopGroup("ACTI", Lever()));
     Append(plugin, TopGroup("LVLN", BanditList()));
     Append(plugin, TopGroup("LVLI", LootList()));
