@@ -47,6 +47,8 @@ struct TESForm : BaseFormComponent
     {
         DELETED = 1 << 5,
         DISABLED = 1 << 0xB,
+        // Reference record flag: flora or a harvestable tree already picked (shown in its harvested state).
+        HARVESTED = 1 << 0xD,
         IGNORE_FRIENDLY_HITS = 1 << 0x14,
     };
 

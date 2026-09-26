@@ -3,6 +3,7 @@
 #include <Events/PacketEvent.h>
 #include <Persistence/WorldObjectRepository.h>
 #include <Services/DesyncPolicy.h>
+#include <Structs/ObjectData.h>
 
 #include <vector>
 
@@ -45,6 +46,8 @@ private:
     void RestorePersistedStates();
     void ApplyPersistedState(ObjectComponent& aObject, const Persistence::WorldObjectState& acState) noexcept;
     void PersistState(entt::entity aEntity) noexcept;
+    // The server's full state of one registered object, as sent in a cell snapshot or a correction.
+    ObjectData BuildObjectData(entt::entity aEntity) const noexcept;
     [[nodiscard]] const Persistence::WorldObjectState* FindPersistedState(const GameId& acId, const GameId& acCellId) const noexcept;
     [[nodiscard]] const Persistence::ContainerContentsState* FindPersistedContainer(const GameId& acId, const GameId& acCellId) const noexcept;
 

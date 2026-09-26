@@ -12,6 +12,7 @@
 #include <Events/DisconnectedEvent.h>
 #include <Events/UpdateEvent.h>
 #include <Events/CellChangeEvent.h>
+#include <Events/CharacterWorldSyncStartedEvent.h>
 #include <Events/ActivateEvent.h>
 #include <Events/LockChangeEvent.h>
 #include <Events/ScriptAnimationEvent.h>
@@ -47,6 +48,7 @@ ObjectService::ObjectService(World& aWorld, entt::dispatcher& aDispatcher, Trans
 {
     m_disconnectedConnection = aDispatcher.sink<DisconnectedEvent>().connect<&ObjectService::OnDisconnected>(this);
     m_cellChangeConnection = aDispatcher.sink<CellChangeEvent>().connect<&ObjectService::OnCellChange>(this);
+    m_worldSyncStartedConnection = aDispatcher.sink<CharacterWorldSyncStartedEvent>().connect<&ObjectService::OnWorldSyncStarted>(this);
     m_updateConnection = aDispatcher.sink<UpdateEvent>().connect<&ObjectService::OnUpdate>(this);
     m_onActivateConnection = aDispatcher.sink<ActivateEvent>().connect<&ObjectService::OnActivate>(this);
     m_activateConnection = aDispatcher.sink<NotifyActivate>().connect<&ObjectService::OnActivateNotify>(this);
@@ -322,13 +324,24 @@ void ObjectService::OnDisconnected(const DisconnectedEvent&) noexcept
 
 void ObjectService::OnCellChange(const CellChangeEvent&) noexcept
 {
+    // Kept while the session is still entering the world; sent once gameplay is active.
     if (m_transport.IsConnected())
         m_assignObjectsPending = true;
+}
+
+// The spawn cell and a reconnect raise no cell change, so without this the server
+// never learned those objects and every client-side state there stayed unsynced.
+void ObjectService::OnWorldSyncStarted(const CharacterWorldSyncStartedEvent&) noexcept
+{
+    m_assignObjectsPending = true;
 }
 
 void ObjectService::OnUpdate(const UpdateEvent& acEvent) noexcept
 {
     ProcessRotationReplays(acEvent.Delta);
+
+    if (!m_world.GetCharacterSessionService().IsGameplayActive())
+        return;
 
     if (m_assignObjectsPending)
     {
@@ -484,8 +497,8 @@ void ObjectService::SendAssignObjectsRequest() noexcept
     m_transport.Send(request);
 }
 
-// Desync detector (world-state plan, phase 0): report what this client shows for
-// every synced reference; the server compares with its record and logs. Nothing is applied.
+// Desync detector: report what this client shows for every synced reference. The server
+// compares it with its record and, for a confirmed difference, sends its state back.
 void ObjectService::SendObjectStateReport() noexcept
 {
     if (!m_transport.IsConnected())
@@ -511,6 +524,8 @@ void ObjectService::SendObjectStateReport() noexcept
             digest.StateFlags |= ObjectStateDigest::kDisabled;
         if (ExtraDataList* pExtraData = pObject->GetExtraDataList(); pExtraData && pExtraData->Contains(ExtraDataType::EnableStateParent))
             digest.StateFlags |= ObjectStateDigest::kEnableParent;
+        if (synced.IsHarvestType && (pObject->flags & TESForm::HARVESTED) != 0)
+            digest.StateFlags |= ObjectStateDigest::kHarvested;
 
         if (Lock* pLock = pObject->GetLock())
         {
@@ -744,6 +759,11 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
             return;
         }
     }
+
+    // Picking up a world item goes through TakeWorldItemRequest; the server has nothing to do with its
+    // activation, and a stale item repeatedly activated here was a stream of rejected requests.
+    if (ObjectSyncPolicy::IsOpenLootObject(acEvent.pObject))
+        return;
 
     ActivateRequest request;
 

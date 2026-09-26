@@ -128,3 +128,45 @@ TEST_CASE("Desync tracker logs a mismatch once it persists and when it ends", "[
     tracker.ForgetPlayer(1);
     REQUIRE(tracker.Size() == 0);
 }
+
+TEST_CASE("Desync compare accepts a plant picked in place as harvested", "[desync]")
+{
+    DesyncPolicy::ServerView flora{};
+    flora.IsHarvestable = true;
+    flora.IsHarvested = true;
+
+    // The harvesting client keeps the plant enabled and only sets its harvested flag.
+    REQUIRE(DesyncPolicy::Compare(flora, MakeDigest(ObjectStateDigest::kHarvested)).empty());
+    REQUIRE(DesyncPolicy::Compare(flora, MakeDigest(ObjectStateDigest::kDisabled)).empty());
+
+    auto result = DesyncPolicy::Compare(flora, MakeDigest(0));
+    REQUIRE(result.size() == 1);
+    REQUIRE(result[0].Client == "no");
+
+    // Respawned on the server, still picked on the client.
+    flora.IsHarvested = false;
+    result = DesyncPolicy::Compare(flora, MakeDigest(ObjectStateDigest::kHarvested));
+    REQUIRE(result.size() == 1);
+    REQUIRE(result[0].Server == "no");
+    REQUIRE(result[0].Client == "yes");
+}
+
+TEST_CASE("Desync tracker asks for another correction while a mismatch lasts", "[desync]")
+{
+    using Tracker = DesyncPolicy::Tracker;
+    Tracker tracker;
+    const Tracker::Key key{1, GameId{0, 0x8A2A6}, DesyncPolicy::Field::kHarvested};
+
+    REQUIRE(tracker.Observe(key, "yes | no") == Tracker::Event::kNone);
+    REQUIRE(tracker.Observe(key, "yes | no") == Tracker::Event::kNew);
+
+    for (uint32_t i = 1; i < Tracker::kRetryReports; ++i)
+        REQUIRE(tracker.Observe(key, "yes | no") == Tracker::Event::kNone);
+    REQUIRE(tracker.Observe(key, "yes | no") == Tracker::Event::kRetry);
+
+    for (uint32_t i = 1; i < Tracker::kRetryReports; ++i)
+        REQUIRE(tracker.Observe(key, "yes | no") == Tracker::Event::kNone);
+    REQUIRE(tracker.Observe(key, "yes | no") == Tracker::Event::kRetry);
+
+    REQUIRE(tracker.Observe(key, "") == Tracker::Event::kResolved);
+}
