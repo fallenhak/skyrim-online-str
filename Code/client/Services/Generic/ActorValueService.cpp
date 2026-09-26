@@ -556,7 +556,11 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
         // but activation (E) still hit the bodies where this client's own ragdoll had fallen. A corpse whose
         // 3D is loaded fresh lies where the server says (corpses already dead on arrival were never off),
         // so a drifted corpse is unloaded and loaded again at the settled position.
-        if (cDrift > kCorpseRebuildDistance && !pActor->IsTemporary() && !pActor->IsDisabled() && m_corpseRebuilds.find(pActor->formID) == m_corpseRebuilds.end())
+        static BSFixedString s_containerMenu("ContainerMenu");
+        const auto* pUi = UI::Get();
+        const bool cLootMenuOpen = pUi && pUi->GetMenuOpen(s_containerMenu);
+        if (cDrift > kCorpseRebuildDistance && !cLootMenuOpen && !pActor->IsTemporary() && !pActor->IsDisabled() &&
+            m_corpseRebuilds.find(pActor->formID) == m_corpseRebuilds.end())
         {
             pActor->Disable(false);
             m_corpseRebuilds[pActor->formID] = kCorpseRebuildDelaySeconds;
@@ -582,9 +586,7 @@ void ActorValueService::OnDeathStateChange(const NotifyDeathStateChange& acMessa
 
         // This client's Kill() rolled its own death items; the corpse holds the recorded contents instead.
         // Never under an open loot menu: the desync report corrects it once the menu is closed.
-        static BSFixedString s_containerMenu("ContainerMenu");
-        const auto* pUi = UI::Get();
-        if (acMessage.HasCorpseContents && pUi && pUi->GetMenuOpen(s_containerMenu))
+        if (acMessage.HasCorpseContents && cLootMenuOpen)
             spdlog::info("[CorpseSync] corpse actor {:X} contents left to the desync report: a loot menu is open", acMessage.Id);
         else if (acMessage.HasCorpseContents)
         {

@@ -750,6 +750,15 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
             pObject->LockChange();
         }
 
+        // A correction can arrive while this player has a chest open; the next report applies it after.
+        static BSFixedString s_containerMenu("ContainerMenu");
+        const auto* pUi = UI::Get();
+        if (pObject->baseForm->formType == FormType::Container && pUi && pUi->GetMenuOpen(s_containerMenu))
+        {
+            spdlog::info("Container {:X} contents left to the next report: a container menu is open", pObject->formID);
+            continue;
+        }
+
         if (pObject->baseForm->formType == FormType::Container)
         {
             Inventory currentInventory = pObject->GetInventory();
@@ -858,8 +867,9 @@ void ObjectService::OnActivate(const ActivateEvent& acEvent) noexcept
     }
 
     // Picking up a world item goes through TakeWorldItemRequest; the server has nothing to do with its
-    // activation, and a stale item repeatedly activated here was a stream of rejected requests.
-    if (ObjectSyncPolicy::IsOpenLootObject(acEvent.pObject))
+    // activation, and a stale item repeatedly activated here was a stream of rejected requests. Actors
+    // (talking, looting a corpse) are never world objects either.
+    if (ObjectSyncPolicy::IsOpenLootObject(acEvent.pObject) || Cast<Actor>(acEvent.pObject))
         return;
 
     ActivateRequest request;
