@@ -37,4 +37,6 @@ using Bots = std::vector<std::unique_ptr<Bot>>;
 // Ownership: a clearly closer player takes over a living NPC, a stalled owner loses it, and the
 // former owner's stale epoch is refused.
 [[nodiscard]] int RunOwnershipHandoff(Bots& aBots);
+// Harvest and placed loot: each is relayed once, a repeat is refused. Runs after RunAssignObjects.
+[[nodiscard]] int RunHarvestAndLoot(Bots& aBots);
 [[nodiscard]] int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string& acSecret);
