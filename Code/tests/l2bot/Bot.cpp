@@ -112,11 +112,17 @@ void Bot::Shutdown() noexcept
 
 void Bot::SendMovement() noexcept
 {
+    Move(m_serverId, m_ownershipEpoch, 0.f);
+}
+
+void Bot::Move(const std::uint32_t aServerId, const std::uint32_t aOwnershipEpoch, const float aX) noexcept
+{
     ClientReferencesMoveRequest request{};
     request.Tick = ++m_movementTick;
-    auto& update = request.Updates[m_serverId];
-    update.OwnershipEpoch = m_ownershipEpoch;
+    auto& update = request.Updates[aServerId];
+    update.OwnershipEpoch = aOwnershipEpoch;
     update.UpdatedMovement.CellId = GameId(m_fixtureModId, m_config.CellBaseId);
+    update.UpdatedMovement.Position.x = aX;
     Send(request);
 }
 

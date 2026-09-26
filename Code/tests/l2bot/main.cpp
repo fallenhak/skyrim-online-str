@@ -141,6 +141,8 @@ int Connect(const std::string& acEndpoint)
         if (failures == 0)
             failures += RunCorpseLoot(bots);
         if (failures == 0)
+            failures += RunOwnershipHandoff(bots);
+        if (failures == 0)
             failures += RunArrow(bots);
         if (failures == 0)
             failures += RunActivations(bots, acEndpoint, pSecret);

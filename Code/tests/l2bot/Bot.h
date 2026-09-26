@@ -59,6 +59,9 @@ public:
     [[nodiscard]] std::uint32_t GetFixtureModId() const noexcept { return m_fixtureModId; }
     [[nodiscard]] std::uint32_t GetOwnershipEpoch() const noexcept { return m_ownershipEpoch; }
 
+    // Reports aServerId (this character or an actor it owns) at aX in the fixture cell.
+    void Move(std::uint32_t aServerId, std::uint32_t aOwnershipEpoch, float aX) noexcept;
+
     // Called for every server message after the bot's own session handling.
     std::function<void(const ServerMessage&)> OnMessage;
 
