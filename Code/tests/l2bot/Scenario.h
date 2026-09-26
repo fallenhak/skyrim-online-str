@@ -31,4 +31,7 @@ using Bots = std::vector<std::unique_ptr<Bot>>;
 // Step 7: a bow shot, whose casting source is not a spell slot, is accepted and relayed;
 // a spell with an out-of-range casting source is not.
 [[nodiscard]] int RunArrow(Bots& aBots);
+// Corpse: the owner kills the leveled bandit (step 5); the peer sees the settled corpse with the
+// owner's contents, loots it, and the owner is told. Runs after RunLeveledActor.
+[[nodiscard]] int RunCorpseLoot(Bots& aBots);
 [[nodiscard]] int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string& acSecret);

@@ -7,6 +7,7 @@
 #include <Messages/AssignCharacterRequest.h>
 #include <Messages/AssignCharacterResponse.h>
 #include <Messages/AssignObjectsResponse.h>
+#include <Messages/CharacterSpawnRequest.h>
 #include <Messages/NotifyCharacterAssignmentRejected.h>
 #include <Messages/NotifyActivate.h>
 #include <Messages/NotifyActorValueChanges.h>
@@ -28,6 +29,17 @@
 #include <optional>
 #include <set>
 #include <thread>
+
+namespace
+{
+// The bandit RunLeveledActor assigned, for the scenarios that follow it.
+struct AssignedActor
+{
+    uint32_t ServerId{};
+    uint32_t OwnershipEpoch{};
+};
+AssignedActor s_bandit{};
+} // namespace
 
 namespace
 {
@@ -245,8 +257,22 @@ int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string
 
     // A late joiner learns the final state from the server, not from a replay of the activations.
     aBots.push_back(std::make_unique<Bot>(Bot::Config{"Charlie", 910000000000000003ull, acSecret, L2Fixture::kCell}));
+    // The late joiner also gets the actors already in the cell: the respawned player and the looted corpse.
+    std::map<uint32_t, CharacterSpawnRequest> spawns;
+    aBots.back()->OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() == kCharacterSpawnRequest)
+        {
+            const auto& spawn = static_cast<const CharacterSpawnRequest&>(acMessage);
+            spawns[spawn.ServerId] = spawn;
+        }
+    };
     if (!EnterWorld(aBots, acEndpoint))
         return failures + 1;
+    // The spawns answer the late joiner's cell entry, which goes out as it enters the world.
+    static_cast<void>(Pump(aBots, [&] { return spawns.contains(aBots[0]->GetServerId()) && spawns.contains(s_bandit.ServerId); },
+        std::chrono::seconds(3)));
+    aBots.back()->OnMessage = nullptr;
 
     const auto response = AssignFixtureObjects(aBots, *aBots.back());
     failures += Check(response.has_value(), "the late joiner gets the door and the lever");
@@ -261,8 +287,23 @@ int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string
         }
     }
 
+    const auto victim = spawns.find(aBots[0]->GetServerId());
+    failures += Check(victim != spawns.end() && !victim->second.IsDead, "the late joiner sees the respawned player alive");
+    const auto corpse = spawns.find(s_bandit.ServerId);
+    failures += Check(corpse != spawns.end(), "the late joiner gets the bandit's corpse");
+    if (corpse != spawns.end())
+    {
+        GameId gold(0, L2Fixture::kGold);
+        const auto& spawn = corpse->second;
+        failures += Check(spawn.IsDead, "the late joiner sees the bandit dead");
+        failures += Check(spawn.LeveledNpcPickId == GameId(aBots[0]->GetFixtureModId(), L2Fixture::kBandit), "the late joiner sees the server's pick");
+        if (spawn.InventoryContent.GetEntryCountById(gold) != 5)
+            spdlog::error("late joiner's corpse gold: {}", spawn.InventoryContent.GetEntryCountById(gold));
+        failures += Check(spawn.InventoryContent.GetEntryCountById(gold) == 5, "the late joiner sees the corpse without the looted gold");
+    }
+
     if (failures == 0)
-        spdlog::info("PASS steps 3 and 8: door and lever relayed to the peer; the late joiner sees the door open and one lever pull");
+        spdlog::info("PASS steps 3 and 8: door and lever relayed to the peer; the late joiner sees the door open and one lever pull; it also sees the player alive and the looted corpse");
     return failures;
 }
 
@@ -435,6 +476,7 @@ int RunLeveledActor(Bots& aBots)
     failures += Check(responses[0]->ServerId != 0 && responses[0]->ServerId == responses[1]->ServerId, "both bots get the same actor");
     failures += Check(responses[0]->Owner && !responses[1]->Owner, "the first bot owns the actor, the second does not");
 
+    s_bandit = {responses[0]->ServerId, responses[0]->OwnershipEpoch};
     if (failures == 0)
         spdlog::info("PASS step 5: both bots see the server's leveled pick {:X} for actor {}", L2Fixture::kBandit, responses[0]->ServerId);
     return failures;
@@ -581,5 +623,100 @@ int RunArrow(Bots& aBots)
 
     if (failures == 0)
         spdlog::info("PASS step 7: the arrow was relayed to {}, the malformed spell was dropped", peer.GetName());
+    return failures;
+}
+
+int RunCorpseLoot(Bots& aBots)
+{
+    Bot& owner = *aBots[0];
+    Bot& looter = *aBots[1];
+    if (s_bandit.ServerId == 0)
+        return Check(false, "the bandit was assigned before the corpse step");
+
+    GameId gold(0, L2Fixture::kGold); // not const: GetEntryCountById takes a reference
+    constexpr int32_t kCorpseGold = 7;
+    constexpr int32_t kTaken = 2;
+
+    std::optional<NotifyDeathStateChange> settled;
+    bool sawDeath = false;
+    looter.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() != kNotifyDeathStateChange)
+            return;
+        const auto& notify = static_cast<const NotifyDeathStateChange&>(acMessage);
+        if (notify.Id != s_bandit.ServerId || !notify.IsDead)
+            return;
+        sawDeath = true;
+        if (notify.IsSettledPosition)
+            settled = notify;
+    };
+
+    // The owner reports the death, then the settled corpse with what the engine put on it.
+    RequestDeathStateChange death{};
+    death.Id = s_bandit.ServerId;
+    death.OwnershipEpoch = s_bandit.OwnershipEpoch;
+    death.IsDead = true;
+    owner.Send(death);
+
+    RequestDeathStateChange corpse = death;
+    corpse.IsSettledPosition = true;
+    Inventory::Entry entry{};
+    entry.BaseId = gold;
+    entry.Count = kCorpseGold;
+    corpse.CorpseContents.Entries.push_back(entry);
+    owner.Send(corpse);
+
+    static_cast<void>(Pump(aBots, [&] { return settled.has_value(); }, std::chrono::seconds(5)));
+    looter.OnMessage = nullptr;
+
+    int failures = 0;
+    failures += Check(sawDeath, "the peer sees the bandit die");
+    failures += Check(settled.has_value(), "the peer gets the settled corpse");
+    if (!settled)
+        return failures;
+    failures += Check(settled->HasCorpseContents && settled->CorpseContents.GetEntryCountById(gold) == kCorpseGold,
+        "the settled corpse carries the owner's contents");
+    if (failures)
+        return failures;
+
+    // The peer loots the corpse; the owner must see the corpse lose it.
+    std::optional<uint8_t> result;
+    std::optional<int32_t> ownerSaw;
+    looter.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() == kNotifyContainerTransferResult)
+            result = static_cast<const NotifyContainerTransferResult&>(acMessage).Result;
+    };
+    owner.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() != kNotifyInventoryChanges)
+            return;
+        const auto& notify = static_cast<const NotifyInventoryChanges&>(acMessage);
+        if (notify.ServerId == s_bandit.ServerId && notify.Item.BaseId == gold)
+            ownerSaw = notify.Item.Count;
+    };
+
+    RequestContainerTransfer take{};
+    take.RequestId = 900;
+    take.ContainerId = s_bandit.ServerId;
+    take.TargetKind = 1; // corpse
+    take.Direction = 0;  // take
+    take.ExpectedContainerCount = kCorpseGold;
+    take.Item = entry;
+    take.Item.Count = kTaken;
+    looter.Send(take);
+
+    static_cast<void>(Pump(aBots, [&] { return result.has_value() && ownerSaw.has_value(); }, std::chrono::seconds(5)));
+    looter.OnMessage = nullptr;
+    owner.OnMessage = nullptr;
+
+    if (result && *result != 0)
+        spdlog::error("corpse take rejected with result {}", *result);
+    failures += Check(result.has_value() && *result == 0, "the peer's take from the corpse is accepted");
+    failures += Check(ownerSaw.has_value() && *ownerSaw == -kTaken, "the owner sees the corpse lose what the peer took");
+
+    if (failures == 0)
+        spdlog::info("PASS corpse: {} saw the bandit's corpse with {} gold, took {}, and {} was told", looter.GetName(), kCorpseGold, kTaken,
+            owner.GetName());
     return failures;
 }
