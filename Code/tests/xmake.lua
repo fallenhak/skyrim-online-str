@@ -5,7 +5,7 @@ target("TPTests")
     add_includedirs(
         ".", "../encoding", "../client", "../server")
     add_headerfiles("**.h")
-    add_files("*.cpp|PersistenceTests.cpp|RenewableEncounterRepositoryTests.cpp|SessionServiceTests.cpp|ActorPopulationTests.cpp|CharacterNamePolicyTests.cpp|AuthTokenVerifierTests.cpp|WorldClockRepositoryTests.cpp")
+    add_files("*.cpp|PersistenceTests.cpp|RenewableEncounterRepositoryTests.cpp|SessionServiceTests.cpp|ActorPopulationTests.cpp|L2FixtureTests.cpp|CharacterNamePolicyTests.cpp|AuthTokenVerifierTests.cpp|WorldClockRepositoryTests.cpp")
     add_files("../server/Game/Animation/ActionReplayCache.cpp", "../server/Game/Animation/AnimationEventLists.cpp")
     add_deps("SkyrimEncoding")
     add_packages(
@@ -60,7 +60,7 @@ target("ActorPopulationTests")
     set_pcxxheader("../components/es_loader/stdafx.h")
     add_includedirs(
         ".", "../encoding", "../server", "../components/es_loader")
-    add_files("ActorPopulationTests.cpp", "../TestMain.cpp")
+    add_files("ActorPopulationTests.cpp", "L2FixtureTests.cpp", "fixture/L2Fixture.cpp", "../TestMain.cpp")
     add_files("../server/Services/ActorPopulationPolicy.cpp")
     add_files("../server/Services/ActorPopulationAssignmentPolicy.cpp")
     add_files("../server/Components/ModsComponent.cpp")
