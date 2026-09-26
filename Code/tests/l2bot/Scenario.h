@@ -39,4 +39,7 @@ using Bots = std::vector<std::unique_ptr<Bot>>;
 [[nodiscard]] int RunOwnershipHandoff(Bots& aBots);
 // Harvest and placed loot: each is relayed once, a repeat is refused. Runs after RunAssignObjects.
 [[nodiscard]] int RunHarvestAndLoot(Bots& aBots);
+// Reconnect: the same account connects again while its old connection is still open, as the
+// client's automatic reconnect does. Adds the new bot to aBots.
+[[nodiscard]] int RunReconnect(Bots& aBots, const std::string& acEndpoint, const std::string& acSecret);
 [[nodiscard]] int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string& acSecret);
