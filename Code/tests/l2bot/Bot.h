@@ -52,6 +52,8 @@ public:
     [[nodiscard]] const std::string& GetFailure() const noexcept { return m_failure; }
     [[nodiscard]] std::uint32_t GetServerId() const noexcept { return m_serverId; }
     [[nodiscard]] std::uint64_t GetCharacterId() const noexcept { return m_characterId; }
+    // The fixture plugin's mod id in this session; GameIds of fixture forms use it.
+    [[nodiscard]] std::uint32_t GetFixtureModId() const noexcept { return m_fixtureModId; }
 
     // Called for every server message after the bot's own session handling.
     std::function<void(const ServerMessage&)> OnMessage;
