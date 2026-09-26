@@ -34,4 +34,7 @@ using Bots = std::vector<std::unique_ptr<Bot>>;
 // Corpse: the owner kills the leveled bandit (step 5); the peer sees the settled corpse with the
 // owner's contents, loots it, and the owner is told. Runs after RunLeveledActor.
 [[nodiscard]] int RunCorpseLoot(Bots& aBots);
+// Ownership: a clearly closer player takes over a living NPC, a stalled owner loses it, and the
+// former owner's stale epoch is refused.
+[[nodiscard]] int RunOwnershipHandoff(Bots& aBots);
 [[nodiscard]] int RunActivations(Bots& aBots, const std::string& acEndpoint, const std::string& acSecret);

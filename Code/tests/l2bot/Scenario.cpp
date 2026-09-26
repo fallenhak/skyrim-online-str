@@ -20,6 +20,7 @@
 #include <Messages/RequestDeathStateChange.h>
 #include <Messages/NotifyContainerTransferResult.h>
 #include <Messages/NotifyInventoryChanges.h>
+#include <Messages/NotifyOwnershipTransfer.h>
 #include <Messages/RequestContainerTransfer.h>
 
 #include <spdlog/spdlog.h>
@@ -718,5 +719,139 @@ int RunCorpseLoot(Bots& aBots)
     if (failures == 0)
         spdlog::info("PASS corpse: {} saw the bandit's corpse with {} gold, took {}, and {} was told", looter.GetName(), kCorpseGold, kTaken,
             owner.GetName());
+    return failures;
+}
+
+namespace
+{
+// Pumps like Pump, calling aEvery100ms about ten times a second, as a game client sends movement.
+bool PumpWithMovement(Bots& aBots, const std::function<void()>& aEvery100ms, const std::function<bool()>& aDone, std::chrono::milliseconds aTimeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + aTimeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        aEvery100ms();
+        if (Pump(aBots, aDone, std::chrono::milliseconds(100)))
+            return true;
+    }
+    return aDone();
+}
+} // namespace
+
+int RunOwnershipHandoff(Bots& aBots)
+{
+    Bot& first = *aBots[0];
+    Bot& second = *aBots[1];
+    const uint32_t modId = first.GetFixtureModId();
+    // Far enough that the second bot is clearly closer (1.5x and 1024 units).
+    constexpr float kFar = 5000.f;
+
+    // A living NPC that is not in the fixture; unknown actors are assignable.
+    std::optional<AssignCharacterResponse> assigned;
+    first.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() == kAssignCharacterResponse && static_cast<const AssignCharacterResponse&>(acMessage).Cookie == 300)
+            assigned = static_cast<const AssignCharacterResponse&>(acMessage);
+    };
+    AssignCharacterRequest request{};
+    request.Cookie = 300;
+    request.ReferenceId = GameId(modId, 0x2000);
+    request.FormId = GameId(modId, L2Fixture::kBandit);
+    request.CellId = GameId(modId, L2Fixture::kCell);
+    first.Send(request);
+    static_cast<void>(Pump(aBots, [&] { return assigned.has_value(); }, std::chrono::seconds(5)));
+    first.OnMessage = nullptr;
+
+    int failures = Check(assigned.has_value() && assigned->Owner, "the first bot owns the new NPC");
+    if (failures)
+        return failures;
+    const uint32_t npc = assigned->ServerId;
+    const uint32_t epoch = assigned->OwnershipEpoch;
+
+    std::map<std::string, NotifyOwnershipTransfer> transfers;
+    for (Bot* pBot : {&first, &second})
+    {
+        pBot->OnMessage = [&transfers, pBot, npc](const ServerMessage& acMessage)
+        {
+            if (acMessage.GetOpcode() != kNotifyOwnershipTransfer)
+                return;
+            const auto& notify = static_cast<const NotifyOwnershipTransfer&>(acMessage);
+            if (notify.ServerId == npc)
+                transfers[pBot->GetName()] = notify;
+        };
+    }
+
+    // Proximity: the owner walks away but keeps simulating the NPC; the second bot stays next to it.
+    const auto start = std::chrono::steady_clock::now();
+    const bool handedOver = PumpWithMovement(
+        aBots,
+        [&]
+        {
+            first.Move(first.GetServerId(), first.GetOwnershipEpoch(), kFar);
+            first.Move(npc, epoch, 0.f);
+            second.Move(second.GetServerId(), second.GetOwnershipEpoch(), 0.f);
+        },
+        [&] { return transfers.contains(second.GetName()); }, std::chrono::seconds(15));
+    const auto proximitySeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    failures += Check(handedOver, "the clearly closer bot takes the NPC over");
+    if (!handedOver)
+        return failures;
+    const uint32_t secondEpoch = transfers[second.GetName()].OwnershipEpoch;
+    failures += Check(secondEpoch == epoch + 1, "the proximity handoff bumps the epoch");
+    // Hysteresis: the candidate must stay closer for a while (5 s) before it takes over.
+    failures += Check(proximitySeconds >= 4.0, "the handoff waits for the closer bot to stay closer");
+
+    // Stall: the new owner never sends the NPC's movement; the far bot is the only candidate.
+    transfers.clear();
+    const bool stalledBack = PumpWithMovement(
+        aBots,
+        [&]
+        {
+            first.Move(first.GetServerId(), first.GetOwnershipEpoch(), kFar);
+            second.Move(second.GetServerId(), second.GetOwnershipEpoch(), 0.f);
+        },
+        [&] { return transfers.contains(first.GetName()); }, std::chrono::seconds(15));
+    failures += Check(stalledBack, "a stalled owner loses the NPC even to a farther bot");
+    if (!stalledBack)
+        return failures;
+    const uint32_t thirdEpoch = transfers[first.GetName()].OwnershipEpoch;
+    failures += Check(thirdEpoch == secondEpoch + 1, "the stall handoff bumps the epoch");
+
+    // The former owner's epoch is stale: its death report is refused, the current owner's is relayed.
+    bool firstSawDeath = false;
+    bool secondSawDeath = false;
+    first.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() == kNotifyDeathStateChange && static_cast<const NotifyDeathStateChange&>(acMessage).Id == npc)
+            firstSawDeath = true;
+    };
+    second.OnMessage = [&](const ServerMessage& acMessage)
+    {
+        if (acMessage.GetOpcode() == kNotifyDeathStateChange && static_cast<const NotifyDeathStateChange&>(acMessage).Id == npc)
+            secondSawDeath = true;
+    };
+    RequestDeathStateChange stale{};
+    stale.Id = npc;
+    stale.OwnershipEpoch = secondEpoch;
+    stale.IsDead = true;
+    second.Send(stale);
+    static_cast<void>(Pump(aBots, [&] { return firstSawDeath; }, std::chrono::milliseconds(500)));
+    failures += Check(!firstSawDeath, "the former owner's stale death report is refused");
+
+    RequestDeathStateChange current = stale;
+    current.OwnershipEpoch = thirdEpoch;
+    first.Send(current);
+    static_cast<void>(Pump(aBots, [&] { return secondSawDeath; }, std::chrono::seconds(5)));
+    failures += Check(secondSawDeath, "the current owner's death report is relayed");
+
+    first.OnMessage = nullptr;
+    second.OnMessage = nullptr;
+    // Back to the fixture spot for the steps that follow.
+    first.Move(first.GetServerId(), first.GetOwnershipEpoch(), 0.f);
+    static_cast<void>(Pump(aBots, [] { return false; }, std::chrono::milliseconds(200)));
+
+    if (failures == 0)
+        spdlog::info("PASS ownership: proximity handoff after {:.1f}s (epoch {} to {}), stall handoff back (epoch {}), stale epoch refused",
+            proximitySeconds, epoch, secondEpoch, thirdEpoch);
     return failures;
 }
