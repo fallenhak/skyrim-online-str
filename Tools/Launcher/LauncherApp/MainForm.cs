@@ -77,6 +77,7 @@ internal sealed class MainForm : Form
         AppendLog("Skyrim Online STR launcher hazır.");
         AppendLog($"Hedef Skyrim SE sürümü: {RequiredGameVersion}; Stock Game kopyası sürüm ve SkyrimSE.exe SHA-256 değeriyle kilitlenir.");
         UpdateAuthUi();
+        Shown += async (_, _) => await RefreshAuthSessionAsync();
         FormClosing += (_, e) =>
         {
             if (!_gameRunning) return;
@@ -292,6 +293,21 @@ internal sealed class MainForm : Form
         await InstallOrUpdateAsync();
         if (!_isInstalled) return;
         await LaunchStrAsync();
+    }
+
+    private async Task RefreshAuthSessionAsync()
+    {
+        if (_authSession is null) return;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var refreshed = await AuthSessionRefresh.TryRefreshAsync(Http, _config.AuthBaseUrl, _authSessionStore, _authSession, timeout.Token);
+        if (refreshed is null)
+        {
+            AppendLog("Discord oturumu yenilenemedi; mevcut oturum süresi dolana kadar geçerli.");
+            return;
+        }
+        _authSession = refreshed;
+        AppendLog("Discord oturumu yenilendi: " + DateTimeOffset.FromUnixTimeSeconds(refreshed.ExpiresAt).LocalDateTime.ToString("g") + " tarihine kadar geçerli.");
+        UpdateAuthUi();
     }
 
     private async Task AuthenticateWithDiscordAsync()

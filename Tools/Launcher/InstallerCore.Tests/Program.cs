@@ -22,7 +22,8 @@ var tests = new (string Name, Func<Task> Run)[]
     ("zip traversal reddi", ZipTraversalRejected),
     ("Discord token talepleri ve sÃ¼re sonu", AuthTokenClaimsValidation),
     ("Discord oturumu DPAPI ile saklanÄ±r", AuthSessionDpapiRoundTrip),
-    ("oyun yapÄ±landÄ±rmasÄ± token'Ä± DPAPI ile korur", NativeAuthConfigurationProtectsToken)
+    ("oyun yapÄ±landÄ±rmasÄ± token'Ä± DPAPI ile korur", NativeAuthConfigurationProtectsToken),
+    ("Discord oturumu acilista yenilenir", AuthSessionRefreshReplacesToken)
 };
 
 var failures = new List<string>();
@@ -236,6 +237,27 @@ static Task NativeAuthConfigurationProtectsToken()
     return Task.CompletedTask;
 }
 
+static async Task AuthSessionRefreshReplacesToken()
+{
+    using var temp = new TempDirectory();
+    var store = new AuthSessionStore(Path.Combine(temp.Path, "auth-session.json"));
+    var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    var old = AuthTokenClaims.Read(CreateTestAuthToken("discord:123456789", "Burak", now + 3600));
+    store.Save(old);
+    var fresh = CreateTestAuthToken("discord:123456789", "Burak", now + 7 * 24 * 3600);
+    var handler = new JsonHandler(HttpStatusCode.OK, System.Text.Json.JsonSerializer.Serialize(new { token = fresh }));
+    var refreshed = await AuthSessionRefresh.TryRefreshAsync(new HttpClient(handler), "https://auth.example.test", store, old);
+    Assert.True(refreshed is not null);
+    Assert.Equal("Bearer " + old.Token, handler.Authorization);
+    Assert.Equal("https://auth.example.test/auth/refresh", handler.Uri);
+    Assert.Equal(fresh, store.Load()!.Token);
+
+    var rejected = await AuthSessionRefresh.TryRefreshAsync(new HttpClient(new JsonHandler(HttpStatusCode.Unauthorized, "{}")),
+        "https://auth.example.test", store, refreshed!);
+    Assert.True(rejected is null);
+    Assert.Equal(fresh, store.Load()!.Token);
+}
+
 static string CreateTestAuthToken(string subject, string name, long expires)
 {
     static string Encode(byte[] data) => Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');
@@ -372,6 +394,18 @@ sealed class RangeHandler(byte[] bytes, int startingOffset) : HttpMessageHandler
         var response = new HttpResponseMessage(HttpStatusCode.PartialContent) { Content = content };
         response.Content.Headers.ContentRange = new ContentRangeHeaderValue(startingOffset, bytes.Length - 1, bytes.Length);
         return Task.FromResult(response);
+    }
+}
+
+sealed class JsonHandler(HttpStatusCode status, string body) : HttpMessageHandler
+{
+    public string? Authorization { get; private set; }
+    public string? Uri { get; private set; }
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Authorization = request.Headers.Authorization?.ToString();
+        Uri = request.RequestUri?.ToString();
+        return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body) });
     }
 }
 
