@@ -1911,6 +1911,12 @@ void CharacterService::ProcessMovementChanges() const noexcept
             movement.Variables = movementComponent.Variables;
 
             update.ActionEvents = animationComponent.Actions;
+            // Actions pile up from several owner updates between two sends; a creature in a fight can pass
+            // the limit, and the whole update used to be dropped (the actor froze for everyone else). The
+            // latest actions describe its current state, so the oldest are dropped instead.
+            if (update.ActionEvents.size() > MovementPayloadLimits::kMaxActionEvents)
+                update.ActionEvents.erase(update.ActionEvents.begin(),
+                    update.ActionEvents.end() - static_cast<std::ptrdiff_t>(MovementPayloadLimits::kMaxActionEvents));
 
             if (!MovementAuthorityPolicy::HasValidPayload(update))
             {

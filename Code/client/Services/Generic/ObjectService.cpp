@@ -43,6 +43,7 @@
 
 #include <inttypes.h>
 
+#include <algorithm>
 #include <limits>
 #include <unordered_map>
 
@@ -236,6 +237,47 @@ void ProcessRotationReplays(const double aDelta) noexcept
     }
 }
 
+// A plant is picked in place: the game keeps the reference and shows its harvested model (only the flowers
+// or the cap go). Placed ingredients are items and disappear. A model reads the harvested flag when it loads,
+// so a plant changed from here is reloaded: hidden now, shown again once its old 3D is gone.
+bool IsPickedInPlace(const TESObjectREFR* apObject) noexcept
+{
+    return apObject && apObject->baseForm && apObject->baseForm->formType != FormType::Ingredient;
+}
+
+struct PendingModelRefresh
+{
+    uint32_t FormId{};
+    double WaitSeconds{};
+};
+Vector<PendingModelRefresh> s_pendingModelRefreshes;
+constexpr double kModelRefreshDelaySeconds = 0.1;
+
+void RefreshModel(TESObjectREFR* apObject) noexcept
+{
+    if (apObject->IsDisabled())
+        return;
+    apObject->Disable(false);
+    s_pendingModelRefreshes.push_back({apObject->formID, kModelRefreshDelaySeconds});
+}
+
+void ProcessModelRefreshes(const double aDelta) noexcept
+{
+    for (auto it = s_pendingModelRefreshes.begin(); it != s_pendingModelRefreshes.end();)
+    {
+        it->WaitSeconds -= aDelta;
+        if (it->WaitSeconds > 0.0)
+        {
+            ++it;
+            continue;
+        }
+
+        if (TESObjectREFR* pObject = Cast<TESObjectREFR>(TESForm::GetById(it->FormId)); pObject && pObject->IsDisabled())
+            pObject->Enable();
+        it = s_pendingModelRefreshes.erase(it);
+    }
+}
+
 void TrackLocalWorldItemTaken(const uint32_t aFormId) noexcept
 {
     s_worldItemDisabledRefs.insert(aFormId);
@@ -252,8 +294,21 @@ void ApplyHarvested(TESObjectREFR* apObject) noexcept
     if (apObject->IsDisabled())
         return;
 
+    if (IsPickedInPlace(apObject))
+    {
+        if ((apObject->flags & TESForm::HARVESTED) != 0)
+            return;
+
+        spdlog::info("Plant {:X} harvested remotely, showing it picked", apObject->formID);
+        apObject->flags |= TESForm::HARVESTED;
+        RefreshModel(apObject);
+        s_harvestDisabledRefs.insert(apObject->formID);
+        return;
+    }
+
     spdlog::info("Object {:X} harvested remotely, disabling", apObject->formID);
-    apObject->Disable();
+    // No fade: the item is already in someone else's hands.
+    apObject->Disable(false);
     s_harvestDisabledRefs.insert(apObject->formID);
 }
 
@@ -262,6 +317,15 @@ void RestoreHarvested(TESObjectREFR* apObject) noexcept
 {
     if (!apObject || !s_harvestDisabledRefs.erase(apObject->formID))
         return;
+
+    // Picked here or by someone else: the plant grows back in place.
+    if (IsPickedInPlace(apObject) && (apObject->flags & TESForm::HARVESTED) != 0)
+    {
+        spdlog::info("Plant {:X} no longer harvested, showing it grown", apObject->formID);
+        apObject->flags &= ~TESForm::HARVESTED;
+        RefreshModel(apObject);
+        return;
+    }
 
     if (apObject->IsDisabled())
     {
@@ -344,6 +408,7 @@ void ObjectService::OnWorldSyncStarted(const CharacterWorldSyncStartedEvent&) no
 void ObjectService::OnUpdate(const UpdateEvent& acEvent) noexcept
 {
     ProcessRotationReplays(acEvent.Delta);
+    ProcessModelRefreshes(acEvent.Delta);
 
     if (!m_world.GetCharacterSessionService().IsGameplayActive())
         return;
@@ -680,6 +745,8 @@ void ObjectService::OnAssignObjectsResponse(const AssignObjectsResponse& acMessa
 
             pLock->lockLevel = objectData.CurrentLockData.LockLevel;
             pLock->SetLock(objectData.CurrentLockData.IsLocked);
+            // The lock change this raises is the server's own state; never send it back.
+            s_sentLockStates[pObject->formID] = {objectData.CurrentLockData.IsLocked, static_cast<uint8_t>(objectData.CurrentLockData.LockLevel)};
             pObject->LockChange();
         }
 
@@ -955,6 +1022,12 @@ void ObjectService::OnLockChange(const LockChangeEvent& acEvent) noexcept
     if (!m_transport.IsConnected())
         return;
 
+    // Only objects the server registered for this client have a lock it keeps; any other lock change
+    // (load doors, unsynced cells, the cell before its registration) was a rejected request.
+    const auto objectView = m_world.view<FormIdComponent, ObjectComponent>();
+    if (std::none_of(objectView.begin(), objectView.end(), [objectView, formId = acEvent.FormId](const auto aEntity) { return objectView.get<FormIdComponent>(aEntity).Id == formId; }))
+        return;
+
     LockChangeRequest request;
 
     if (!m_world.GetModSystem().GetServerModId(acEvent.FormId, request.Id))
@@ -1029,6 +1102,7 @@ void ObjectService::OnLockChangeNotify(const NotifyLockChange& acMessage) noexce
 
     pLock->lockLevel = acMessage.LockLevel;
     pLock->SetLock(acMessage.IsLocked);
+    s_sentLockStates[pObject->formID] = {acMessage.IsLocked, static_cast<uint8_t>(acMessage.LockLevel)};
     pObject->LockChange();
 }
 
