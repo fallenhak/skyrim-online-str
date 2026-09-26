@@ -11,12 +11,13 @@ Durum: Burak onayladı (26.09 ~15:35). Kodlandı, gözden geçirme aşamasında.
 | 2 | `8d9b30b2`, `8772dd5c` | Alıcıda sapmış ceset kapatılıp settled konumda yeniden yükleniyor. Sahibin ceset envanteri kayıt oluyor, herkese dağıtılıyor. Loot başlamış cesetler dedektör döngüsünde. |
 | 3 | `62c339b0` | Leveled seçime göre yeniden kurulan (conform) NPC'nin tam envanterini sahip kaydediyor, herkes onu uyguluyor. |
 | 4 | `d5cc3c47` | Yakınlığa göre devir (1,5 kat ve 15 m, 5 sn), takılan sahipte (5 sn güncellemesiz) hemen devir, savaşta devir yok. Sahipsiz NPC silinmiyor, donuyor. Tetikleyici aktivasyonu sahipliği tetikleyene veriyor. |
+| 3 (pot) | `1ccdefd5` | Yere konmuş leveled eşya: referansın tabanı dummy (ör. DummyPotion), listesi XLIB'de. Sunucu listeyi referansa bağlı tohumla bir kez zar atıyor, istemci tabanı değiştirip modeli yeniliyor. |
 | 5 | `faa3bf5e` | Hasat görünümü (bayrak ve model yenileme), savaşta hareket güncellemesinin atılması (sıçan gecikmesi), kilit yankısı ve kayıtsız kilit gürültüsü. |
 
 Sapmalar:
 - **Sürüm (Revision) sayacı eklenmedi.** Mesajlar tek bağlantıda sıralı ve güvenilir geliyor. Snapshot ve düzeltme, sunucunun o anki durumunu taşıyor. Sıra zaten korunuyor, ayrıca sayaca gerek kalmadı.
 - **Sunucuda bekletilen assign kuyruğu gerekmedi.** Oyuncu servisi hücresini aynı olayda önce bildiriyor, nesne kaydı bir sonraki karede gidiyor.
-- **Yerdeki leveled eşya hipotezi çürüdü.** Skyrim.esm taramasında tabanı leveled liste olan yerleştirilmiş referans sayısı 0 (693.333 REFR). Pot farkının nedeni bu değil. Açık kalan madde, testte ilgili eşyanın ref id'si gerekiyor.
+- **Yerdeki leveled eşya tabanda değil, XLIB'de.** İlk tarama tabanı leveled liste olan referans aramıştı ve 0 bulmuştu. Doğrusu: 2702 referansın tabanı dummy bir eşya, listesi XLIB alt kaydında (1024'ü DummyPotion). Loglarda alınan 34 eşyanın 8'i bu referanslar, mabettekiler (EF047, 4FCED, 43C38) de dahil.
 - **NPC envanterini kayıt dosyasından kurmak yerine** sahibin gerçek envanteri kayıt yapılıyor: canlı NPC'de conform sonrası, cesette settled anında. Böylece her istemci ayrı zar atsa da tek kayıt var.
 - **Sıçan gecikmesinin kanıtı** sunucu logunda bulundu: savaştaki yaratığın biriken animasyon olayları sınırı aşınca tüm hareket güncellemesi atılıyordu ("Skipped malformed server movement update for actor 23").
 Kaynaklar: 26.09 13:30–13:58 testi (Burak + Bedirhan), VDS `STServerOut.log` ve `STServer-solo-20260926-1330.log`, Bedirhan istemci logu, `5c893037` kodu.
